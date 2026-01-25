@@ -75,15 +75,6 @@
       </feMerge>
     </filter>
   </defs>
-  <!-- Dark background -->
-  <rect
-     width="160"
-     height="80.012634"
-     fill="#1a1a2e"
-     id="rect7"
-     x="0"
-     y="0"
-     style="stroke-width:0.917735" />
   <!-- Logo shape (scaled and centered) -->
   <g
      transform="translate(7.5,5)"
