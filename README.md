@@ -1,6 +1,10 @@
-# mutflow
+<p align="center">
+  <img src="logo.svg" alt="mutflow" width="400">
+</p>
 
-A Kotlin compiler plugin for lightweight, progressive mutation testing.
+<p align="center">
+  A Kotlin compiler plugin for lightweight, progressive mutation testing.
+</p>
 
 ## What is this?
 
