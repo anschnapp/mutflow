@@ -117,26 +117,66 @@ The `MutFlow.underTest` block:
 
 ### 2. Session-Based Run Model
 
-Each test execution follows a session model:
+Each test execution follows a session model with explicit run numbers:
 
-1. **Discovery run**: Execute normally, count mutation points encountered
-2. **Mutation runs**: Each run activates exactly ONE mutation, specified by point index and variant index
-3. **Default: 3-8 runs per test** (configurable, orchestrated by JUnit extension)
+```kotlin
+// run=0: Baseline/discovery run
+val baseline = MutFlow.underTest(testId = "myTest", run = 0, shuffle = Shuffle.OnChange) {
+    calculator.isPositive(5)
+}
+
+// run=1, 2, ...: Mutation runs
+val run1 = MutFlow.underTest(testId = "myTest", run = 1, shuffle = Shuffle.OnChange) {
+    calculator.isPositive(5)
+}
+```
+
+- **run=0**: Discovery run — executes normally, stores discovered mutation points as baseline
+- **run>0**: Mutation run — activates a pseudo-randomly selected mutation based on the shuffle mode
 
 This means:
 - Precise feedback: when a mutant survives, you know exactly which one
 - Progressive coverage: different mutations tested across builds as code changes
 - Low overhead: small fixed number of runs, not proportional to mutation count
 
-### 3. Deterministic Reproducibility
+### 3. Shuffle Modes
 
-Mutation activation is explicit and deterministic:
-- **Mutation point index**: Which mutation point to activate (0-based, in discovery order)
-- **Variant index**: Which variant at that point (0-based)
+Mutation selection is controlled by the `Shuffle` enum:
 
-The test orchestrator (JUnit extension) decides which mutations to test based on discovery results and its own selection strategy.
+```kotlin
+enum class Shuffle {
+    EachTime,  // Different mutations each CI build
+    OnChange   // Same mutations until code changes
+}
+```
 
-### 4. Trapping Surviving Mutants
+**Shuffle.EachTime** (exploratory mode):
+- Hash input: `testId + run + randomSeed`
+- Random seed generated once per JVM, printed to stdout for reproducibility
+- Each CI build tests different mutations
+- Good for development and exploratory testing
+
+**Shuffle.OnChange** (stable mode):
+- Hash input: `testId + run + hash(discoveredPoints)`
+- Same code = same mutations selected (deterministic)
+- Good for merge request pipelines where reproducibility matters
+
+**Typical workflow:**
+1. During development: use `Shuffle.EachTime` to explore different mutations
+2. For merge requests: switch to `Shuffle.OnChange` for stable, reproducible results
+3. Over time: cover all mutations across many builds
+
+### 4. Baseline Storage
+
+The baseline (discovered mutation points) is stored in-memory per testId:
+
+- `run=0` executes the block, discovers mutation points, stores them
+- `run>0` retrieves the stored baseline, selects a mutation, executes
+- If `run>0` is called without a prior `run=0`, an exception is thrown
+
+This allows the high-level API to return just the block result (`T`) instead of the full session info.
+
+### 5. Trapping Surviving Mutants (Planned)
 
 When a mutant survives, its mutation ID is printed:
 ```
@@ -172,7 +212,7 @@ Traps are a **temporary debugging aid**:
 
 Trapped mutations run **in addition to** normal mutation selection.
 
-### 5. Scoped Mutations via Annotations
+### 6. Scoped Mutations via Annotations
 
 The compiler plugin only injects mutations into annotated classes:
 
@@ -201,8 +241,9 @@ This limits bytecode bloat and keeps mutations relevant.
 │                         │  Sets run number (0 = baseline, 1-N)  │
 │                         │  Depends on: core, runtime            │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-runtime        │  MutFlow.underTest { } API            │
-│                         │  Session lifecycle management         │
+│  mutflow-runtime        │  MutFlow.underTest(run, shuffle) API  │
+│                         │  Shuffle modes (EachTime, OnChange)   │
+│                         │  Baseline storage, mutation selection │
 │                         │  Depends on: core                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin│  Transforms @MutationTarget classes   │
@@ -234,26 +275,36 @@ JUnit 5 support is planned but not part of the initial tracer bullet.
 ```
 1. Compile time:
    ┌──────────────────┐      ┌─────────────────────────────────┐
-   │ underTest { }    │ ───► │ underTest(mutTestCaseId="X") { }│
-   └──────────────────┘      └─────────────────────────────────┘
-   ┌──────────────────┐      ┌─────────────────────────────────┐
    │ x > 0            │ ───► │ when(registry.check("pt1",...)) │
    └──────────────────┘      └─────────────────────────────────┘
 
-2. Discovery run:
-   underTest("X") starts session (no activeMutation)
+2. High-level API flow:
+   underTest(testId="X", run=0, shuffle=OnChange) { block }
+        │
+        ▼
+   [Internally calls low-level API with no activeMutation]
         │
         ▼
    registry.check("pt1", 2) → registers: point 0 has 2 variants, returns null
    registry.check("pt2", 3) → registers: point 1 has 3 variants, returns null
         │
         ▼
-   underTest ends → registry returns:
-       mutationPointCount = 2
-       discoveredPoints = [DiscoveredPoint("pt1", 2), DiscoveredPoint("pt2", 3)]
+   Baseline stored: testId="X" → [DiscoveredPoint("pt1", 2), DiscoveredPoint("pt2", 3)]
+        │
+        ▼
+   Returns: block result (T)
 
-3. Mutation run:
-   underTest("X", activeMutation = ActiveMutation(1, 0)) starts session
+3. Mutation run (high-level):
+   underTest(testId="X", run=1, shuffle=OnChange) { block }
+        │
+        ▼
+   Retrieves baseline for testId="X"
+        │
+        ▼
+   Computes: hash(testId + run + pointsHash) → selects mutation (pointIndex=1, variantIndex=0)
+        │
+        ▼
+   [Internally calls low-level API with activeMutation = ActiveMutation(1, 0)]
         │
         ▼
    registry.check("pt1", ...) → point 0, not active, returns null
@@ -261,6 +312,9 @@ JUnit 5 support is planned but not part of the initial tracer bullet.
         │
         ▼
    code takes mutated path (variant at index 0)
+        │
+        ▼
+   Returns: block result (T)
         │
         ▼
    test assertion fails → mutation killed ✓
@@ -330,10 +384,29 @@ Not useful as a tool yet — the goal is to validate the full loop works before 
 - `mutflow-core`: Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `mutflow-compiler-plugin`: K2 compiler plugin that transforms `>` comparisons
 - `mutflow-compiler-plugin`: Transformation produces `when(MutationRegistry.check(...))` branches
-- `mutflow-runtime`: `MutFlow.underTest { }` API with explicit mutation control
-- `mutflow-test-sample`: Integration tests proving full workflow with `MutFlow.underTest`
+- `mutflow-runtime`: High-level `MutFlow.underTest(testId, run, shuffle) { }` API
+- `mutflow-runtime`: Low-level plumbing API with explicit mutation control
+- `mutflow-runtime`: `Shuffle.EachTime` and `Shuffle.OnChange` modes
+- `mutflow-runtime`: In-memory baseline storage per testId
+- `mutflow-runtime`: Pseudo-random mutation selection via hash function
+- `mutflow-test-sample`: Integration tests demonstrating both APIs
 
-**Runtime API (manual mode):**
+**High-level API (recommended):**
+```kotlin
+// run=0: Baseline/discovery
+val baseline = MutFlow.underTest(testId = "myTest", run = 0, shuffle = Shuffle.OnChange) {
+    calculator.isPositive(5)
+}
+assertTrue(baseline)
+
+// run=1, 2, ...: Mutation runs
+val run1 = MutFlow.underTest(testId = "myTest", run = 1, shuffle = Shuffle.OnChange) {
+    calculator.isPositive(5)
+}
+assertTrue(run1) // Fails if mutation changes behavior
+```
+
+**Low-level API (plumbing):**
 ```kotlin
 // Discovery run: find mutation points
 val discovery = MutFlow.underTest(testId = "myTest") {
@@ -366,7 +439,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 ```
 
 **Remaining for Phase 1:**
-- `mutflow-junit6`: JUnit 6 extension for automatic multi-run orchestration (including mutation selection logic)
+- `mutflow-junit6`: JUnit 6 extension for automatic multi-run orchestration
 - Surviving mutant detection and reporting
 - Compiler plugin: auto-generate `testId` from call site (currently manual)
 

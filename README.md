@@ -34,41 +34,44 @@ class Calculator {
     fun isPositive(x: Int) = x > 0
 }
 
-// Test with mutation testing (manual mode - JUnit extension will automate this)
+// Test with mutation testing
 @Test
 fun testIsPositive() {
     val calculator = Calculator()
 
-    // Discovery run: find mutation points
-    val discovery = MutFlow.underTest(testId = "testIsPositive") {
+    // run=0: Baseline/discovery run
+    val baseline = MutFlow.underTest(testId = "testIsPositive", run = 0, shuffle = Shuffle.OnChange) {
         calculator.isPositive(5)
     }
-    assertTrue(discovery.result)
-    // discovery.discovered = [DiscoveredPoint("...", variantCount=3)]
+    assertTrue(baseline)
 
-    // Mutation runs: test each variant explicitly
-    for (point in discovery.discovered.indices) {
-        for (variant in 0 until discovery.discovered[point].variantCount) {
-            val result = MutFlow.underTest(
-                testId = "testIsPositive",
-                activeMutation = ActiveMutation(point, variant)
-            ) {
-                calculator.isPositive(5)
-            }
-            // If assertion passes with mutation active → mutation survived
-        }
+    // run=1, 2, ...: Mutation runs (each tests a pseudo-randomly selected mutation)
+    val run1 = MutFlow.underTest(testId = "testIsPositive", run = 1, shuffle = Shuffle.OnChange) {
+        calculator.isPositive(5)
     }
+    assertTrue(run1) // May fail if mutation changes behavior → mutation killed!
+
+    val run2 = MutFlow.underTest(testId = "testIsPositive", run = 2, shuffle = Shuffle.OnChange) {
+        calculator.isPositive(5)
+    }
+    assertTrue(run2)
 }
 ```
 
-1. **Discovery run**: Test executes normally, discovers 1 mutation point with 3 variants (>=, <, ==)
-2. **Mutation runs**: Each run activates one variant. If test still passes → mutation survived → test gap found
+1. **run=0 (baseline)**: Discovers mutation points, stores them for subsequent runs
+2. **run=1, 2, ...**: Each run activates a pseudo-randomly selected mutation
+3. **Shuffle modes**:
+   - `Shuffle.EachTime` — Different mutations each CI build (exploratory)
+   - `Shuffle.OnChange` — Same mutations until code changes (stable CI)
 
 ## Current Features
 
 - Kotlin K2 compiler plugin (transforms `>` operator)
-- BDD-style `MutFlow.underTest { }` API for explicit test scoping
+- High-level `MutFlow.underTest(testId, run, shuffle) { }` API
+- Two shuffle modes: `EachTime` (exploratory) and `OnChange` (stable)
+- Pseudo-random mutation selection based on testId + run + code hash
 - Scoped mutations via `@MutationTarget` annotation
+- In-memory baseline storage per test
 
 ## Planned Features
 
