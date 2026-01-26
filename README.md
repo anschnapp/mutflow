@@ -39,29 +39,30 @@ class Calculator {
 fun testIsPositive() {
     val calculator = Calculator()
 
-    // Run 0: Baseline - discover mutations
-    val run0 = MutFlow.underTest(runNumber = 0, testId = "testIsPositive") {
+    // Discovery run: find mutation points
+    val discovery = MutFlow.underTest(testId = "testIsPositive") {
         calculator.isPositive(5)
     }
-    assertTrue(run0.result)
-    // run0.discovered = [DiscoveredPoint("...", variantCount=3)]
+    assertTrue(discovery.result)
+    // discovery.discovered = [DiscoveredPoint("...", variantCount=3)]
 
-    // Run 1-N: Test each mutation
-    for (runNumber in 1..MutFlow.totalMutations(run0.discovered)) {
-        val runN = MutFlow.underTest(
-            runNumber = runNumber,
-            testId = "testIsPositive",
-            discovered = run0.discovered
-        ) {
-            calculator.isPositive(5)
+    // Mutation runs: test each variant explicitly
+    for (point in discovery.discovered.indices) {
+        for (variant in 0 until discovery.discovered[point].variantCount) {
+            val result = MutFlow.underTest(
+                testId = "testIsPositive",
+                activeMutation = ActiveMutation(point, variant)
+            ) {
+                calculator.isPositive(5)
+            }
+            // If assertion passes with mutation active → mutation survived
         }
-        // If assertion passes with mutation active → mutation survived
     }
 }
 ```
 
-1. **Run 0 (baseline)**: Test executes normally, discovers 1 mutation point with 3 variants (>=, <, ==)
-2. **Run 1-N**: Each run activates one variant. If test still passes → mutation survived → test gap found
+1. **Discovery run**: Test executes normally, discovers 1 mutation point with 3 variants (>=, <, ==)
+2. **Mutation runs**: Each run activates one variant. If test still passes → mutation survived → test gap found
 
 ## Current Features
 

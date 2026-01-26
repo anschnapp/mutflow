@@ -79,9 +79,9 @@ class Calculator {
 
 Mutation points are discovered **dynamically at runtime**, not statically at class load:
 
-1. **Run 0 (baseline)**: Code executes normally. Each `MutationRegistry.check()` call registers "I exist with these variants" and returns `null` (use original). After execution, the registry knows: *"mutTestCaseId abc123 hit 5 mutation points"*.
+1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
 
-2. **Runs 1-N**: The registry already knows how many points exist. Based on run number, it activates one specific point+variant. When that point calls `check()`, it returns the active variant instead of `null`.
+2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointIndex, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
 This dynamic discovery matters because:
 - Different `underTest` blocks exercise different code paths
@@ -119,9 +119,9 @@ The `MutFlow.underTest` block:
 
 Each test execution follows a session model:
 
-1. **Run 0 (Baseline)**: Execute normally, count mutation points encountered
-2. **Runs 1-N**: Each run activates exactly ONE mutation, selected deterministically
-3. **Default: 3-8 runs per test** (configurable)
+1. **Discovery run**: Execute normally, count mutation points encountered
+2. **Mutation runs**: Each run activates exactly ONE mutation, specified by point index and variant index
+3. **Default: 3-8 runs per test** (configurable, orchestrated by JUnit extension)
 
 This means:
 - Precise feedback: when a mutant survives, you know exactly which one
@@ -130,14 +130,11 @@ This means:
 
 ### 3. Deterministic Reproducibility
 
-Mutation selection is deterministic based on:
-- **Mutation point ID**: IR hash of the expression being mutated (stable if code logic unchanged)
-- **Run number**: Which run within the session
-- **Mutation count**: Total points discovered in run 0
+Mutation activation is explicit and deterministic:
+- **Mutation point index**: Which mutation point to activate (0-based, in discovery order)
+- **Variant index**: Which variant at that point (0-based)
 
-Formula: `f(runNumber, mutationCount) → nthMutationPoint`
-
-Then for variant selection at that point: stable ordering per mutation type.
+The test orchestrator (JUnit extension) decides which mutations to test based on discovery results and its own selection strategy.
 
 ### 4. Trapping Surviving Mutants
 
@@ -243,8 +240,8 @@ JUnit 5 support is planned but not part of the initial tracer bullet.
    │ x > 0            │ ───► │ when(registry.check("pt1",...)) │
    └──────────────────┘      └─────────────────────────────────┘
 
-2. Run 0 (baseline):
-   underTest("X") starts session
+2. Discovery run:
+   underTest("X") starts session (no activeMutation)
         │
         ▼
    registry.check("pt1", 2) → registers: point 0 has 2 variants, returns null
@@ -253,15 +250,10 @@ JUnit 5 support is planned but not part of the initial tracer bullet.
         ▼
    underTest ends → registry returns:
        mutationPointCount = 2
-       variantsPerPoint = [2, 3]
+       discoveredPoints = [DiscoveredPoint("pt1", 2), DiscoveredPoint("pt2", 3)]
 
-3. Selection (between runs):
-   Client code receives: 2 points, variants = [2, 3]
-   Based on run number + selection strategy, picks: pointIndex=1, variantIndex=0
-   Sets active mutation for next run
-
-4. Run N (mutation run):
-   underTest("X") starts session with active = (pointIndex=1, variantIndex=0)
+3. Mutation run:
+   underTest("X", activeMutation = ActiveMutation(1, 0)) starts session
         │
         ▼
    registry.check("pt1", ...) → point 0, not active, returns null
@@ -325,7 +317,7 @@ The compiler plugin is applied ONLY to test compilation, never production:
 End-to-end proof that the architecture works. Thin slice through all layers:
 - K2 compiler plugin that transforms a single mutation type (e.g., `>` to `>=`) in `@MutationTarget` classes
 - `MutFlow.underTest { }` runtime API that orchestrates the session
-- Run 0 counts mutation points, runs 1-N activate one mutation each
+- Discovery run counts mutation points, mutation runs activate one mutation each (specified by pointIndex + variantIndex)
 - JUnit 6 extension for session orchestration (re-runs test with lifecycle)
 - Surviving mutant prints mutation ID and fails the test
 
@@ -338,27 +330,25 @@ Not useful as a tool yet — the goal is to validate the full loop works before 
 - `mutflow-core`: Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `mutflow-compiler-plugin`: K2 compiler plugin that transforms `>` comparisons
 - `mutflow-compiler-plugin`: Transformation produces `when(MutationRegistry.check(...))` branches
-- `mutflow-runtime`: `MutFlow.underTest { }` API with manual run number control
-- `mutflow-runtime`: Mutation selection logic (maps run number to point+variant)
+- `mutflow-runtime`: `MutFlow.underTest { }` API with explicit mutation control
 - `mutflow-test-sample`: Integration tests proving full workflow with `MutFlow.underTest`
 
 **Runtime API (manual mode):**
 ```kotlin
-// Run 0: Baseline - discover mutations
-val run0 = MutFlow.underTest(runNumber = 0, testId = "myTest") {
+// Discovery run: find mutation points
+val discovery = MutFlow.underTest(testId = "myTest") {
     calculator.isPositive(5)
 }
-// run0.discovered contains the mutation points found
+// discovery.discovered contains the mutation points found
 
-// Run 1-N: Execute each mutation
-val run1 = MutFlow.underTest(
-    runNumber = 1,
+// Mutation run: activate a specific mutation
+val result = MutFlow.underTest(
     testId = "myTest",
-    discovered = run0.discovered  // Pass discovery from run 0
+    activeMutation = ActiveMutation(pointIndex = 0, variantIndex = 1)
 ) {
     calculator.isPositive(5)
 }
-// run1.activeMutation tells which mutation was active
+// result.activeMutation confirms which mutation was active
 ```
 
 **Transformation example:**
@@ -376,7 +366,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 ```
 
 **Remaining for Phase 1:**
-- `mutflow-junit6`: JUnit 6 extension for automatic multi-run orchestration
+- `mutflow-junit6`: JUnit 6 extension for automatic multi-run orchestration (including mutation selection logic)
 - Surviving mutant detection and reporting
 - Compiler plugin: auto-generate `testId` from call site (currently manual)
 
