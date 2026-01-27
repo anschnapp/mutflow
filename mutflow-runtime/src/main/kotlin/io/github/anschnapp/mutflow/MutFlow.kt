@@ -1,135 +1,189 @@
 package io.github.anschnapp.mutflow
 
+import kotlin.random.Random
+
 /**
  * Main entry point for mutation testing in tests.
  *
- * Wraps the code under test and manages mutation sessions.
+ * Manages a global mutation registry and orchestrates mutation runs.
  */
 object MutFlow {
 
-    // Storage for baseline info per testId
-    private val baselines = mutableMapOf<String, Baseline>()
+    // Global registry: discovered points with their variant counts
+    private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
 
-    // Seed for Shuffle.EachTime mode - generated once per JVM
+    // Global registry: touch counts from baseline runs
+    private val touchCounts = mutableMapOf<String, Int>() // pointId -> count
+
+    // Global registry: mutations that have been tested in this execution
+    private val testedMutations = mutableSetOf<Mutation>()
+
+    // Seed for Shuffle.PerRun mode - generated once per JVM
     private var globalSeed: Long? = null
 
     /**
      * High-level API for mutation testing.
      *
-     * @param testId Identifier for this test case
      * @param run Run number: 0 = baseline/discovery, 1+ = mutation runs
-     * @param shuffle How mutations are selected across runs
+     * @param selection How to select which mutation to test
+     * @param shuffle When to reseed the selection (per run or per code change)
      * @param block The code under test
      * @return The result of the block
-     * @throws IllegalStateException if run > 0 but no baseline exists for testId
+     * @throws MutationsExhaustedException if all mutations have been tested
      */
     fun <T> underTest(
-        testId: String,
         run: Int,
+        selection: Selection,
         shuffle: Shuffle,
         block: () -> T
     ): T {
         require(run >= 0) { "run must be non-negative, got: $run" }
 
         return if (run == 0) {
-            executeBaseline(testId, shuffle, block)
+            executeBaseline(block)
         } else {
-            executeMutationRun(testId, run, shuffle, block)
+            executeMutationRun(run, selection, shuffle, block)
         }
     }
 
-    private fun <T> executeBaseline(
-        testId: String,
-        shuffle: Shuffle,
-        block: () -> T
-    ): T {
+    private fun <T> executeBaseline(block: () -> T): T {
         // Run discovery (no active mutation)
-        val result = underTest(testId = testId, activeMutation = null, block = block)
+        MutationRegistry.startSession(activeMutation = null)
 
-        // Store baseline
-        baselines[testId] = Baseline(
-            discoveredPoints = result.discovered,
-            shuffle = shuffle
-        )
+        val result = try {
+            block()
+        } finally {
+            // Session will be ended below
+        }
 
-        return result.result
+        val sessionResult = MutationRegistry.endSession()
+
+        // Merge discovered points into global registry and update touch counts
+        for (point in sessionResult.discoveredPoints) {
+            discoveredPoints[point.pointId] = point.variantCount
+            touchCounts[point.pointId] = (touchCounts[point.pointId] ?: 0) + 1
+        }
+
+        return result
     }
 
     private fun <T> executeMutationRun(
-        testId: String,
         run: Int,
+        selection: Selection,
         shuffle: Shuffle,
         block: () -> T
     ): T {
-        val baseline = baselines[testId]
-            ?: error("No baseline found for testId '$testId'. Run with run=0 first.")
-
-        val discoveredPoints = baseline.discoveredPoints
-
         if (discoveredPoints.isEmpty()) {
-            // No mutation points discovered, just run the block
-            return underTest(testId = testId, activeMutation = null, block = block).result
+            // No mutation points discovered, just run the block normally
+            MutationRegistry.startSession(activeMutation = null)
+            val result = block()
+            MutationRegistry.endSession()
+            return result
         }
 
-        // Calculate which mutation to activate
-        val activeMutation = selectMutation(testId, run, shuffle, discoveredPoints)
+        // Select mutation to test
+        val mutation = selectMutation(run, selection, shuffle)
+            ?: throw MutationsExhaustedException("All mutations have been tested")
 
-        // Execute with the selected mutation
-        return underTest(testId = testId, activeMutation = activeMutation, block = block).result
+        // Mark as tested
+        testedMutations.add(mutation)
+
+        // Execute with the selected mutation active
+        val activeMutation = ActiveMutation(pointId = mutation.pointId, variantIndex = mutation.variantIndex)
+        MutationRegistry.startSession(activeMutation = activeMutation)
+
+        val result = try {
+            block()
+        } finally {
+            // Session will be ended below
+        }
+
+        MutationRegistry.endSession()
+        return result
     }
 
     private fun selectMutation(
-        testId: String,
         run: Int,
-        shuffle: Shuffle,
-        discoveredPoints: List<DiscoveredPoint>
-    ): ActiveMutation {
-        // Calculate total number of mutation variants
-        val totalVariants = discoveredPoints.sumOf { it.variantCount }
+        selection: Selection,
+        shuffle: Shuffle
+    ): Mutation? {
+        // Get all untested mutations
+        val untestedMutations = buildUntestedMutations()
 
-        // Calculate hash based on shuffle mode
-        val hash = when (shuffle) {
-            Shuffle.EachTime -> {
-                computeHash(testId, run, getOrCreateGlobalSeed())
+        if (untestedMutations.isEmpty()) {
+            return null
+        }
+
+        // Calculate seed based on shuffle mode
+        val seed = when (shuffle) {
+            Shuffle.PerRun -> getOrCreateGlobalSeed() + run
+            Shuffle.PerChange -> computePointsHash() + run
+        }
+
+        return when (selection) {
+            Selection.PureRandom -> selectPureRandom(untestedMutations, seed)
+            Selection.MostLikelyRandom -> selectMostLikelyRandom(untestedMutations, seed)
+            Selection.MostLikelyStable -> selectMostLikelyStable(untestedMutations)
+        }
+    }
+
+    private fun buildUntestedMutations(): List<Mutation> {
+        val untested = mutableListOf<Mutation>()
+        for ((pointId, variantCount) in discoveredPoints) {
+            for (variantIndex in 0 until variantCount) {
+                val mutation = Mutation(pointId, variantIndex)
+                if (mutation !in testedMutations) {
+                    untested.add(mutation)
+                }
             }
-            Shuffle.OnChange -> {
-                val pointsHash = computePointsHash(discoveredPoints)
-                computeHash(testId, run, pointsHash)
+        }
+        return untested
+    }
+
+    private fun selectPureRandom(mutations: List<Mutation>, seed: Long): Mutation {
+        val random = Random(seed)
+        return mutations[random.nextInt(mutations.size)]
+    }
+
+    private fun selectMostLikelyRandom(mutations: List<Mutation>, seed: Long): Mutation {
+        // Weight by inverse of touch count (fewer touches = higher weight)
+        val weights = mutations.map { mutation ->
+            val touchCount = touchCounts[mutation.pointId] ?: 1
+            1.0 / touchCount
+        }
+
+        val totalWeight = weights.sum()
+        val random = Random(seed)
+        var pick = random.nextDouble() * totalWeight
+
+        for ((index, weight) in weights.withIndex()) {
+            pick -= weight
+            if (pick <= 0) {
+                return mutations[index]
             }
         }
 
-        // Map hash to a variant index
-        val variantIndex = ((hash % totalVariants) + totalVariants) % totalVariants // Handle negative hash
-
-        // Map flat variant index to (pointIndex, variantIndex)
-        return mapToMutation(variantIndex.toInt(), discoveredPoints)
+        // Fallback to last (shouldn't happen)
+        return mutations.last()
     }
 
-    private fun mapToMutation(flatIndex: Int, discoveredPoints: List<DiscoveredPoint>): ActiveMutation {
-        var remaining = flatIndex
-        for ((pointIndex, point) in discoveredPoints.withIndex()) {
-            if (remaining < point.variantCount) {
-                return ActiveMutation(pointIndex = pointIndex, variantIndex = remaining)
-            }
-            remaining -= point.variantCount
-        }
-        // Fallback (shouldn't happen if flatIndex is within bounds)
-        return ActiveMutation(pointIndex = 0, variantIndex = 0)
+    private fun selectMostLikelyStable(mutations: List<Mutation>): Mutation {
+        // Deterministically pick the mutation with lowest touch count
+        // Tie-breaker: alphabetical by pointId, then by variantIndex
+        return mutations.minWith(
+            compareBy(
+                { touchCounts[it.pointId] ?: 0 },
+                { it.pointId },
+                { it.variantIndex }
+            )
+        )
     }
 
-    private fun computeHash(testId: String, run: Int, seed: Long): Long {
-        // Simple but effective hash combining
-        var hash = seed
-        hash = hash * 31 + testId.hashCode()
-        hash = hash * 31 + run
-        return hash
-    }
-
-    private fun computePointsHash(points: List<DiscoveredPoint>): Long {
+    private fun computePointsHash(): Long {
         var hash = 17L
-        for (point in points) {
-            hash = hash * 31 + point.pointId.hashCode()
-            hash = hash * 31 + point.variantCount
+        for ((pointId, variantCount) in discoveredPoints.entries.sortedBy { it.key }) {
+            hash = hash * 31 + pointId.hashCode()
+            hash = hash * 31 + variantCount
         }
         return hash
     }
@@ -142,48 +196,29 @@ object MutFlow {
         return globalSeed!!
     }
 
-    // ==================== Low-level "plumbing" API ====================
+    // ==================== Query methods ====================
 
     /**
-     * Low-level API: Executes the block under mutation testing control.
-     *
-     * This is the plumbing function used internally. For most cases,
-     * prefer the high-level [underTest] with run and shuffle parameters.
-     *
-     * @param testId Identifier for this test case
-     * @param activeMutation Which mutation to activate, or null for discovery run
-     * @param block The code under test
-     * @return Result containing the block's return value and session information
+     * Returns the current state of the global registry.
+     * Useful for debugging and testing.
      */
-    fun <T> underTest(
-        testId: String,
-        activeMutation: ActiveMutation? = null,
-        block: () -> T
-    ): UnderTestResult<T> {
-        MutationRegistry.startSession(testId, activeMutation)
-
-        val result = try {
-            block()
-        } finally {
-            // Session is ended below, but we need to handle exceptions
-        }
-
-        val sessionResult = MutationRegistry.endSession()
-
-        return UnderTestResult(
-            result = result,
-            discovered = sessionResult.discoveredPoints,
-            activeMutation = activeMutation
+    fun getRegistryState(): RegistryState {
+        return RegistryState(
+            discoveredPoints = discoveredPoints.toMap(),
+            touchCounts = touchCounts.toMap(),
+            testedMutations = testedMutations.toSet()
         )
     }
 
     // ==================== Testing support ====================
 
     /**
-     * Resets all stored baselines and seed. Intended for testing only.
+     * Resets all stored state. Intended for testing only.
      */
     fun reset() {
-        baselines.clear()
+        discoveredPoints.clear()
+        touchCounts.clear()
+        testedMutations.clear()
         globalSeed = null
     }
 
@@ -196,41 +231,63 @@ object MutFlow {
 }
 
 /**
- * Determines how mutations are shuffled/selected across runs.
+ * Determines how mutations are selected.
  */
-enum class Shuffle {
+enum class Selection {
     /**
-     * Mutation selection changes each time tests run (based on random seed).
-     * Different CI builds will test different mutations.
-     * Seed is printed to stdout for reproducibility.
+     * Uniform random selection among untested mutations.
      */
-    EachTime,
+    PureRandom,
 
     /**
-     * Mutation selection only changes when the code changes.
-     * Same code = same mutations tested (deterministic).
-     * Good for stable CI pipelines.
+     * Random selection weighted toward mutations touched by fewer tests.
+     * Mutations with lower touch counts have higher probability of being selected.
      */
-    OnChange
+    MostLikelyRandom,
+
+    /**
+     * Deterministically pick the mutation touched by fewest tests.
+     * Tie-breaker: alphabetical by pointId, then by variantIndex.
+     */
+    MostLikelyStable
 }
 
 /**
- * Stored baseline information for a test.
+ * Determines when to change the selection seed.
  */
-internal data class Baseline(
-    val discoveredPoints: List<DiscoveredPoint>,
-    val shuffle: Shuffle
+enum class Shuffle {
+    /**
+     * New random seed each JVM/CI run.
+     * Good for exploratory testing during development.
+     */
+    PerRun,
+
+    /**
+     * Seed based on hash of discovered points.
+     * Same code = same mutations tested (deterministic).
+     * Good for stable CI pipelines.
+     */
+    PerChange
+}
+
+/**
+ * Identifies a specific mutation (point + variant).
+ */
+data class Mutation(
+    val pointId: String,
+    val variantIndex: Int
 )
 
 /**
- * Result from executing code under mutation testing control.
- *
- * @property result The return value from the block
- * @property discovered Mutation points discovered during this run (pass to subsequent runs)
- * @property activeMutation Which mutation was active, null for baseline run 0
+ * Snapshot of the global registry state.
  */
-data class UnderTestResult<T>(
-    val result: T,
-    val discovered: List<DiscoveredPoint>,
-    val activeMutation: ActiveMutation?
+data class RegistryState(
+    val discoveredPoints: Map<String, Int>,
+    val touchCounts: Map<String, Int>,
+    val testedMutations: Set<Mutation>
 )
+
+/**
+ * Thrown when all mutations have been tested and there are no more to test.
+ */
+class MutationsExhaustedException(message: String) : RuntimeException(message)

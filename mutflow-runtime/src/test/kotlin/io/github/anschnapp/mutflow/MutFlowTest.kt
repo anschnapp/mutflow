@@ -10,51 +10,15 @@ class MutFlowTest {
         MutFlow.reset()
     }
 
-    // ==================== Low-level API tests ====================
+    // ==================== Baseline tests ====================
 
     @Test
-    fun `underTest discovery run executes block and returns result`() {
-        var blockCalled = false
-
-        val result = MutFlow.underTest(testId = "test") {
-            blockCalled = true
-            42
-        }
-
-        assertTrue(blockCalled)
-        assertEquals(42, result.result)
-        assertNull(result.activeMutation)
-    }
-
-    @Test
-    fun `underTest with activeMutation passes mutation to session`() {
-        val mutation = ActiveMutation(pointIndex = 1, variantIndex = 2)
-
-        val result = MutFlow.underTest(testId = "test", activeMutation = mutation) {
-            "result"
-        }
-
-        assertEquals("result", result.result)
-        assertEquals(mutation, result.activeMutation)
-    }
-
-    @Test
-    fun `underTest starts and ends session correctly`() {
-        assertFalse(MutationRegistry.hasActiveSession())
-
-        MutFlow.underTest(testId = "test") {
-            assertTrue(MutationRegistry.hasActiveSession())
-            "done"
-        }
-
-        assertFalse(MutationRegistry.hasActiveSession())
-    }
-
-    // ==================== High-level API tests ====================
-
-    @Test
-    fun `high-level underTest run 0 returns block result`() {
-        val result = MutFlow.underTest(testId = "test", run = 0, shuffle = Shuffle.OnChange) {
+    fun `baseline run returns block result`() {
+        val result = MutFlow.underTest(
+            run = 0,
+            selection = Selection.PureRandom,
+            shuffle = Shuffle.PerChange
+        ) {
             42
         }
 
@@ -62,13 +26,55 @@ class MutFlowTest {
     }
 
     @Test
-    fun `high-level underTest run 0 stores baseline`() {
-        MutFlow.underTest(testId = "test", run = 0, shuffle = Shuffle.OnChange) {
+    fun `baseline run discovers mutation points and updates touch counts`() {
+        // Simulate mutation points being touched during baseline
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            // In real usage, compiler-injected code would call MutationRegistry.check()
+            MutationRegistry.check("point-a", 3)
+            MutationRegistry.check("point-b", 2)
+            "result"
+        }
+
+        val state = MutFlow.getRegistryState()
+        assertEquals(mapOf("point-a" to 3, "point-b" to 2), state.discoveredPoints)
+        assertEquals(mapOf("point-a" to 1, "point-b" to 1), state.touchCounts)
+    }
+
+    @Test
+    fun `multiple baseline runs increment touch counts`() {
+        // First test touches point-a and point-b
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 3)
+            MutationRegistry.check("point-b", 2)
+            "test1"
+        }
+
+        // Second test touches point-a only
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 3)
+            "test2"
+        }
+
+        val state = MutFlow.getRegistryState()
+        assertEquals(2, state.touchCounts["point-a"], "point-a touched by 2 tests")
+        assertEquals(1, state.touchCounts["point-b"], "point-b touched by 1 test")
+    }
+
+    // ==================== Mutation run tests ====================
+
+    @Test
+    fun `mutation run returns block result`() {
+        // Setup baseline
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 2)
             "baseline"
         }
 
-        // run 1 should work without throwing (baseline exists)
-        val result = MutFlow.underTest(testId = "test", run = 1, shuffle = Shuffle.OnChange) {
+        val result = MutFlow.underTest(
+            run = 1,
+            selection = Selection.PureRandom,
+            shuffle = Shuffle.PerChange
+        ) {
             "mutation run"
         }
 
@@ -76,20 +82,71 @@ class MutFlowTest {
     }
 
     @Test
-    fun `high-level underTest run 1 without baseline throws`() {
-        val exception = assertFailsWith<IllegalStateException> {
-            MutFlow.underTest(testId = "unknown", run = 1, shuffle = Shuffle.OnChange) {
-                "should fail"
-            }
+    fun `mutation run tracks tested mutations`() {
+        MutFlow.setSeed(12345L)
+
+        // Setup baseline
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 2)
+            "baseline"
         }
 
-        assertTrue(exception.message!!.contains("No baseline found"))
+        // Run mutation test
+        MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            "run1"
+        }
+
+        val state = MutFlow.getRegistryState()
+        assertEquals(1, state.testedMutations.size, "One mutation should be tested")
     }
 
     @Test
-    fun `high-level underTest negative run throws`() {
+    fun `mutation runs test different mutations`() {
+        MutFlow.setSeed(12345L)
+
+        // Setup baseline with point that has 3 variants
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 3)
+            "baseline"
+        }
+
+        // Run 3 mutation tests
+        MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r1" }
+        MutFlow.underTest(run = 2, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r2" }
+        MutFlow.underTest(run = 3, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r3" }
+
+        val state = MutFlow.getRegistryState()
+        assertEquals(3, state.testedMutations.size, "Three different mutations should be tested")
+    }
+
+    @Test
+    fun `throws MutationsExhaustedException when all mutations tested`() {
+        MutFlow.setSeed(12345L)
+
+        // Setup baseline with only 2 mutations total
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 2)
+            "baseline"
+        }
+
+        // Test both mutations
+        MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r1" }
+        MutFlow.underTest(run = 2, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r2" }
+
+        // Third run should throw
+        assertFailsWith<MutationsExhaustedException> {
+            MutFlow.underTest(run = 3, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r3" }
+        }
+    }
+
+    @Test
+    fun `negative run throws`() {
         val exception = assertFailsWith<IllegalArgumentException> {
-            MutFlow.underTest(testId = "test", run = -1, shuffle = Shuffle.OnChange) {
+            MutFlow.underTest(
+                run = -1,
+                selection = Selection.PureRandom,
+                shuffle = Shuffle.PerChange
+            ) {
                 "should fail"
             }
         }
@@ -97,52 +154,101 @@ class MutFlowTest {
         assertTrue(exception.message!!.contains("non-negative"))
     }
 
+    // ==================== Selection strategy tests ====================
+
     @Test
-    fun `Shuffle OnChange produces same mutation for same code`() {
-        MutFlow.setSeed(12345L) // Ensure deterministic for test
+    fun `MostLikelyStable selects mutation with lowest touch count`() {
+        // Setup: point-a touched by 2 tests, point-b touched by 1 test
+        MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 2)
+            MutationRegistry.check("point-b", 2)
+            "test1"
+        }
+        MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 2)
+            "test2"
+        }
 
-        // Simulate discovered points by using the low-level API first
-        // For this test, we just verify that the same testId + run + shuffle gives consistent results
+        // point-b has lower touch count, should be selected first
+        MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) { "r1" }
 
+        val state = MutFlow.getRegistryState()
+        val testedMutation = state.testedMutations.first()
+        assertEquals("point-b", testedMutation.pointId, "Should select point with lowest touch count")
+    }
+
+    @Test
+    fun `MostLikelyStable uses alphabetical tie-breaker`() {
+        // Setup: both points touched equally
+        MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-b", 2)
+            MutationRegistry.check("point-a", 2)
+            "test1"
+        }
+
+        // point-a comes first alphabetically
+        MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) { "r1" }
+
+        val state = MutFlow.getRegistryState()
+        val testedMutation = state.testedMutations.first()
+        assertEquals("point-a", testedMutation.pointId, "Should use alphabetical tie-breaker")
+    }
+
+    // ==================== Shuffle mode tests ====================
+
+    @Test
+    fun `Shuffle PerChange produces same selection for same discovered points`() {
         // First execution
-        MutFlow.underTest(testId = "consistentTest", run = 0, shuffle = Shuffle.OnChange) { "a" }
-        val result1 = MutFlow.underTest(testId = "consistentTest", run = 1, shuffle = Shuffle.OnChange) { "b" }
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 3)
+            "baseline"
+        }
+        MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r1" }
+        val state1 = MutFlow.getRegistryState()
+        val mutation1 = state1.testedMutations.first()
 
         // Reset and do the same again
         MutFlow.reset()
-        MutFlow.underTest(testId = "consistentTest", run = 0, shuffle = Shuffle.OnChange) { "a" }
-        val result2 = MutFlow.underTest(testId = "consistentTest", run = 1, shuffle = Shuffle.OnChange) { "b" }
+        MutationRegistry.reset()
 
-        // Both should return successfully (OnChange uses discoveredPoints hash, not seed)
-        assertEquals(result1, result2)
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutationRegistry.check("point-a", 3)
+            "baseline"
+        }
+        MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r1" }
+        val state2 = MutFlow.getRegistryState()
+        val mutation2 = state2.testedMutations.first()
+
+        assertEquals(mutation1, mutation2, "PerChange should produce same mutation for same code")
     }
 
     @Test
-    fun `Shuffle EachTime uses global seed`() {
+    fun `Shuffle PerRun uses global seed`() {
         MutFlow.setSeed(99999L)
 
-        MutFlow.underTest(testId = "seedTest", run = 0, shuffle = Shuffle.EachTime) { "baseline" }
-        val result1 = MutFlow.underTest(testId = "seedTest", run = 1, shuffle = Shuffle.EachTime) { "run1" }
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerRun) {
+            MutationRegistry.check("point-a", 3)
+            "baseline"
+        }
 
-        // Should complete without errors
-        assertEquals("run1", result1)
+        val result = MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerRun) {
+            "run1"
+        }
+
+        assertEquals("run1", result)
     }
 
+    // ==================== Edge cases ====================
+
     @Test
-    fun `different runs produce different mutations with Shuffle OnChange`() {
-        // This test verifies the hash function produces different results for different runs
-        // We can't easily test the actual mutation selection without the compiler plugin,
-        // but we can verify the API works correctly
+    fun `mutation run with no discovered points just runs block`() {
+        // No baseline, so no discovered points
+        // This simulates code without @MutationTarget
 
-        MutFlow.underTest(testId = "diffRuns", run = 0, shuffle = Shuffle.OnChange) { "baseline" }
+        val result = MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            "no mutations"
+        }
 
-        // These should all complete successfully
-        val r1 = MutFlow.underTest(testId = "diffRuns", run = 1, shuffle = Shuffle.OnChange) { "r1" }
-        val r2 = MutFlow.underTest(testId = "diffRuns", run = 2, shuffle = Shuffle.OnChange) { "r2" }
-        val r3 = MutFlow.underTest(testId = "diffRuns", run = 3, shuffle = Shuffle.OnChange) { "r3" }
-
-        assertEquals("r1", r1)
-        assertEquals("r2", r2)
-        assertEquals("r3", r3)
+        assertEquals("no mutations", result)
     }
 }

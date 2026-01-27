@@ -17,7 +17,7 @@ class MutationRegistryTest {
 
     @Test
     fun `baseline session discovers points and returns null`() {
-        MutationRegistry.startSession("test-1")
+        MutationRegistry.startSession()
 
         val result1 = MutationRegistry.check("point-a", 3)
         val result2 = MutationRegistry.check("point-b", 2)
@@ -26,7 +26,6 @@ class MutationRegistryTest {
         assertNull(result2, "Baseline should return null for second point")
 
         val sessionResult = MutationRegistry.endSession()
-        assertEquals("test-1", sessionResult.mutTestCaseId)
         assertEquals(2, sessionResult.mutationPointCount)
         assertEquals(
             listOf(
@@ -38,8 +37,8 @@ class MutationRegistryTest {
     }
 
     @Test
-    fun `mutation session activates correct point`() {
-        MutationRegistry.startSession("test-1", ActiveMutation(pointIndex = 1, variantIndex = 0))
+    fun `mutation session activates correct point by pointId`() {
+        MutationRegistry.startSession(ActiveMutation(pointId = "point-b", variantIndex = 0))
 
         val result1 = MutationRegistry.check("point-a", 3)
         val result2 = MutationRegistry.check("point-b", 2)
@@ -50,7 +49,7 @@ class MutationRegistryTest {
 
     @Test
     fun `mutation session activates correct variant`() {
-        MutationRegistry.startSession("test-1", ActiveMutation(pointIndex = 0, variantIndex = 2))
+        MutationRegistry.startSession(ActiveMutation(pointId = "point-a", variantIndex = 2))
 
         val result = MutationRegistry.check("point-a", 3)
 
@@ -59,7 +58,7 @@ class MutationRegistryTest {
 
     @Test
     fun `session tracks point discovery order`() {
-        MutationRegistry.startSession("test-1")
+        MutationRegistry.startSession()
 
         MutationRegistry.check("z-last-alphabetically", 1)
         MutationRegistry.check("a-first-alphabetically", 2)
@@ -72,10 +71,10 @@ class MutationRegistryTest {
 
     @Test
     fun `cannot start session when one is active`() {
-        MutationRegistry.startSession("test-1")
+        MutationRegistry.startSession()
 
         assertFailsWith<IllegalStateException> {
-            MutationRegistry.startSession("test-2")
+            MutationRegistry.startSession()
         }
     }
 
@@ -90,7 +89,7 @@ class MutationRegistryTest {
     fun `hasActiveSession returns correct state`() {
         assertFalse(MutationRegistry.hasActiveSession())
 
-        MutationRegistry.startSession("test-1")
+        MutationRegistry.startSession()
         assertTrue(MutationRegistry.hasActiveSession())
 
         MutationRegistry.endSession()
@@ -99,16 +98,29 @@ class MutationRegistryTest {
 
     @Test
     fun `can start new session after ending previous`() {
-        MutationRegistry.startSession("test-1")
+        MutationRegistry.startSession()
         MutationRegistry.check("point-a", 2)
         MutationRegistry.endSession()
 
-        MutationRegistry.startSession("test-2")
+        MutationRegistry.startSession()
         MutationRegistry.check("point-b", 3)
         val result = MutationRegistry.endSession()
 
-        assertEquals("test-2", result.mutTestCaseId)
         assertEquals(1, result.mutationPointCount)
         assertEquals("point-b", result.discoveredPoints[0].pointId)
+    }
+
+    @Test
+    fun `same point checked multiple times is only discovered once`() {
+        MutationRegistry.startSession()
+
+        MutationRegistry.check("point-a", 3)
+        MutationRegistry.check("point-a", 3)
+        MutationRegistry.check("point-a", 3)
+
+        val result = MutationRegistry.endSession()
+
+        assertEquals(1, result.mutationPointCount)
+        assertEquals("point-a", result.discoveredPoints[0].pointId)
     }
 }

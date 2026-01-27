@@ -23,16 +23,15 @@ object MutationRegistry {
     fun check(pointId: String, variantCount: Int): Int? {
         val session = currentSession ?: return null
 
-        // Get or register the point index for this pointId
-        val pointIndex = session.pointIdToIndex.getOrPut(pointId) {
-            val index = session.discoveredPoints.size
+        // Register point if not seen in this session
+        if (pointId !in session.seenPointIds) {
+            session.seenPointIds.add(pointId)
             session.discoveredPoints.add(DiscoveredPoint(pointId, variantCount))
-            index
         }
 
         // Check if this point is active
         val active = session.activeMutation ?: return null
-        if (active.pointIndex == pointIndex) {
+        if (active.pointId == pointId) {
             return active.variantIndex
         }
 
@@ -42,12 +41,11 @@ object MutationRegistry {
     /**
      * Starts a new mutation testing session.
      *
-     * @param mutTestCaseId Identifier for this test case (assigned by compiler)
      * @param activeMutation If set, which mutation to activate during this session
      */
-    fun startSession(mutTestCaseId: String, activeMutation: ActiveMutation? = null) {
-        check(currentSession == null) { "Session already active: ${currentSession?.mutTestCaseId}" }
-        currentSession = Session(mutTestCaseId, activeMutation)
+    fun startSession(activeMutation: ActiveMutation? = null) {
+        check(currentSession == null) { "Session already active" }
+        currentSession = Session(activeMutation)
     }
 
     /**
@@ -61,7 +59,6 @@ object MutationRegistry {
         currentSession = null
 
         return SessionResult(
-            mutTestCaseId = session.mutTestCaseId,
             mutationPointCount = session.discoveredPoints.size,
             discoveredPoints = session.discoveredPoints.toList()
         )
@@ -80,21 +77,20 @@ object MutationRegistry {
     }
 
     private class Session(
-        val mutTestCaseId: String,
         val activeMutation: ActiveMutation?,
         val discoveredPoints: MutableList<DiscoveredPoint> = mutableListOf(),
-        val pointIdToIndex: MutableMap<String, Int> = mutableMapOf()
+        val seenPointIds: MutableSet<String> = mutableSetOf()
     )
 }
 
 /**
  * Identifies which mutation to activate during a test run.
  *
- * @property pointIndex Index of the mutation point (0-based, in discovery order)
+ * @property pointId Stable identifier for the mutation point
  * @property variantIndex Index of the variant at that point (0-based)
  */
 data class ActiveMutation(
-    val pointIndex: Int,
+    val pointId: String,
     val variantIndex: Int
 )
 
@@ -112,12 +108,10 @@ data class DiscoveredPoint(
 /**
  * Results from a completed mutation testing session.
  *
- * @property mutTestCaseId Identifier for the test case
  * @property mutationPointCount Total number of mutation points discovered
  * @property discoveredPoints Details of each discovered point in order
  */
 data class SessionResult(
-    val mutTestCaseId: String,
     val mutationPointCount: Int,
     val discoveredPoints: List<DiscoveredPoint>
 )

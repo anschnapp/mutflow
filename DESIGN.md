@@ -25,22 +25,11 @@ mutflow uses the "mutant schemata" (or "meta-mutant") technique:
 
 ### Example Transformation
 
-**Test code — before:**
+**Test code:**
 ```kotlin
 @Test
 fun testIsPositive() {
-    val result = MutFlow.underTest {
-        isPositive(5)
-    }
-    assertTrue(result)
-}
-```
-
-**Test code — after compiler plugin:**
-```kotlin
-@Test
-fun testIsPositive() {
-    val result = MutFlow.underTest(mutTestCaseId = "abc123") {
+    val result = MutFlow.underTest(run, selection, shuffle) {
         isPositive(5)
     }
     assertTrue(result)
@@ -81,7 +70,7 @@ Mutation points are discovered **dynamically at runtime**, not statically at cla
 
 1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
 
-2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointIndex, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
+2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointId, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
 This dynamic discovery matters because:
 - Different `underTest` blocks exercise different code paths
@@ -101,7 +90,7 @@ fun testIsPositive() {
     val x = 5
 
     // when
-    val result = MutFlow.underTest {
+    val result = MutFlow.underTest(run, selection, shuffle) {
         isPositive(x)
     }
 
@@ -114,67 +103,111 @@ The `MutFlow.underTest` block:
 - Wraps only the action under test (the "when" in given/when/then)
 - Returns the result for assertions outside the block
 - Assertions stay outside — they should fail when mutations change behavior
+- Parameters (`run`, `selection`, `shuffle`) are typically injected by JUnit extension
 
-### 2. Session-Based Run Model
+### 2. Global Baseline and Run Model
 
-Each test execution follows a session model with explicit run numbers:
+Mutation testing operates at the **test class level** with a global registry:
+
+1. **Run 0 (baseline)**: ALL test cases in the class execute first, discovering mutation points
+2. **Run 1+**: ALL test cases execute with the **same mutation** active
 
 ```kotlin
-// run=0: Baseline/discovery run
-val baseline = MutFlow.underTest(testId = "myTest", run = 0, shuffle = Shuffle.OnChange) {
-    calculator.isPositive(5)
+// Run 0: All tests execute baseline first
+@Test fun testIsPositive() {
+    val result = MutFlow.underTest(run = 0) { calculator.isPositive(5) }
+    assertTrue(result)
 }
 
-// run=1, 2, ...: Mutation runs
-val run1 = MutFlow.underTest(testId = "myTest", run = 1, shuffle = Shuffle.OnChange) {
-    calculator.isPositive(5)
+@Test fun testIsNegative() {
+    val result = MutFlow.underTest(run = 0) { calculator.isPositive(-5) }
+    assertFalse(result)
 }
+
+// Run 1: All tests execute with mutation #1 active
+// If ANY test fails, mutation #1 is killed
 ```
 
-- **run=0**: Discovery run — executes normally, stores discovered mutation points as baseline
-- **run>0**: Mutation run — activates a pseudo-randomly selected mutation based on the shuffle mode
+**Key principles:**
+- **Same mutation for all tests**: A run activates one mutation across the entire test suite
+- **Global discovery**: Mutation points from all tests are merged into a single registry
+- **Touch counting**: During baseline, we count how many tests touch each mutation point
+- **Run limit**: Tests run up to N times (configured), or until all mutations are exhausted
 
 This means:
+- We can determine if a mutation **survives the entire test suite**
+- Mutations touched by fewer tests are identified as higher risk
 - Precise feedback: when a mutant survives, you know exactly which one
-- Progressive coverage: different mutations tested across builds as code changes
-- Low overhead: small fixed number of runs, not proportional to mutation count
 
-### 3. Shuffle Modes
+### 3. Selection and Shuffle Modes
 
-Mutation selection is controlled by the `Shuffle` enum:
+Mutation selection is controlled by two orthogonal parameters:
 
 ```kotlin
+enum class Selection {
+    PureRandom,       // Uniform random selection
+    MostLikelyRandom, // Weighted random favoring least-touched points
+    MostLikelyStable  // Deterministic: always pick least-touched point
+}
+
 enum class Shuffle {
-    EachTime,  // Different mutations each CI build
-    OnChange   // Same mutations until code changes
+    PerRun,    // Different seed each CI build/JVM run
+    PerChange  // Same seed until discovered points change
 }
 ```
 
-**Shuffle.EachTime** (exploratory mode):
-- Hash input: `testId + run + randomSeed`
-- Random seed generated once per JVM, printed to stdout for reproducibility
-- Each CI build tests different mutations
-- Good for development and exploratory testing
+**Selection strategies** (which mutation to pick):
 
-**Shuffle.OnChange** (stable mode):
-- Hash input: `testId + run + hash(discoveredPoints)`
-- Same code = same mutations selected (deterministic)
-- Good for merge request pipelines where reproducibility matters
+| Selection | Behavior |
+|-----------|----------|
+| `PureRandom` | Uniform random selection among untested mutations |
+| `MostLikelyRandom` | Random but weighted toward mutations touched by fewer tests |
+| `MostLikelyStable` | Deterministically pick the mutation touched by fewest tests |
+
+The "touch count" is calculated during baseline (run 0): each time a test executes a mutation point, that point's touch count increments. Mutations touched by fewer tests are considered higher risk and prioritized by `MostLikely*` strategies.
+
+**Shuffle modes** (when to change the seed):
+
+| Shuffle | Behavior |
+|---------|----------|
+| `PerRun` | New random seed each JVM/CI run — exploratory |
+| `PerChange` | Seed based on `hash(discoveredPoints)` — stable until code changes |
 
 **Typical workflow:**
-1. During development: use `Shuffle.EachTime` to explore different mutations
-2. For merge requests: switch to `Shuffle.OnChange` for stable, reproducible results
+1. During development: use `MostLikelyRandom` + `PerRun` to explore high-risk mutations
+2. For merge requests: use `MostLikelyStable` + `PerChange` for reproducible results
 3. Over time: cover all mutations across many builds
 
-### 4. Baseline Storage
+### 4. Global Mutation Registry
 
-The baseline (discovered mutation points) is stored in-memory per testId:
+The mutation registry is a **global in-memory state** shared across all tests:
 
-- `run=0` executes the block, discovers mutation points, stores them
-- `run>0` retrieves the stored baseline, selects a mutation, executes
-- If `run>0` is called without a prior `run=0`, an exception is thrown
+```kotlin
+GlobalRegistry {
+    // From baseline (run 0): which points exist and their variant counts
+    discoveredPoints: Map<PointId, VariantCount>
 
-This allows the high-level API to return just the block result (`T`) instead of the full session info.
+    // From baseline (run 0): how many tests touched each point
+    touchCounts: Map<PointId, Int>
+
+    // Updated each mutation run: which mutations have been tested
+    testedMutations: Set<Mutation>  // Mutation = (pointId, variantIndex)
+}
+```
+
+**Lifecycle:**
+1. **Run 0 (all tests)**: Baseline discovery — mutation points merged globally, touch counts accumulated
+2. **Run 1+**: For each run:
+   - Select a mutation point (using Selection strategy + touch counts)
+   - Pick a variant for that point (excluding already-tested variants)
+   - Add to `testedMutations`, activate, execute lambda
+3. **Exhaustion**: If no untested mutations remain → throw `MutationsExhaustedException`
+
+This ensures:
+- No mutation is tested twice within an execution
+- Touch counts guide selection toward under-tested mutation points
+- Natural termination when all mutations are covered
+- Run count (configured in JUnit) is the normal limit; exception is early-exit for small codebases
 
 ### 5. Trapping Surviving Mutants (Planned)
 
@@ -241,13 +274,14 @@ This limits bytecode bloat and keeps mutations relevant.
 │                         │  Sets run number (0 = baseline, 1-N)  │
 │                         │  Depends on: core, runtime            │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-runtime        │  MutFlow.underTest(run, shuffle) API  │
-│                         │  Shuffle modes (EachTime, OnChange)   │
-│                         │  Baseline storage, mutation selection │
+│  mutflow-runtime        │  MutFlow.underTest(run, selection,    │
+│                         │    shuffle) API                       │
+│                         │  Selection: PureRandom, MostLikely*   │
+│                         │  Shuffle: PerRun, PerChange           │
+│                         │  Global registry, mutation selection  │
 │                         │  Depends on: core                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin│  Transforms @MutationTarget classes   │
-│                         │  Assigns mutTestCaseId to underTest   │
 │                         │  Injects MutationRegistry.check()     │
 │                         │  Depends on: core                     │
 ├─────────────────────────────────────────────────────────────────┤
@@ -275,50 +309,64 @@ JUnit 5 support is planned but not part of the initial tracer bullet.
 ```
 1. Compile time:
    ┌──────────────────┐      ┌─────────────────────────────────┐
-   │ x > 0            │ ───► │ when(registry.check("pt1",...)) │
+   │ x > 0            │ ───► │ when(registry.check("pt1", 3))  │
    └──────────────────┘      └─────────────────────────────────┘
 
-2. High-level API flow:
-   underTest(testId="X", run=0, shuffle=OnChange) { block }
+2. Baseline (run=0) — ALL tests run first:
+
+   Test A: underTest(run=0, selection, shuffle) { calculator.isPositive(5) }
         │
         ▼
-   [Internally calls low-level API with no activeMutation]
-        │
-        ▼
-   registry.check("pt1", 2) → registers: point 0 has 2 variants, returns null
-   registry.check("pt2", 3) → registers: point 1 has 3 variants, returns null
-        │
-        ▼
-   Baseline stored: testId="X" → [DiscoveredPoint("pt1", 2), DiscoveredPoint("pt2", 3)]
+   registry.check("pt1", 3) → registers pt1 with 3 variants, touchCount["pt1"]++, returns null
+   registry.check("pt2", 2) → registers pt2 with 2 variants, touchCount["pt2"]++, returns null
         │
         ▼
    Returns: block result (T)
 
-3. Mutation run (high-level):
-   underTest(testId="X", run=1, shuffle=OnChange) { block }
+   Test B: underTest(run=0, selection, shuffle) { calculator.validate(-1) }
         │
         ▼
-   Retrieves baseline for testId="X"
-        │
-        ▼
-   Computes: hash(testId + run + pointsHash) → selects mutation (pointIndex=1, variantIndex=0)
-        │
-        ▼
-   [Internally calls low-level API with activeMutation = ActiveMutation(1, 0)]
-        │
-        ▼
-   registry.check("pt1", ...) → point 0, not active, returns null
-   registry.check("pt2", ...) → point 1, active! returns variantIndex 0
-        │
-        ▼
-   code takes mutated path (variant at index 0)
+   registry.check("pt1", 3) → already known, touchCount["pt1"]++, returns null
+   registry.check("pt3", 2) → registers pt3 with 2 variants, touchCount["pt3"]++, returns null
         │
         ▼
    Returns: block result (T)
+
+   After all run=0 complete:
+   GlobalRegistry {
+       discoveredPoints: {pt1: 3, pt2: 2, pt3: 2}
+       touchCounts: {pt1: 2, pt2: 1, pt3: 1}  // pt2, pt3 are higher risk
+       testedMutations: {}
+   }
+
+3. Mutation runs (run=1, 2, ...) — ALL tests run with SAME mutation:
+
+   First underTest(run=1, selection=MostLikelyRandom, shuffle=PerChange):
         │
         ▼
-   test assertion fails → mutation killed ✓
-   test assertion passes → mutation survived, report it
+   Select point: pt2 (lowest touch count, weighted random)
+   Select variant: 0 (from range 0..1)
+   Add (pt2, 0) to testedMutations
+   Activate mutation (pt2, 0)
+        │
+        ▼
+   All tests execute with (pt2, 0) active:
+   registry.check("pt1", ...) → not active, returns null
+   registry.check("pt2", ...) → active! returns 0
+   registry.check("pt3", ...) → not active, returns null
+        │
+        ▼
+   If ANY test fails → mutation killed ✓
+   If ALL tests pass → mutation survived, report it
+
+4. Exhaustion:
+   underTest(run=N, ...) where all mutations tested
+        │
+        ▼
+   No untested mutations remain
+        │
+        ▼
+   Throws MutationsExhaustedException → JUnit stops iteration
 ```
 
 ## Technical Decisions
@@ -370,8 +418,8 @@ The compiler plugin is applied ONLY to test compilation, never production:
 ### Phase 1: Tracer Bullet
 End-to-end proof that the architecture works. Thin slice through all layers:
 - K2 compiler plugin that transforms a single mutation type (e.g., `>` to `>=`) in `@MutationTarget` classes
-- `MutFlow.underTest { }` runtime API that orchestrates the session
-- Discovery run counts mutation points, mutation runs activate one mutation each (specified by pointIndex + variantIndex)
+- `MutFlow.underTest(run, selection, shuffle) { }` runtime API that orchestrates the session
+- Discovery run counts mutation points, mutation runs activate one mutation each (specified by pointId + variantIndex)
 - JUnit 6 extension for session orchestration (re-runs test with lifecycle)
 - Surviving mutant prints mutation ID and fails the test
 
@@ -382,46 +430,41 @@ Not useful as a tool yet — the goal is to validate the full loop works before 
 **Completed:**
 - `mutflow-core`: `MutationRegistry` with `check()`, `startSession()`, `endSession()` API
 - `mutflow-core`: Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
+- `mutflow-core`: `ActiveMutation` uses `pointId` (not index) for global registry compatibility
 - `mutflow-compiler-plugin`: K2 compiler plugin that transforms `>` comparisons
 - `mutflow-compiler-plugin`: Transformation produces `when(MutationRegistry.check(...))` branches
-- `mutflow-runtime`: High-level `MutFlow.underTest(testId, run, shuffle) { }` API
-- `mutflow-runtime`: Low-level plumbing API with explicit mutation control
-- `mutflow-runtime`: `Shuffle.EachTime` and `Shuffle.OnChange` modes
-- `mutflow-runtime`: In-memory baseline storage per testId
-- `mutflow-runtime`: Pseudo-random mutation selection via hash function
-- `mutflow-test-sample`: Integration tests demonstrating both APIs
+- `mutflow-runtime`: Global registry model with `MutFlow.underTest(run, selection, shuffle) { }` API
+- `mutflow-runtime`: Selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
+- `mutflow-runtime`: Shuffle modes: `PerRun`, `PerChange`
+- `mutflow-runtime`: Touch count tracking during baseline
+- `mutflow-runtime`: `MutationsExhaustedException` when all mutations tested
+- `mutflow-test-sample`: Integration tests demonstrating the API
 
-**High-level API (recommended):**
+**Target API:**
 ```kotlin
-// run=0: Baseline/discovery
-val baseline = MutFlow.underTest(testId = "myTest", run = 0, shuffle = Shuffle.OnChange) {
-    calculator.isPositive(5)
+// run=0: Baseline/discovery — ALL tests run this first
+@Test fun testIsPositive() {
+    val result = MutFlow.underTest(
+        run = 0,
+        selection = Selection.MostLikelyRandom,
+        shuffle = Shuffle.PerChange
+    ) {
+        calculator.isPositive(5)
+    }
+    assertTrue(result)
 }
-assertTrue(baseline)
 
-// run=1, 2, ...: Mutation runs
-val run1 = MutFlow.underTest(testId = "myTest", run = 1, shuffle = Shuffle.OnChange) {
-    calculator.isPositive(5)
+// run=1, 2, ...: Mutation runs — ALL tests run with same mutation active
+@Test fun testIsPositive() {
+    val result = MutFlow.underTest(
+        run = 1,
+        selection = Selection.MostLikelyRandom,
+        shuffle = Shuffle.PerChange
+    ) {
+        calculator.isPositive(5)
+    }
+    assertTrue(result) // Fails if mutation changes behavior → mutation killed
 }
-assertTrue(run1) // Fails if mutation changes behavior
-```
-
-**Low-level API (plumbing):**
-```kotlin
-// Discovery run: find mutation points
-val discovery = MutFlow.underTest(testId = "myTest") {
-    calculator.isPositive(5)
-}
-// discovery.discovered contains the mutation points found
-
-// Mutation run: activate a specific mutation
-val result = MutFlow.underTest(
-    testId = "myTest",
-    activeMutation = ActiveMutation(pointIndex = 0, variantIndex = 1)
-) {
-    calculator.isPositive(5)
-}
-// result.activeMutation confirms which mutation was active
 ```
 
 **Transformation example:**
@@ -440,8 +483,8 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 
 **Remaining for Phase 1:**
 - `mutflow-junit6`: JUnit 6 extension for automatic multi-run orchestration
+- `mutflow-junit6`: `MutationsExhaustedException` handling to stop iteration
 - Surviving mutant detection and reporting
-- Compiler plugin: auto-generate `testId` from call site (currently manual)
 
 ### Phase 2: Core Features
 - Multiple mutation types (arithmetic, boolean, null checks, etc.)
