@@ -65,18 +65,23 @@ That's it! The `@MutFlowTest` annotation handles everything:
 
 ```
 CalculatorTest > Baseline
+    [mutflow] Starting baseline run (discovery)
     [mutflow] Discovered mutation point: sample.Calculator_0 with 3 variants
-    → All tests PASS ✓
 
 CalculatorTest > Mutation: sample.Calculator_0:0
-    → isPositive returns false for zero() FAILED → KILLED ✓
+    [mutflow] Activated mutation: sample.Calculator_0:0
+    isPositive returns false for zero() FAILED  ← mutation killed
 
 CalculatorTest > Mutation: sample.Calculator_0:1
-    → isPositive returns true for positive numbers() FAILED → KILLED ✓
+    [mutflow] Activated mutation: sample.Calculator_0:1
+    isPositive returns true for positive numbers() FAILED  ← mutation killed
 
 CalculatorTest > Mutation: sample.Calculator_0:2
-    → isPositive returns true for positive numbers() FAILED → KILLED ✓
+    [mutflow] Activated mutation: sample.Calculator_0:2
+    isPositive returns true for positive numbers() FAILED  ← mutation killed
 ```
+
+**Note:** Test failures during mutation runs mean the mutation was killed (good!). If all tests pass during a mutation run, the mutation survived and your tests may have a gap.
 
 ## Configuration
 

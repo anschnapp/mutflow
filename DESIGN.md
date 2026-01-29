@@ -51,7 +51,7 @@ class Calculator {
 @MutationTarget
 class Calculator {
     fun isPositive(x: Int): Boolean {
-        val pointId = "a1b2c3d4"  // IR hash of expression
+        val pointId = "sample.Calculator_0"  // className + counter (Phase 2: IR hash)
         val variantCount = 3
 
         return when (MutationRegistry.check(pointId, variantCount)) {
@@ -69,6 +69,8 @@ class Calculator {
 Mutation points are discovered **dynamically at runtime**, not statically at class load:
 
 1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
+
+**Note:** Point IDs currently use the format `ClassName_N` (e.g., `sample.Calculator_0`). Phase 2 will switch to IR-hash based IDs for stability across refactoring.
 
 2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointId, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
@@ -213,7 +215,7 @@ This ensures:
 
 When a mutant survives, its mutation ID is printed:
 ```
-MUTANT SURVIVED: a1b2c3d4:COMPARISON:1
+MUTANT SURVIVED: sample.Calculator_0:1
 ```
 
 This ID can be passed back to **trap** the mutant — ensuring it runs every time while you fix the test gap:
@@ -227,7 +229,7 @@ fun testCalculate() {
 
     // when
     val result = MutFlow.underTest(
-        trap = listOf("a1b2c3d4:COMPARISON:1")
+        trap = listOf("sample.Calculator_0:1")
     ) {
         calculate(x, y)
     }
@@ -270,29 +272,29 @@ This limits bytecode bloat and keeps mutations relevant.
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Test Execution                          │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-junit6         │  @MutFlowTest meta-annotation         │
-│                         │  @ClassTemplate + @ExtendWith combined│
-│                         │  MutFlowExtension: thin adapter that  │
-│                         │    calls MutFlow session management   │
-│                         │  Depends on: runtime                  │
+│  mutflow-junit6           │  @MutFlowTest meta-annotation       │
+│                           │  @ClassTemplate + @ExtendWith       │
+│                           │  MutFlowExtension: thin adapter     │
+│                           │    that calls MutFlow session mgmt  │
+│                           │  Depends on: mutflow-runtime        │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-runtime        │  MutFlowSession: per-class state      │
-│                         │  MutFlow: session management +        │
-│                         │    underTest() API (parameterless     │
-│                         │    and explicit versions)             │
-│                         │  Selection: PureRandom, MostLikely*   │
-│                         │  Shuffle: PerRun, PerChange           │
-│                         │  Depends on: core                     │
+│  mutflow-runtime          │  MutFlowSession: per-class state    │
+│                           │  MutFlow: session management +      │
+│                           │    underTest() API (parameterless   │
+│                           │    and explicit versions)           │
+│                           │  Selection: PureRandom, MostLikely* │
+│                           │  Shuffle: PerRun, PerChange         │
+│                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-compiler-plugin│  Transforms @MutationTarget classes   │
-│                         │  Injects MutationRegistry.check()     │
-│                         │  Depends on: core                     │
+│  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
+│                           │  Injects MutationRegistry.check()   │
+│                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-core           │  @MutationTarget annotation           │
-│                         │  MutationRegistry (per-underTest      │
-│                         │    session for discovery/activation)  │
-│                         │  Shared types between all modules     │
-│                         │  Depends on: nothing                  │
+│  mutflow-core             │  @MutationTarget annotation         │
+│                           │  MutationRegistry (per-underTest    │
+│                           │    session for discovery/activation)│
+│                           │  Shared types between all modules   │
+│                           │  Depends on: nothing                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -337,17 +339,17 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
 
 ```
 1. Compile time:
-   ┌──────────────────┐      ┌─────────────────────────────────┐
-   │ x > 0            │ ───► │ when(registry.check("pt1", 3))  │
-   └──────────────────┘      └─────────────────────────────────┘
+   ┌──────────────────┐      ┌───────────────────────────────────────────────────┐
+   │ x > 0            │ ───► │ when(registry.check("sample.Calculator_0", 3))    │
+   └──────────────────┘      └───────────────────────────────────────────────────┘
 
 2. Baseline (run=0) — ALL tests run first:
 
    Test A: underTest(run=0, selection, shuffle) { calculator.isPositive(5) }
         │
         ▼
-   registry.check("pt1", 3) → registers pt1 with 3 variants, touchCount["pt1"]++, returns null
-   registry.check("pt2", 2) → registers pt2 with 2 variants, touchCount["pt2"]++, returns null
+   registry.check("sample.Calculator_0", 3) → registers point, touchCount++, returns null
+   registry.check("sample.Calculator_1", 2) → registers point, touchCount++, returns null
         │
         ▼
    Returns: block result (T)
@@ -355,16 +357,16 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
    Test B: underTest(run=0, selection, shuffle) { calculator.validate(-1) }
         │
         ▼
-   registry.check("pt1", 3) → already known, touchCount["pt1"]++, returns null
-   registry.check("pt3", 2) → registers pt3 with 2 variants, touchCount["pt3"]++, returns null
+   registry.check("sample.Calculator_0", 3) → already known, touchCount++, returns null
+   registry.check("sample.Validator_0", 2) → registers point, touchCount++, returns null
         │
         ▼
    Returns: block result (T)
 
    After all run=0 complete:
    GlobalRegistry {
-       discoveredPoints: {pt1: 3, pt2: 2, pt3: 2}
-       touchCounts: {pt1: 2, pt2: 1, pt3: 1}  // pt2, pt3 are higher risk
+       discoveredPoints: {sample.Calculator_0: 3, sample.Calculator_1: 2, sample.Validator_0: 2}
+       touchCounts: {sample.Calculator_0: 2, sample.Calculator_1: 1, sample.Validator_0: 1}
        testedMutations: {}
    }
 
@@ -373,19 +375,19 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
    First underTest(run=1, selection=MostLikelyRandom, shuffle=PerChange):
         │
         ▼
-   Select point: pt2 (lowest touch count, weighted random)
+   Select point: sample.Calculator_1 (lowest touch count, weighted random)
    Select variant: 0 (from range 0..1)
-   Add (pt2, 0) to testedMutations
-   Activate mutation (pt2, 0)
+   Add (sample.Calculator_1, 0) to testedMutations
+   Activate mutation (sample.Calculator_1, 0)
         │
         ▼
-   All tests execute with (pt2, 0) active:
-   registry.check("pt1", ...) → not active, returns null
-   registry.check("pt2", ...) → active! returns 0
-   registry.check("pt3", ...) → not active, returns null
+   All tests execute with (sample.Calculator_1, 0) active:
+   registry.check("sample.Calculator_0", ...) → not active, returns null
+   registry.check("sample.Calculator_1", ...) → active! returns 0
+   registry.check("sample.Validator_0", ...) → not active, returns null
         │
         ▼
-   If ANY test fails → mutation killed ✓
+   If ANY test fails → mutation killed
    If ALL tests pass → mutation survived, report it
 
 4. Exhaustion:
@@ -495,30 +497,35 @@ class CalculatorTest {
 **Example output:**
 ```
 CalculatorTest > Baseline
+    [mutflow] Starting baseline run (discovery)
     [mutflow] Discovered mutation point: sample.Calculator_0 with 3 variants
-    → All tests PASS
 
 CalculatorTest > Mutation: sample.Calculator_0:0
-    → isPositive returns false for zero() FAILED → KILLED
+    [mutflow] Activated mutation: sample.Calculator_0:0
+    isPositive returns false for zero() FAILED  ← mutation killed
 
 CalculatorTest > Mutation: sample.Calculator_0:1
-    → isPositive returns true for positive numbers() FAILED → KILLED
+    [mutflow] Activated mutation: sample.Calculator_0:1
+    isPositive returns true for positive numbers() FAILED  ← mutation killed
 
 CalculatorTest > Mutation: sample.Calculator_0:2
-    → isPositive returns true for positive numbers() FAILED → KILLED
+    [mutflow] Activated mutation: sample.Calculator_0:2
+    isPositive returns true for positive numbers() FAILED  ← mutation killed
 ```
 
-**Transformation (unchanged):**
+**Note:** Currently, killed mutations appear as test failures. Phase 2 will add explicit survivor reporting to distinguish "mutation killed" (test failed, good) from "mutation survived" (test passed, needs attention).
+
+**Transformation:**
 ```kotlin
 // Before (in @MutationTarget class)
 fun isPositive(x: Int) = x > 0
 
 // After compiler plugin
 fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3)) {
-    0 -> x >= 0   // variant: greater-or-equal
-    1 -> x < 0    // variant: less-than
-    2 -> x == 0   // variant: equals
-    else -> x > 0 // original
+    0 -> x >= 0   // variant 0: greater-or-equal
+    1 -> x < 0    // variant 1: less-than
+    2 -> x == 0   // variant 2: equals
+    else -> x > 0 // original (when check returns null)
 }
 ```
 
