@@ -64,7 +64,8 @@ object MutFlow {
      * Called by JUnit extension when a @MutFlowTest class finishes.
      */
     fun closeSession(sessionId: String) {
-        sessions.remove(sessionId)
+        val session = sessions.remove(sessionId)
+        session?.printSummary()
         if (activeSessionId == sessionId) {
             activeSessionId = null
         }
@@ -425,3 +426,14 @@ data class RegistryState(
  * Thrown when all mutations have been tested and there are no more to test.
  */
 class MutationsExhaustedException(message: String) : RuntimeException(message)
+
+/**
+ * Thrown when a mutation survives (all tests pass with the mutation active).
+ * This indicates a gap in test coverage - the tests didn't detect the mutation.
+ */
+class MutantSurvivedException(
+    val mutation: Mutation
+) : AssertionError(
+    "MUTANT SURVIVED: ${mutation.pointId}:${mutation.variantIndex}\n" +
+    "The mutation was not detected by any test. Consider adding a test that would fail when this mutation is active."
+)

@@ -496,24 +496,40 @@ class CalculatorTest {
 
 **Example output:**
 ```
-CalculatorTest > Baseline
-    [mutflow] Starting baseline run (discovery)
-    [mutflow] Discovered mutation point: sample.Calculator_0 with 3 variants
+CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Baseline > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:0
-    [mutflow] Activated mutation: sample.Calculator_0:0
-    isPositive returns false for zero() FAILED  ← mutation killed
+CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:1
-    [mutflow] Activated mutation: sample.Calculator_0:1
-    isPositive returns true for positive numbers() FAILED  ← mutation killed
+CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for positive numbers() PASSED
+...
 
-CalculatorTest > Mutation: sample.Calculator_0:2
-    [mutflow] Activated mutation: sample.Calculator_0:2
-    isPositive returns true for positive numbers() FAILED  ← mutation killed
+╔════════════════════════════════════════════════════════════════╗
+║                    MUTATION TESTING SUMMARY                    ║
+╠════════════════════════════════════════════════════════════════╣
+║  Total mutations discovered:   3                              ║
+║  Tested this run:              3                              ║
+║  ├─ Killed:                    3  ✓                           ║
+║  └─ Survived:                  0  ✓                           ║
+║  Remaining untested:           0                              ║
+╠════════════════════════════════════════════════════════════════╣
+║  DETAILS:                                                      ║
+║  ✓ sample.Calculator_0:0                                        ║
+║      killed by: isPositive returns false for zero()            ║
+║  ✓ sample.Calculator_0:1                                        ║
+║      killed by: isPositive returns true for positive numbers() ║
+║  ✓ sample.Calculator_0:2                                        ║
+║      killed by: isPositive returns true for positive numbers() ║
+╚════════════════════════════════════════════════════════════════╝
 ```
 
-**Note:** Currently, killed mutations appear as test failures. Phase 2 will add explicit survivor reporting to distinguish "mutation killed" (test failed, good) from "mutation survived" (test passed, needs attention).
+**Key behavior:**
+- **Killed mutations**: Tests that catch the mutation appear as PASSED (the exception is caught and recorded)
+- **Surviving mutations**: If all tests pass with a mutation active, `MutantSurvivedException` is thrown and the build fails
+- **Summary**: At the end of each test class, a summary shows which mutations were tested and their results
 
 **Transformation:**
 ```kotlin

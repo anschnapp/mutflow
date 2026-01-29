@@ -28,4 +28,8 @@ tasks.withType<KotlinCompilationTask<*>>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
+    }
 }

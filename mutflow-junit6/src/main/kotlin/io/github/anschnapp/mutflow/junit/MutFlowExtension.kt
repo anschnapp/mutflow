@@ -1,6 +1,7 @@
 package io.github.anschnapp.mutflow.junit
 
 import io.github.anschnapp.mutflow.MutFlow
+import io.github.anschnapp.mutflow.MutantSurvivedException
 import io.github.anschnapp.mutflow.Mutation
 import org.junit.jupiter.api.extension.BeforeClassTemplateInvocationCallback
 import org.junit.jupiter.api.extension.AfterClassTemplateInvocationCallback
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.extension.ClassTemplateInvocationContext
 import org.junit.jupiter.api.extension.ClassTemplateInvocationContextProvider
 import org.junit.jupiter.api.extension.Extension
 import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.TestExecutionExceptionHandler
 import java.util.stream.Stream
 import kotlin.streams.asStream
 
@@ -94,8 +96,29 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             println("[mutflow] Starting mutation run: ${mutation.pointId}:${mutation.variantIndex}")
                         }
                     },
-                    // After: end the run
+                    // Exception handler: during mutation runs, catch failures (= mutation killed)
+                    TestExecutionExceptionHandler { context, throwable ->
+                        if (run == 0) {
+                            // Baseline: let failures propagate normally
+                            throw throwable
+                        } else {
+                            // Mutation run: failure means mutation was killed (success!)
+                            val session = MutFlow.getSession(sessionId)
+                            session?.markTestFailed(context.displayName)
+                            // Don't rethrow - swallow the exception
+                        }
+                    },
+                    // After: record result, check for surviving mutation, then end the run
                     AfterClassTemplateInvocationCallback { _ ->
+                        val session = MutFlow.getSession(sessionId)
+                        if (session != null && run > 0) {
+                            session.recordMutationResult()
+                            if (session.didMutationSurvive()) {
+                                val survivedMutation = session.getActiveMutation()!!
+                                MutFlow.endRun(sessionId)
+                                throw MutantSurvivedException(survivedMutation)
+                            }
+                        }
                         MutFlow.endRun(sessionId)
                     }
                 )

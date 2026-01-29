@@ -32,6 +32,12 @@ class MutFlowSession internal constructor(
     // Currently active mutation (for run >= 1)
     private var activeMutation: Mutation? = null
 
+    // Tracks whether any test failed in the current run
+    private var testFailedInCurrentRun: Boolean = false
+
+    // Results of mutation testing: mutation -> result
+    private val mutationResults = mutableMapOf<Mutation, MutationResult>()
+
     /**
      * Selects the next mutation to test for the given run.
      * Called by JUnit extension when building invocation contexts.
@@ -63,12 +69,59 @@ class MutFlowSession internal constructor(
         require(run >= 0) { "run must be non-negative, got: $run" }
         currentRun = run
         activeMutation = mutation
+        testFailedInCurrentRun = false
 
         if (mutation != null) {
             testedMutations.add(mutation)
             println("[mutflow] Activated mutation: ${mutation.pointId}:${mutation.variantIndex}")
         }
     }
+
+    // Name of the first test that killed the current mutation
+    private var killedByTest: String? = null
+
+    /**
+     * Marks that a test failed in the current run (mutation killed).
+     * Called by JUnit extension's exception handler.
+     *
+     * @param testName The name of the test that killed the mutation
+     */
+    fun markTestFailed(testName: String) {
+        if (!testFailedInCurrentRun && activeMutation != null) {
+            // Record first test that killed this mutation
+            killedByTest = testName
+        }
+        testFailedInCurrentRun = true
+    }
+
+    /**
+     * Records the result of the current mutation run.
+     * Called at the end of each mutation run.
+     */
+    fun recordMutationResult() {
+        val mutation = activeMutation ?: return
+        if (currentRun == null || currentRun == 0) return
+
+        if (testFailedInCurrentRun) {
+            mutationResults[mutation] = MutationResult.Killed(killedByTest ?: "unknown")
+        } else {
+            mutationResults[mutation] = MutationResult.Survived
+        }
+        killedByTest = null
+    }
+
+    /**
+     * Returns true if we're in a mutation run and no test has failed.
+     * This means the mutation survived (tests didn't catch it).
+     */
+    fun didMutationSurvive(): Boolean {
+        return currentRun != null && currentRun!! > 0 && activeMutation != null && !testFailedInCurrentRun
+    }
+
+    /**
+     * Returns the currently active mutation, if any.
+     */
+    fun getActiveMutation(): Mutation? = activeMutation
 
     /**
      * Ends the current run.
@@ -258,6 +311,65 @@ class MutFlowSession internal constructor(
         return buildUntestedMutations().isNotEmpty()
     }
 
+    /**
+     * Returns a summary of the mutation testing results.
+     */
+    fun getSummary(): MutationTestingSummary {
+        val totalMutations = discoveredPoints.values.sum()
+        val tested = mutationResults.size
+        val killed = mutationResults.count { it.value is MutationResult.Killed }
+        val survived = mutationResults.count { it.value is MutationResult.Survived }
+        val untested = totalMutations - tested
+
+        return MutationTestingSummary(
+            totalMutations = totalMutations,
+            testedThisRun = tested,
+            killed = killed,
+            survived = survived,
+            untested = untested,
+            results = mutationResults.toMap()
+        )
+    }
+
+    /**
+     * Prints a summary of mutation testing results.
+     */
+    fun printSummary() {
+        val summary = getSummary()
+
+        println()
+        println("╔════════════════════════════════════════════════════════════════╗")
+        println("║                    MUTATION TESTING SUMMARY                    ║")
+        println("╠════════════════════════════════════════════════════════════════╣")
+        println("║  Total mutations discovered: ${summary.totalMutations.toString().padStart(3)}                              ║")
+        println("║  Tested this run:            ${summary.testedThisRun.toString().padStart(3)}                              ║")
+        println("║  ├─ Killed:                  ${summary.killed.toString().padStart(3)}  ✓                           ║")
+        println("║  └─ Survived:                ${summary.survived.toString().padStart(3)}  ${if (summary.survived > 0) "✗" else "✓"}                           ║")
+        println("║  Remaining untested:         ${summary.untested.toString().padStart(3)}                              ║")
+        println("╠════════════════════════════════════════════════════════════════╣")
+
+        if (summary.results.isNotEmpty()) {
+            println("║  DETAILS:                                                      ║")
+            for ((mutation, result) in summary.results) {
+                val mutationStr = "${mutation.pointId}:${mutation.variantIndex}"
+                when (result) {
+                    is MutationResult.Killed -> {
+                        println("║  ✓ ${mutationStr.padEnd(61)}║")
+                        val testLine = "      killed by: ${result.testName}"
+                        println("║${testLine.take(64).padEnd(64)}║")
+                    }
+                    is MutationResult.Survived -> {
+                        println("║  ✗ ${mutationStr.padEnd(61)}║")
+                        println("║      SURVIVED - no test caught this mutation!${" ".repeat(19)}║")
+                    }
+                }
+            }
+        }
+
+        println("╚════════════════════════════════════════════════════════════════╝")
+        println()
+    }
+
     // ==================== Testing support ====================
 
     /**
@@ -277,4 +389,24 @@ data class SessionState(
     val testedMutations: Set<Mutation>,
     val currentRun: Int?,
     val activeMutation: Mutation?
+)
+
+/**
+ * Result of testing a single mutation.
+ */
+sealed class MutationResult {
+    data class Killed(val testName: String) : MutationResult()
+    data object Survived : MutationResult()
+}
+
+/**
+ * Summary of mutation testing results for a session.
+ */
+data class MutationTestingSummary(
+    val totalMutations: Int,
+    val testedThisRun: Int,
+    val killed: Int,
+    val survived: Int,
+    val untested: Int,
+    val results: Map<Mutation, MutationResult>
 )
