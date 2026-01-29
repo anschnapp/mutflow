@@ -11,7 +11,7 @@
 mutflow brings mutation testing to Kotlin with minimal overhead. Instead of the traditional approach (compile and run each mutant separately), mutflow:
 
 1. **Compiles once** — All mutation variants are injected at compile time as conditional branches
-2. **Discovers dynamically** — Mutation points are counted during baseline test execution
+2. **Discovers dynamically** — Mutation points are found during baseline test execution
 3. **Selects intelligently** — Prioritizes under-tested mutations based on touch counts
 4. **Progresses over builds** — Different mutations are tested across builds, like continuous fuzzing
 
@@ -23,9 +23,9 @@ mutflow trades exhaustiveness for practicality: low setup cost, no separate tool
 
 ## Status
 
-**Under Construction** — This project is in early development and **not yet ready for use**. The core architecture is being validated through a "tracer bullet" implementation. Expect breaking changes and incomplete functionality.
+**Phase 1 Complete** — The tracer bullet is working end-to-end. The JUnit 6 integration runs your test class multiple times (baseline + mutation runs), and killed mutations are visible in test output. Not yet production-ready, but the core architecture is validated.
 
-## How It Works
+## Quick Start
 
 ```kotlin
 // Mark code under test
@@ -34,38 +34,60 @@ class Calculator {
     fun isPositive(x: Int) = x > 0
 }
 
-// Test with mutation testing
-@Test
-fun testIsPositive() {
-    val calculator = Calculator()
+// Test with mutation testing - simple!
+@MutFlowTest
+class CalculatorTest {
+    private val calculator = Calculator()
 
-    // run=0: Baseline/discovery run (ALL tests run this first)
-    val baseline = MutFlow.underTest(
-        run = 0,
-        selection = Selection.MostLikelyStable,
-        shuffle = Shuffle.PerChange
-    ) {
-        calculator.isPositive(5)
+    @Test
+    fun `isPositive returns true for positive numbers`() {
+        val result = MutFlow.underTest {
+            calculator.isPositive(5)
+        }
+        assertTrue(result)
     }
-    assertTrue(baseline)
 
-    // run=1, 2, ...: Mutation runs (ALL tests run with the SAME mutation active)
-    val run1 = MutFlow.underTest(
-        run = 1,
-        selection = Selection.MostLikelyStable,
-        shuffle = Shuffle.PerChange
-    ) {
-        calculator.isPositive(5)
+    @Test
+    fun `isPositive returns false for negative numbers`() {
+        val result = MutFlow.underTest {
+            calculator.isPositive(-5)
+        }
+        assertFalse(result)
     }
-    assertTrue(run1) // Fails if mutation changes behavior → mutation killed!
 }
 ```
 
-### The Model
+That's it! The `@MutFlowTest` annotation handles everything:
+- **Baseline run**: Discovers mutation points, all tests pass normally
+- **Mutation runs**: Each mutation is activated, tests that fail = mutation killed
 
-1. **run=0 (baseline)**: All tests execute first, discovering mutation points and tracking which tests touch each point
-2. **run=1, 2, ...**: All tests execute with the **same mutation** active — if any test fails, the mutation is killed
-3. **Exhaustion**: When all mutations have been tested, `MutationsExhaustedException` signals completion
+### Example Output
+
+```
+CalculatorTest > Baseline
+    [mutflow] Discovered mutation point: sample.Calculator_0 with 3 variants
+    → All tests PASS ✓
+
+CalculatorTest > Mutation: sample.Calculator_0:0
+    → isPositive returns false for zero() FAILED → KILLED ✓
+
+CalculatorTest > Mutation: sample.Calculator_0:1
+    → isPositive returns true for positive numbers() FAILED → KILLED ✓
+
+CalculatorTest > Mutation: sample.Calculator_0:2
+    → isPositive returns true for positive numbers() FAILED → KILLED ✓
+```
+
+## Configuration
+
+```kotlin
+@MutFlowTest(
+    maxRuns = 5,                           // Baseline + up to 4 mutation runs
+    selection = Selection.MostLikelyStable, // Prioritize under-tested mutations
+    shuffle = Shuffle.PerChange             // Stable across builds until code changes
+)
+class CalculatorTest { ... }
+```
 
 ### Selection Strategies
 
@@ -74,8 +96,6 @@ fun testIsPositive() {
 | `PureRandom` | Uniform random selection among untested mutations |
 | `MostLikelyRandom` | Random but weighted toward mutations touched by fewer tests |
 | `MostLikelyStable` | Deterministically pick the mutation touched by fewest tests |
-
-Mutations touched by fewer tests are considered higher risk — `MostLikely*` strategies prioritize these.
 
 ### Shuffle Modes
 
@@ -90,24 +110,41 @@ Mutations touched by fewer tests are considered higher risk — `MostLikely*` st
 
 ## Current Features
 
-- Kotlin K2 compiler plugin (transforms `>` operator)
-- High-level `MutFlow.underTest(run, selection, shuffle) { }` API
-- Three selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
-- Two shuffle modes: `PerRun` (exploratory) and `PerChange` (stable)
-- Global mutation registry with touch count tracking
-- Automatic mutation exhaustion detection
-- Scoped mutations via `@MutationTarget` annotation
+- **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
+- **K2 compiler plugin** — Transforms `>` operator in `@MutationTarget` classes
+- **Session-based architecture** — Clean lifecycle, no leaked global state
+- **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension
+- **Selection strategies** — `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
+- **Shuffle modes** — `PerRun` (exploratory) and `PerChange` (stable)
+- **Touch count tracking** — Prioritizes under-tested mutation points
 
 ## Planned Features
 
-- JUnit 6 extension for automatic run orchestration
+- Survivor reporting (currently killed mutations show as test failures)
 - Trap mechanism to pin surviving mutants while fixing tests
-- Additional mutation operators (arithmetic, boolean, null checks)
-- Surviving mutant detection and reporting
+- Additional mutation operators (arithmetic, boolean, null checks, all comparison operators)
+- Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
+- Gradle plugin for easy setup
+
+## Manual API
+
+For testing or custom integrations, you can use the explicit API:
+
+```kotlin
+// Baseline
+MutFlow.underTest(run = 0, Selection.MostLikelyStable, Shuffle.PerChange) {
+    calculator.isPositive(5)
+}
+
+// Mutation runs
+MutFlow.underTest(run = 1, Selection.MostLikelyStable, Shuffle.PerChange) {
+    calculator.isPositive(5)
+}
+```
 
 ## Documentation
 
-See [DESIGN.md](DESIGN.md) for the full design document, tradeoffs, and implementation plan.
+See [DESIGN.md](DESIGN.md) for the full design document, architecture details, and implementation plan.
 
 ## Acknowledgments
 

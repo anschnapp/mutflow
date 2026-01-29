@@ -1,32 +1,155 @@
 package io.github.anschnapp.mutflow
 
+import java.util.UUID
 import kotlin.random.Random
 
 /**
  * Main entry point for mutation testing in tests.
  *
- * Manages a global mutation registry and orchestrates mutation runs.
+ * Manages mutation testing sessions and provides the underTest API.
+ *
+ * Usage with JUnit extension (@MutFlowTest):
+ * ```
+ * @MutFlowTest
+ * class MyTest {
+ *     @Test
+ *     fun testSomething() {
+ *         val result = MutFlow.underTest { myCode() }
+ *         assertEquals(expected, result)
+ *     }
+ * }
+ * ```
+ *
+ * Usage without JUnit extension (manual):
+ * ```
+ * MutFlow.underTest(run = 0, Selection.MostLikelyStable, Shuffle.PerChange) { myCode() }
+ * MutFlow.underTest(run = 1, Selection.MostLikelyStable, Shuffle.PerChange) { myCode() }
+ * ```
  */
 object MutFlow {
 
-    // Global registry: discovered points with their variant counts
-    private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
+    // Active sessions, keyed by session ID
+    private val sessions = mutableMapOf<String, MutFlowSession>()
 
-    // Global registry: touch counts from baseline runs
-    private val touchCounts = mutableMapOf<String, Int>() // pointId -> count
+    // Currently active session (for parameterless underTest)
+    private var activeSessionId: String? = null
 
-    // Global registry: mutations that have been tested in this execution
-    private val testedMutations = mutableSetOf<Mutation>()
-
-    // Seed for Shuffle.PerRun mode - generated once per JVM
-    private var globalSeed: Long? = null
+    // ==================== Session Management (for JUnit extension) ====================
 
     /**
-     * High-level API for mutation testing.
+     * Creates a new session for a test class.
+     * Called by JUnit extension at the start of a @MutFlowTest class.
+     *
+     * @return The session ID
+     */
+    fun createSession(
+        selection: Selection,
+        shuffle: Shuffle,
+        maxRuns: Int
+    ): String {
+        val id = UUID.randomUUID().toString()
+        val session = MutFlowSession(
+            id = id,
+            selection = selection,
+            shuffle = shuffle,
+            maxRuns = maxRuns
+        )
+        sessions[id] = session
+        activeSessionId = id
+        return id
+    }
+
+    /**
+     * Closes a session and cleans up its state.
+     * Called by JUnit extension when a @MutFlowTest class finishes.
+     */
+    fun closeSession(sessionId: String) {
+        sessions.remove(sessionId)
+        if (activeSessionId == sessionId) {
+            activeSessionId = null
+        }
+    }
+
+    /**
+     * Selects the next mutation for a run.
+     * Called by JUnit extension when building invocation contexts.
+     *
+     * @param sessionId The session ID
+     * @param run Run number (must be >= 1)
+     * @return The selected mutation, or null if exhausted
+     */
+    fun selectMutationForRun(sessionId: String, run: Int): Mutation? {
+        val session = sessions[sessionId]
+            ?: error("Session not found: $sessionId")
+        return session.selectMutationForRun(run)
+    }
+
+    /**
+     * Starts a run within a session.
+     * Called by JUnit extension before each class template invocation.
+     *
+     * @param sessionId The session ID
+     * @param run Run number: 0 = baseline, 1+ = mutation runs
+     * @param mutation Pre-selected mutation for this run (null for baseline)
+     */
+    fun startRun(sessionId: String, run: Int, mutation: Mutation? = null) {
+        val session = sessions[sessionId]
+            ?: error("Session not found: $sessionId")
+        session.startRun(run, mutation)
+    }
+
+    /**
+     * Ends the current run within a session.
+     * Called by JUnit extension after each class template invocation.
+     */
+    fun endRun(sessionId: String) {
+        sessions[sessionId]?.endRun()
+    }
+
+    /**
+     * Returns the session for the given ID.
+     */
+    fun getSession(sessionId: String): MutFlowSession? = sessions[sessionId]
+
+    /**
+     * Returns true if the session has untested mutations remaining.
+     */
+    fun hasUntestedMutations(sessionId: String): Boolean {
+        return sessions[sessionId]?.hasUntestedMutations() ?: false
+    }
+
+    // ==================== underTest API ====================
+
+    /**
+     * Executes the block under mutation testing using the active session.
+     *
+     * This is the preferred API when using @MutFlowTest annotation.
+     * The JUnit extension manages session lifecycle and run numbers automatically.
+     *
+     * @param block The code under test
+     * @return The result of the block
+     * @throws IllegalStateException if no session is active
+     * @throws MutationsExhaustedException if all mutations have been tested
+     */
+    fun <T> underTest(block: () -> T): T {
+        val sessionId = activeSessionId
+            ?: error("No active MutFlow session. Use @MutFlowTest annotation or call underTest(run, selection, shuffle) directly.")
+
+        val session = sessions[sessionId]
+            ?: error("Active session not found: $sessionId")
+
+        return session.underTest(block)
+    }
+
+    /**
+     * Executes the block under mutation testing with explicit parameters.
+     *
+     * Use this for manual testing or when not using @MutFlowTest annotation.
+     * Creates an ephemeral session for the call.
      *
      * @param run Run number: 0 = baseline/discovery, 1+ = mutation runs
      * @param selection How to select which mutation to test
-     * @param shuffle When to reseed the selection (per run or per code change)
+     * @param shuffle When to reseed the selection
      * @param block The code under test
      * @return The result of the block
      * @throws MutationsExhaustedException if all mutations have been tested
@@ -37,17 +160,34 @@ object MutFlow {
         shuffle: Shuffle,
         block: () -> T
     ): T {
+        // Use the legacy session for backwards compatibility
+        return legacyUnderTest(run, selection, shuffle, block)
+    }
+
+    // ==================== Legacy support (for existing tests) ====================
+
+    // Legacy global state for explicit underTest(run, selection, shuffle) calls
+    private val legacyDiscoveredPoints = mutableMapOf<String, Int>()
+    private val legacyTouchCounts = mutableMapOf<String, Int>()
+    private val legacyTestedMutations = mutableSetOf<Mutation>()
+    private var legacyGlobalSeed: Long? = null
+
+    private fun <T> legacyUnderTest(
+        run: Int,
+        selection: Selection,
+        shuffle: Shuffle,
+        block: () -> T
+    ): T {
         require(run >= 0) { "run must be non-negative, got: $run" }
 
         return if (run == 0) {
-            executeBaseline(block)
+            legacyExecuteBaseline(block)
         } else {
-            executeMutationRun(run, selection, shuffle, block)
+            legacyExecuteMutationRun(run, selection, shuffle, block)
         }
     }
 
-    private fun <T> executeBaseline(block: () -> T): T {
-        // Run discovery (no active mutation)
+    private fun <T> legacyExecuteBaseline(block: () -> T): T {
         MutationRegistry.startSession(activeMutation = null)
 
         val result = try {
@@ -58,37 +198,32 @@ object MutFlow {
 
         val sessionResult = MutationRegistry.endSession()
 
-        // Merge discovered points into global registry and update touch counts
         for (point in sessionResult.discoveredPoints) {
-            discoveredPoints[point.pointId] = point.variantCount
-            touchCounts[point.pointId] = (touchCounts[point.pointId] ?: 0) + 1
+            legacyDiscoveredPoints[point.pointId] = point.variantCount
+            legacyTouchCounts[point.pointId] = (legacyTouchCounts[point.pointId] ?: 0) + 1
         }
 
         return result
     }
 
-    private fun <T> executeMutationRun(
+    private fun <T> legacyExecuteMutationRun(
         run: Int,
         selection: Selection,
         shuffle: Shuffle,
         block: () -> T
     ): T {
-        if (discoveredPoints.isEmpty()) {
-            // No mutation points discovered, just run the block normally
+        if (legacyDiscoveredPoints.isEmpty()) {
             MutationRegistry.startSession(activeMutation = null)
             val result = block()
             MutationRegistry.endSession()
             return result
         }
 
-        // Select mutation to test
-        val mutation = selectMutation(run, selection, shuffle)
+        val mutation = legacySelectMutation(run, selection, shuffle)
             ?: throw MutationsExhaustedException("All mutations have been tested")
 
-        // Mark as tested
-        testedMutations.add(mutation)
+        legacyTestedMutations.add(mutation)
 
-        // Execute with the selected mutation active
         val activeMutation = ActiveMutation(pointId = mutation.pointId, variantIndex = mutation.variantIndex)
         MutationRegistry.startSession(activeMutation = activeMutation)
 
@@ -102,37 +237,35 @@ object MutFlow {
         return result
     }
 
-    private fun selectMutation(
+    private fun legacySelectMutation(
         run: Int,
         selection: Selection,
         shuffle: Shuffle
     ): Mutation? {
-        // Get all untested mutations
-        val untestedMutations = buildUntestedMutations()
+        val untestedMutations = legacyBuildUntestedMutations()
 
         if (untestedMutations.isEmpty()) {
             return null
         }
 
-        // Calculate seed based on shuffle mode
         val seed = when (shuffle) {
-            Shuffle.PerRun -> getOrCreateGlobalSeed() + run
-            Shuffle.PerChange -> computePointsHash() + run
+            Shuffle.PerRun -> legacyGetOrCreateGlobalSeed() + run
+            Shuffle.PerChange -> legacyComputePointsHash() + run
         }
 
         return when (selection) {
-            Selection.PureRandom -> selectPureRandom(untestedMutations, seed)
-            Selection.MostLikelyRandom -> selectMostLikelyRandom(untestedMutations, seed)
-            Selection.MostLikelyStable -> selectMostLikelyStable(untestedMutations)
+            Selection.PureRandom -> legacySelectPureRandom(untestedMutations, seed)
+            Selection.MostLikelyRandom -> legacySelectMostLikelyRandom(untestedMutations, seed)
+            Selection.MostLikelyStable -> legacySelectMostLikelyStable(untestedMutations)
         }
     }
 
-    private fun buildUntestedMutations(): List<Mutation> {
+    private fun legacyBuildUntestedMutations(): List<Mutation> {
         val untested = mutableListOf<Mutation>()
-        for ((pointId, variantCount) in discoveredPoints) {
+        for ((pointId, variantCount) in legacyDiscoveredPoints) {
             for (variantIndex in 0 until variantCount) {
                 val mutation = Mutation(pointId, variantIndex)
-                if (mutation !in testedMutations) {
+                if (mutation !in legacyTestedMutations) {
                     untested.add(mutation)
                 }
             }
@@ -140,15 +273,14 @@ object MutFlow {
         return untested
     }
 
-    private fun selectPureRandom(mutations: List<Mutation>, seed: Long): Mutation {
+    private fun legacySelectPureRandom(mutations: List<Mutation>, seed: Long): Mutation {
         val random = Random(seed)
         return mutations[random.nextInt(mutations.size)]
     }
 
-    private fun selectMostLikelyRandom(mutations: List<Mutation>, seed: Long): Mutation {
-        // Weight by inverse of touch count (fewer touches = higher weight)
+    private fun legacySelectMostLikelyRandom(mutations: List<Mutation>, seed: Long): Mutation {
         val weights = mutations.map { mutation ->
-            val touchCount = touchCounts[mutation.pointId] ?: 1
+            val touchCount = legacyTouchCounts[mutation.pointId] ?: 1
             1.0 / touchCount
         }
 
@@ -163,70 +295,72 @@ object MutFlow {
             }
         }
 
-        // Fallback to last (shouldn't happen)
         return mutations.last()
     }
 
-    private fun selectMostLikelyStable(mutations: List<Mutation>): Mutation {
-        // Deterministically pick the mutation with lowest touch count
-        // Tie-breaker: alphabetical by pointId, then by variantIndex
+    private fun legacySelectMostLikelyStable(mutations: List<Mutation>): Mutation {
         return mutations.minWith(
             compareBy(
-                { touchCounts[it.pointId] ?: 0 },
+                { legacyTouchCounts[it.pointId] ?: 0 },
                 { it.pointId },
                 { it.variantIndex }
             )
         )
     }
 
-    private fun computePointsHash(): Long {
+    private fun legacyComputePointsHash(): Long {
         var hash = 17L
-        for ((pointId, variantCount) in discoveredPoints.entries.sortedBy { it.key }) {
+        for ((pointId, variantCount) in legacyDiscoveredPoints.entries.sortedBy { it.key }) {
             hash = hash * 31 + pointId.hashCode()
             hash = hash * 31 + variantCount
         }
         return hash
     }
 
-    private fun getOrCreateGlobalSeed(): Long {
-        if (globalSeed == null) {
-            globalSeed = System.currentTimeMillis() xor System.nanoTime()
-            println("[mutflow] Generated seed: $globalSeed")
+    private fun legacyGetOrCreateGlobalSeed(): Long {
+        if (legacyGlobalSeed == null) {
+            legacyGlobalSeed = System.currentTimeMillis() xor System.nanoTime()
+            println("[mutflow] Generated seed: $legacyGlobalSeed")
         }
-        return globalSeed!!
+        return legacyGlobalSeed!!
     }
 
     // ==================== Query methods ====================
 
     /**
-     * Returns the current state of the global registry.
-     * Useful for debugging and testing.
+     * Returns the current state of the legacy global registry.
+     * For session-based usage, use getSession(id).getState() instead.
      */
     fun getRegistryState(): RegistryState {
         return RegistryState(
-            discoveredPoints = discoveredPoints.toMap(),
-            touchCounts = touchCounts.toMap(),
-            testedMutations = testedMutations.toSet()
+            discoveredPoints = legacyDiscoveredPoints.toMap(),
+            touchCounts = legacyTouchCounts.toMap(),
+            testedMutations = legacyTestedMutations.toSet()
         )
     }
 
     // ==================== Testing support ====================
 
     /**
-     * Resets all stored state. Intended for testing only.
+     * Resets all stored state (both sessions and legacy).
+     * Intended for testing only.
      */
     fun reset() {
-        discoveredPoints.clear()
-        touchCounts.clear()
-        testedMutations.clear()
-        globalSeed = null
+        sessions.clear()
+        activeSessionId = null
+
+        legacyDiscoveredPoints.clear()
+        legacyTouchCounts.clear()
+        legacyTestedMutations.clear()
+        legacyGlobalSeed = null
     }
 
     /**
-     * Sets the global seed explicitly. Intended for testing only.
+     * Sets the legacy global seed explicitly.
+     * Intended for testing only.
      */
     internal fun setSeed(seed: Long) {
-        globalSeed = seed
+        legacyGlobalSeed = seed
     }
 }
 

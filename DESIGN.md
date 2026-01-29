@@ -270,15 +270,18 @@ This limits bytecode bloat and keeps mutations relevant.
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Test Execution                          │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-junit6         │  Orchestrates multiple runs per test  │
-│                         │  Sets run number (0 = baseline, 1-N)  │
-│                         │  Depends on: core, runtime            │
+│  mutflow-junit6         │  @MutFlowTest meta-annotation         │
+│                         │  @ClassTemplate + @ExtendWith combined│
+│                         │  MutFlowExtension: thin adapter that  │
+│                         │    calls MutFlow session management   │
+│                         │  Depends on: runtime                  │
 ├─────────────────────────────────────────────────────────────────┤
-│  mutflow-runtime        │  MutFlow.underTest(run, selection,    │
-│                         │    shuffle) API                       │
+│  mutflow-runtime        │  MutFlowSession: per-class state      │
+│                         │  MutFlow: session management +        │
+│                         │    underTest() API (parameterless     │
+│                         │    and explicit versions)             │
 │                         │  Selection: PureRandom, MostLikely*   │
 │                         │  Shuffle: PerRun, PerChange           │
-│                         │  Global registry, mutation selection  │
 │                         │  Depends on: core                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin│  Transforms @MutationTarget classes   │
@@ -286,7 +289,8 @@ This limits bytecode bloat and keeps mutations relevant.
 │                         │  Depends on: core                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-core           │  @MutationTarget annotation           │
-│                         │  MutationRegistry (shared state)      │
+│                         │  MutationRegistry (per-underTest      │
+│                         │    session for discovery/activation)  │
 │                         │  Shared types between all modules     │
 │                         │  Depends on: nothing                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -295,14 +299,39 @@ This limits bytecode bloat and keeps mutations relevant.
 The `mutflow-core` module contains the bridge between compiler-generated code and test
 runtime. Both sides depend on it, but not on each other, keeping coupling minimal.
 
+### Session-Based Architecture
+
+State is scoped to sessions rather than being globally mutable:
+
+```kotlin
+// JUnit extension creates session at class start
+val sessionId = MutFlow.createSession(selection, shuffle, maxRuns)
+
+// Each class template invocation:
+val mutation = MutFlow.selectMutationForRun(sessionId, run)  // null for baseline
+MutFlow.startRun(sessionId, run, mutation)
+// ... all tests execute ...
+MutFlow.endRun(sessionId)
+
+// JUnit extension closes session when class finishes
+MutFlow.closeSession(sessionId)
+```
+
+Benefits:
+- **Clean lifecycle**: create → runs → close
+- **State isolation**: Each test class has its own session
+- **No leaked state**: Explicit cleanup
+- **Single source of truth**: All state in MutFlow object
+
 ### Test Framework Adapters
 
-The JUnit modules (`mutflow-junit6`, future `mutflow-junit5`) are intentionally thin adapters:
-- Core orchestration logic lives in `mutflow-runtime`
-- Adapters only handle framework-specific lifecycle hooks and result reporting
-- This keeps framework-specific code minimal and enables easy porting
+The JUnit extension (`mutflow-junit6`) is intentionally a thin adapter:
+- Uses JUnit 6's `@ClassTemplate` mechanism to run the class multiple times
+- `MutFlowExtension` implements `ClassTemplateInvocationContextProvider`
+- All orchestration logic lives in `mutflow-runtime` (session management, mutation selection)
+- Extension only handles: session creation/cleanup, run start/end calls, display names
 
-JUnit 5 support is planned but not part of the initial tracer bullet.
+This keeps framework-specific code minimal (~100 lines) and enables easy porting to other frameworks.
 
 ### Data Flow
 
@@ -415,59 +444,71 @@ The compiler plugin is applied ONLY to test compilation, never production:
 
 ## Implementation Phases
 
-### Phase 1: Tracer Bullet
-End-to-end proof that the architecture works. Thin slice through all layers:
-- K2 compiler plugin that transforms a single mutation type (e.g., `>` to `>=`) in `@MutationTarget` classes
-- `MutFlow.underTest(run, selection, shuffle) { }` runtime API that orchestrates the session
-- Discovery run counts mutation points, mutation runs activate one mutation each (specified by pointId + variantIndex)
-- JUnit 6 extension for session orchestration (re-runs test with lifecycle)
-- Surviving mutant prints mutation ID and fails the test
+### Phase 1: Tracer Bullet ✓ COMPLETE
 
-Not useful as a tool yet — the goal is to validate the full loop works before investing in breadth.
+End-to-end proof that the architecture works. Thin slice through all layers.
 
-#### Phase 1 Progress
+#### What Was Built
 
-**Completed:**
-- `mutflow-core`: `MutationRegistry` with `check()`, `startSession()`, `endSession()` API
-- `mutflow-core`: Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
-- `mutflow-core`: `ActiveMutation` uses `pointId` (not index) for global registry compatibility
-- `mutflow-compiler-plugin`: K2 compiler plugin that transforms `>` comparisons
-- `mutflow-compiler-plugin`: Transformation produces `when(MutationRegistry.check(...))` branches
-- `mutflow-runtime`: Global registry model with `MutFlow.underTest(run, selection, shuffle) { }` API
-- `mutflow-runtime`: Selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
-- `mutflow-runtime`: Shuffle modes: `PerRun`, `PerChange`
-- `mutflow-runtime`: Touch count tracking during baseline
-- `mutflow-runtime`: `MutationsExhaustedException` when all mutations tested
-- `mutflow-test-sample`: Integration tests demonstrating the API
+**mutflow-core:**
+- `MutationRegistry` with `check()`, `startSession()`, `endSession()` API
+- Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
+- `@MutationTarget` annotation for scoping mutations
 
-**Target API:**
+**mutflow-compiler-plugin:**
+- K2 compiler plugin that transforms `>` comparisons in `@MutationTarget` classes
+- Transformation produces `when(MutationRegistry.check(...))` branches with 3 variants
+
+**mutflow-runtime:**
+- `MutFlowSession`: Per-class state (discovered points, touch counts, tested mutations)
+- `MutFlow`: Session management + `underTest()` API (parameterless and explicit versions)
+- Selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
+- Shuffle modes: `PerRun`, `PerChange`
+- Touch count tracking during baseline
+- `MutationsExhaustedException` when all mutations tested
+
+**mutflow-junit6:**
+- `@MutFlowTest` meta-annotation combining `@ClassTemplate` + `@ExtendWith`
+- `MutFlowExtension` implementing `ClassTemplateInvocationContextProvider`
+- Session lifecycle management (create, startRun, endRun, close)
+- Mutation selection at context creation for accurate display names
+
+**mutflow-test-sample:**
+- Integration tests demonstrating both APIs
+
+#### Target API (Achieved)
+
 ```kotlin
-// run=0: Baseline/discovery — ALL tests run this first
-@Test fun testIsPositive() {
-    val result = MutFlow.underTest(
-        run = 0,
-        selection = Selection.MostLikelyRandom,
-        shuffle = Shuffle.PerChange
-    ) {
-        calculator.isPositive(5)
+// Simple: use @MutFlowTest annotation
+@MutFlowTest(maxRuns = 4, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
+class CalculatorTest {
+    @Test
+    fun testIsPositive() {
+        val result = MutFlow.underTest {  // parameterless!
+            calculator.isPositive(5)
+        }
+        assertTrue(result)
     }
-    assertTrue(result)
-}
-
-// run=1, 2, ...: Mutation runs — ALL tests run with same mutation active
-@Test fun testIsPositive() {
-    val result = MutFlow.underTest(
-        run = 1,
-        selection = Selection.MostLikelyRandom,
-        shuffle = Shuffle.PerChange
-    ) {
-        calculator.isPositive(5)
-    }
-    assertTrue(result) // Fails if mutation changes behavior → mutation killed
 }
 ```
 
-**Transformation example:**
+**Example output:**
+```
+CalculatorTest > Baseline
+    [mutflow] Discovered mutation point: sample.Calculator_0 with 3 variants
+    → All tests PASS
+
+CalculatorTest > Mutation: sample.Calculator_0:0
+    → isPositive returns false for zero() FAILED → KILLED
+
+CalculatorTest > Mutation: sample.Calculator_0:1
+    → isPositive returns true for positive numbers() FAILED → KILLED
+
+CalculatorTest > Mutation: sample.Calculator_0:2
+    → isPositive returns true for positive numbers() FAILED → KILLED
+```
+
+**Transformation (unchanged):**
 ```kotlin
 // Before (in @MutationTarget class)
 fun isPositive(x: Int) = x > 0
@@ -481,14 +522,15 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 }
 ```
 
-**Remaining for Phase 1:**
-- `mutflow-junit6`: JUnit 6 extension for automatic multi-run orchestration
-- `mutflow-junit6`: `MutationsExhaustedException` handling to stop iteration
-- Surviving mutant detection and reporting
+#### Deferred to Phase 2
+- Survivor reporting (killed mutations currently show as test failures)
+- Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
 
 ### Phase 2: Core Features
-- Multiple mutation types (arithmetic, boolean, null checks, etc.)
-- IR-hash based mutation point IDs
+- Survivor reporting (distinguish killed mutations from surviving ones)
+- Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
+- Multiple mutation types (arithmetic, boolean, null checks, all comparison operators)
+- IR-hash based mutation point IDs (currently uses class name + counter)
 - Trap mechanism for pinning survivors during debugging
 - Gradle plugin for easy setup
 - Smarter likelihood calculations (see below)

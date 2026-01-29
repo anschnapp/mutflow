@@ -1,0 +1,280 @@
+package io.github.anschnapp.mutflow
+
+import kotlin.random.Random
+
+/**
+ * Holds all mutation testing state for a single test class execution.
+ *
+ * Created by JUnit extension at the start of a @MutFlowTest class,
+ * closed when the class finishes.
+ */
+class MutFlowSession internal constructor(
+    val id: String,
+    val selection: Selection,
+    val shuffle: Shuffle,
+    val maxRuns: Int
+) {
+    // Discovered points with their variant counts (built during baseline)
+    private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
+
+    // Touch counts from baseline run (how many tests touched each point)
+    private val touchCounts = mutableMapOf<String, Int>() // pointId -> count
+
+    // Mutations that have been tested in this session
+    private val testedMutations = mutableSetOf<Mutation>()
+
+    // Seed for Shuffle.PerRun mode - generated once per session
+    private var sessionSeed: Long? = null
+
+    // Current run number (set by startRun, cleared by endRun)
+    private var currentRun: Int? = null
+
+    // Currently active mutation (for run >= 1)
+    private var activeMutation: Mutation? = null
+
+    /**
+     * Selects the next mutation to test for the given run.
+     * Called by JUnit extension when building invocation contexts.
+     *
+     * This is called AFTER the previous run has completed, so for run 1+
+     * the baseline discovery has already happened.
+     *
+     * @param run Run number (must be >= 1)
+     * @return The selected mutation, or null if exhausted
+     */
+    fun selectMutationForRun(run: Int): Mutation? {
+        require(run >= 1) { "selectMutationForRun is only for mutation runs (run >= 1)" }
+
+        if (discoveredPoints.isEmpty()) {
+            return null
+        }
+
+        return selectMutation(run)
+    }
+
+    /**
+     * Starts a new run within this session.
+     * Called by JUnit extension before each class template invocation.
+     *
+     * @param run Run number: 0 = baseline, 1+ = mutation runs
+     * @param mutation The pre-selected mutation for this run (null for baseline)
+     */
+    fun startRun(run: Int, mutation: Mutation? = null) {
+        require(run >= 0) { "run must be non-negative, got: $run" }
+        currentRun = run
+        activeMutation = mutation
+
+        if (mutation != null) {
+            testedMutations.add(mutation)
+            println("[mutflow] Activated mutation: ${mutation.pointId}:${mutation.variantIndex}")
+        }
+    }
+
+    /**
+     * Ends the current run.
+     * Called by JUnit extension after each class template invocation.
+     */
+    fun endRun() {
+        currentRun = null
+        activeMutation = null
+    }
+
+    /**
+     * Executes the block under mutation testing.
+     *
+     * For run 0: discovers mutation points and updates touch counts.
+     * For run 1+: selects and activates a mutation.
+     *
+     * @param block The code under test
+     * @return The result of the block
+     * @throws MutationsExhaustedException if all mutations have been tested
+     * @throws IllegalStateException if no run is active
+     */
+    fun <T> underTest(block: () -> T): T {
+        val run = currentRun
+            ?: error("No run active. Call startRun() before underTest().")
+
+        return if (run == 0) {
+            executeBaseline(block)
+        } else {
+            executeMutationRun(run, block)
+        }
+    }
+
+    private fun <T> executeBaseline(block: () -> T): T {
+        // Run discovery (no active mutation)
+        MutationRegistry.startSession(activeMutation = null)
+
+        val result = try {
+            block()
+        } finally {
+            // Session will be ended below
+        }
+
+        val sessionResult = MutationRegistry.endSession()
+
+        // Merge discovered points and update touch counts
+        for (point in sessionResult.discoveredPoints) {
+            val isNew = point.pointId !in discoveredPoints
+            discoveredPoints[point.pointId] = point.variantCount
+            touchCounts[point.pointId] = (touchCounts[point.pointId] ?: 0) + 1
+            if (isNew) {
+                println("[mutflow] Discovered mutation point: ${point.pointId} with ${point.variantCount} variants")
+            }
+        }
+
+        return result
+    }
+
+    private fun <T> executeMutationRun(run: Int, block: () -> T): T {
+        if (discoveredPoints.isEmpty() || activeMutation == null) {
+            // No mutation points discovered or no mutation selected, just run normally
+            MutationRegistry.startSession(activeMutation = null)
+            val result = block()
+            MutationRegistry.endSession()
+            return result
+        }
+
+        // Execute with the pre-selected mutation active
+        val active = ActiveMutation(
+            pointId = activeMutation!!.pointId,
+            variantIndex = activeMutation!!.variantIndex
+        )
+        MutationRegistry.startSession(activeMutation = active)
+
+        val result = try {
+            block()
+        } finally {
+            // Session will be ended below
+        }
+
+        MutationRegistry.endSession()
+        return result
+    }
+
+    private fun selectMutation(run: Int): Mutation? {
+        val untestedMutations = buildUntestedMutations()
+
+        if (untestedMutations.isEmpty()) {
+            return null
+        }
+
+        val seed = when (shuffle) {
+            Shuffle.PerRun -> getOrCreateSessionSeed() + run
+            Shuffle.PerChange -> computePointsHash() + run
+        }
+
+        return when (selection) {
+            Selection.PureRandom -> selectPureRandom(untestedMutations, seed)
+            Selection.MostLikelyRandom -> selectMostLikelyRandom(untestedMutations, seed)
+            Selection.MostLikelyStable -> selectMostLikelyStable(untestedMutations)
+        }
+    }
+
+    private fun buildUntestedMutations(): List<Mutation> {
+        val untested = mutableListOf<Mutation>()
+        for ((pointId, variantCount) in discoveredPoints) {
+            for (variantIndex in 0 until variantCount) {
+                val mutation = Mutation(pointId, variantIndex)
+                if (mutation !in testedMutations) {
+                    untested.add(mutation)
+                }
+            }
+        }
+        return untested
+    }
+
+    private fun selectPureRandom(mutations: List<Mutation>, seed: Long): Mutation {
+        val random = Random(seed)
+        return mutations[random.nextInt(mutations.size)]
+    }
+
+    private fun selectMostLikelyRandom(mutations: List<Mutation>, seed: Long): Mutation {
+        val weights = mutations.map { mutation ->
+            val touchCount = touchCounts[mutation.pointId] ?: 1
+            1.0 / touchCount
+        }
+
+        val totalWeight = weights.sum()
+        val random = Random(seed)
+        var pick = random.nextDouble() * totalWeight
+
+        for ((index, weight) in weights.withIndex()) {
+            pick -= weight
+            if (pick <= 0) {
+                return mutations[index]
+            }
+        }
+
+        return mutations.last()
+    }
+
+    private fun selectMostLikelyStable(mutations: List<Mutation>): Mutation {
+        return mutations.minWith(
+            compareBy(
+                { touchCounts[it.pointId] ?: 0 },
+                { it.pointId },
+                { it.variantIndex }
+            )
+        )
+    }
+
+    private fun computePointsHash(): Long {
+        var hash = 17L
+        for ((pointId, variantCount) in discoveredPoints.entries.sortedBy { it.key }) {
+            hash = hash * 31 + pointId.hashCode()
+            hash = hash * 31 + variantCount
+        }
+        return hash
+    }
+
+    private fun getOrCreateSessionSeed(): Long {
+        if (sessionSeed == null) {
+            sessionSeed = System.currentTimeMillis() xor System.nanoTime()
+            println("[mutflow] Session $id - Generated seed: $sessionSeed")
+        }
+        return sessionSeed!!
+    }
+
+    // ==================== Query methods ====================
+
+    /**
+     * Returns the current state of this session.
+     */
+    fun getState(): SessionState {
+        return SessionState(
+            discoveredPoints = discoveredPoints.toMap(),
+            touchCounts = touchCounts.toMap(),
+            testedMutations = testedMutations.toSet(),
+            currentRun = currentRun,
+            activeMutation = activeMutation
+        )
+    }
+
+    /**
+     * Returns true if there are untested mutations remaining.
+     */
+    fun hasUntestedMutations(): Boolean {
+        return buildUntestedMutations().isNotEmpty()
+    }
+
+    // ==================== Testing support ====================
+
+    /**
+     * Sets the session seed explicitly. Intended for testing only.
+     */
+    internal fun setSeed(seed: Long) {
+        sessionSeed = seed
+    }
+}
+
+/**
+ * Snapshot of a session's state.
+ */
+data class SessionState(
+    val discoveredPoints: Map<String, Int>,
+    val touchCounts: Map<String, Int>,
+    val testedMutations: Set<Mutation>,
+    val currentRun: Int?,
+    val activeMutation: Mutation?
+)
