@@ -491,6 +491,26 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 - IR-hash based mutation point IDs
 - Trap mechanism for pinning survivors during debugging
 - Gradle plugin for easy setup
+- Smarter likelihood calculations (see below)
+
+#### Smarter Likelihood Calculations
+
+The current touch count metric is a simple proxy for "how well tested is this mutation point". In Phase 2, we could enhance the likelihood calculation by analyzing observed runtime values during baseline.
+
+**Simple cases** (e.g., `x > 5` where one side is a literal):
+- Track observed values of `x` during baseline
+- If tests only use values far from the boundary (e.g., `[10, 20, 100]` but never `[4, 5, 6]`), specific variants become higher likelihood:
+  - `x >= 5` → HIGH likelihood (boundary at 5 never tested)
+  - `x == 5` → HIGH likelihood (5 never observed)
+  - `x < 5` → LOWER likelihood (tests with x=10 would fail)
+
+**Complex cases** (nested expressions, non-literal boundaries):
+- `(x + y) > threshold` — harder to analyze, would need to track computed values
+- These cases may remain suboptimal, falling back to basic touch count
+
+The key insight: instead of a separate "boundary analysis" feature with its own warnings/control flow, we integrate this into the existing likelihood score. Boundary-untested variants naturally bubble to the top of selection priority, get tested first, and produce standard "mutation survived" feedback if they survive.
+
+This keeps the system focused on mutation testing rather than becoming a general boundary testing tool.
 
 ### Phase 3: Polish
 - More mutation operators
