@@ -432,8 +432,9 @@ class MutationsExhaustedException(message: String) : RuntimeException(message)
  * This indicates a gap in test coverage - the tests didn't detect the mutation.
  */
 class MutantSurvivedException(
-    val mutation: Mutation
+    val mutation: Mutation,
+    val displayName: String = "${mutation.pointId}:${mutation.variantIndex}"
 ) : AssertionError(
-    "MUTANT SURVIVED: ${mutation.pointId}:${mutation.variantIndex}\n" +
+    "MUTANT SURVIVED: $displayName\n" +
     "The mutation was not detected by any test. Consider adding a test that would fail when this mutation is active."
 )

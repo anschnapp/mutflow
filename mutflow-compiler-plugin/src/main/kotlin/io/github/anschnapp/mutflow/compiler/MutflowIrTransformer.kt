@@ -5,6 +5,7 @@ import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
@@ -50,10 +51,19 @@ class MutflowIrTransformer(
     }
 
     // State tracking during transformation
+    private var currentFile: IrFile? = null
     private var currentClass: IrClass? = null
     private var currentFunction: IrSimpleFunction? = null
     private var isInMutationTarget = false
     private var mutationPointCounter = 0
+
+    override fun visitFile(declaration: IrFile): IrFile {
+        val previousFile = currentFile
+        currentFile = declaration
+        val result = super.visitFile(declaration)
+        currentFile = previousFile
+        return result
+    }
 
     override fun visitClass(declaration: IrClass): IrStatement {
         val wasMutationTarget = isInMutationTarget
@@ -147,6 +157,9 @@ class MutflowIrTransformer(
 
         val pointId = generatePointId()
         val variantCount = 3
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = ">"
+        val variantOperators = ">=,<,=="  // comma-separated
 
         val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
 
@@ -159,6 +172,9 @@ class MutflowIrTransformer(
                 call.arguments[0] = irGetObject(registryClass)  // dispatch receiver
                 call.arguments[1] = irString(pointId)           // pointId: String
                 call.arguments[2] = irInt(variantCount)         // variantCount: Int
+                call.arguments[3] = irString(sourceLocation)    // sourceLocation: String
+                call.arguments[4] = irString(originalOperator)  // originalOperator: String
+                call.arguments[5] = irString(variantOperators)  // variantOperators: String
             }
             val checkResult = irTemporary(checkCall, nameHint = "mutationCheck")
 
@@ -250,6 +266,17 @@ class MutflowIrTransformer(
     private fun generatePointId(): String {
         val className = currentClass?.fqNameWhenAvailable?.asString() ?: "unknown"
         return "${className}_${mutationPointCounter++}"
+    }
+
+    /**
+     * Extracts source location from an IR expression.
+     * Returns format like "Calculator.kt:5" for IntelliJ clickable links.
+     */
+    private fun getSourceLocation(expression: IrExpression): String {
+        val file = currentFile ?: return "unknown:0"
+        val fileName = file.fileEntry.name.substringAfterLast('/')
+        val lineNumber = file.fileEntry.getLineNumber(expression.startOffset) + 1
+        return "$fileName:$lineNumber"
     }
 
     companion object {

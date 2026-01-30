@@ -17,6 +17,9 @@ class MutFlowSession internal constructor(
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
 
+    // Metadata for discovered points (source location, operators)
+    private val pointMetadata = mutableMapOf<String, PointMetadata>()
+
     // Touch counts from baseline run (how many tests touched each point)
     private val touchCounts = mutableMapOf<String, Int>() // pointId -> count
 
@@ -73,7 +76,7 @@ class MutFlowSession internal constructor(
 
         if (mutation != null) {
             testedMutations.add(mutation)
-            println("[mutflow] Activated mutation: ${mutation.pointId}:${mutation.variantIndex}")
+            println("[mutflow] Activated mutation: ${getDisplayName(mutation)}")
         }
     }
 
@@ -172,7 +175,14 @@ class MutFlowSession internal constructor(
             discoveredPoints[point.pointId] = point.variantCount
             touchCounts[point.pointId] = (touchCounts[point.pointId] ?: 0) + 1
             if (isNew) {
-                println("[mutflow] Discovered mutation point: ${point.pointId} with ${point.variantCount} variants")
+                // Store metadata for display
+                pointMetadata[point.pointId] = PointMetadata(
+                    sourceLocation = point.sourceLocation,
+                    originalOperator = point.originalOperator,
+                    variantOperators = point.variantOperators
+                )
+                val displayLoc = "(${point.sourceLocation})"
+                println("[mutflow] Discovered mutation point: $displayLoc ${point.originalOperator} with ${point.variantCount} variants")
             }
         }
 
@@ -312,6 +322,22 @@ class MutFlowSession internal constructor(
     }
 
     /**
+     * Returns a human-readable display name for a mutation.
+     * Format: "(FileName.kt:line) original → variant"
+     * Example: "(Calculator.kt:5) > → >="
+     */
+    fun getDisplayName(mutation: Mutation): String {
+        val meta = pointMetadata[mutation.pointId]
+        return if (meta != null) {
+            val variantOp = meta.variantOperators.getOrNull(mutation.variantIndex) ?: "?"
+            "(${meta.sourceLocation}) ${meta.originalOperator} → $variantOp"
+        } else {
+            // Fallback for mutations without metadata
+            "${mutation.pointId}:${mutation.variantIndex}"
+        }
+    }
+
+    /**
      * Returns a summary of the mutation testing results.
      */
     fun getSummary(): MutationTestingSummary {
@@ -351,7 +377,7 @@ class MutFlowSession internal constructor(
         if (summary.results.isNotEmpty()) {
             println("║  DETAILS:                                                      ║")
             for ((mutation, result) in summary.results) {
-                val mutationStr = "${mutation.pointId}:${mutation.variantIndex}"
+                val mutationStr = getDisplayName(mutation)
                 when (result) {
                     is MutationResult.Killed -> {
                         println("║  ✓ ${mutationStr.padEnd(61)}║")
@@ -409,4 +435,13 @@ data class MutationTestingSummary(
     val survived: Int,
     val untested: Int,
     val results: Map<Mutation, MutationResult>
+)
+
+/**
+ * Metadata for a mutation point, used for display formatting.
+ */
+internal data class PointMetadata(
+    val sourceLocation: String,
+    val originalOperator: String,
+    val variantOperators: List<String>
 )

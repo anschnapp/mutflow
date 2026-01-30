@@ -69,11 +69,11 @@ CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSE
 CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
 CalculatorTest > Baseline > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns true for positive numbers() PASSED
-CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for negative numbers() PASSED
-CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for zero() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true for positive numbers() PASSED
 ...
 
 ╔════════════════════════════════════════════════════════════════╗
@@ -84,6 +84,14 @@ CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for p
 ║  ├─ Killed:                    3  ✓                           ║
 ║  └─ Survived:                  0  ✓                           ║
 ║  Remaining untested:           0                              ║
+╠════════════════════════════════════════════════════════════════╣
+║  DETAILS:                                                      ║
+║  ✓ (Calculator.kt:7) > → >=                                     ║
+║      killed by: isPositive returns false for zero()            ║
+║  ✓ (Calculator.kt:7) > → <                                      ║
+║      killed by: isPositive returns true for positive numbers() ║
+║  ✓ (Calculator.kt:7) > → ==                                     ║
+║      killed by: isPositive returns true for positive numbers() ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
 
@@ -133,12 +141,13 @@ class CalculatorTest { ... }
 - **Touch count tracking** — Prioritizes under-tested mutation points
 - **Mutation result tracking** — Killed mutations show as PASSED (exception swallowed), survivors fail the build
 - **Summary reporting** — Visual summary at end of test class showing killed/survived mutations
+- **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`)
+- **IDE-clickable links** — Source locations in IntelliJ-compatible format for quick navigation
 
 ## Planned Features
 
 - Trap mechanism to pin surviving mutants while fixing tests
 - Additional mutation operators (arithmetic, boolean, null checks, all comparison operators)
-- Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
 - Gradle plugin for easy setup
 - IR-hash based mutation point IDs (stable across refactoring)
 

@@ -18,15 +18,32 @@ object MutationRegistry {
      *
      * @param pointId Stable identifier for this mutation point (IR hash)
      * @param variantCount Number of mutation variants available at this point
+     * @param sourceLocation Source file and line number (e.g., "Calculator.kt:5")
+     * @param originalOperator The original operator (e.g., ">")
+     * @param variantOperators Comma-separated variant operators (e.g., ">=,<,==")
      * @return Variant index to use (0-based), or null to use original code
      */
-    fun check(pointId: String, variantCount: Int): Int? {
+    fun check(
+        pointId: String,
+        variantCount: Int,
+        sourceLocation: String,
+        originalOperator: String,
+        variantOperators: String
+    ): Int? {
         val session = currentSession ?: return null
 
         // Register point if not seen in this session
         if (pointId !in session.seenPointIds) {
             session.seenPointIds.add(pointId)
-            session.discoveredPoints.add(DiscoveredPoint(pointId, variantCount))
+            session.discoveredPoints.add(
+                DiscoveredPoint(
+                    pointId = pointId,
+                    variantCount = variantCount,
+                    sourceLocation = sourceLocation,
+                    originalOperator = originalOperator,
+                    variantOperators = variantOperators.split(",")
+                )
+            )
         }
 
         // Check if this point is active
@@ -99,10 +116,16 @@ data class ActiveMutation(
  *
  * @property pointId Stable identifier (IR hash)
  * @property variantCount Number of available variants
+ * @property sourceLocation Source file and line number (e.g., "Calculator.kt:5")
+ * @property originalOperator The original operator (e.g., ">")
+ * @property variantOperators List of variant operators (e.g., [">=", "<", "=="])
  */
 data class DiscoveredPoint(
     val pointId: String,
-    val variantCount: Int
+    val variantCount: Int,
+    val sourceLocation: String,
+    val originalOperator: String,
+    val variantOperators: List<String>
 )
 
 /**

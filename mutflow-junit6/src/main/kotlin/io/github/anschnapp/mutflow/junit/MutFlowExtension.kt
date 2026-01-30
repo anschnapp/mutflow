@@ -80,7 +80,12 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             override fun getDisplayName(invocationIndex: Int): String {
                 return when {
                     run == 0 -> "Baseline"
-                    mutation != null -> "Mutation: ${mutation.pointId}:${mutation.variantIndex}"
+                    mutation != null -> {
+                        val session = MutFlow.getSession(sessionId)
+                        val displayName = session?.getDisplayName(mutation)
+                            ?: "${mutation.pointId}:${mutation.variantIndex}"
+                        "Mutation: $displayName"
+                    }
                     else -> "Mutation Run $run"
                 }
             }
@@ -93,7 +98,10 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                         if (run == 0) {
                             println("[mutflow] Starting baseline run (discovery)")
                         } else if (mutation != null) {
-                            println("[mutflow] Starting mutation run: ${mutation.pointId}:${mutation.variantIndex}")
+                            val session = MutFlow.getSession(sessionId)
+                            val displayName = session?.getDisplayName(mutation)
+                                ?: "${mutation.pointId}:${mutation.variantIndex}"
+                            println("[mutflow] Starting mutation run: $displayName")
                         }
                     },
                     // Exception handler: during mutation runs, catch failures (= mutation killed)
@@ -115,8 +123,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             session.recordMutationResult()
                             if (session.didMutationSurvive()) {
                                 val survivedMutation = session.getActiveMutation()!!
+                                val displayName = session.getDisplayName(survivedMutation)
                                 MutFlow.endRun(sessionId)
-                                throw MutantSurvivedException(survivedMutation)
+                                throw MutantSurvivedException(survivedMutation, displayName)
                             }
                         }
                         MutFlow.endRun(sessionId)

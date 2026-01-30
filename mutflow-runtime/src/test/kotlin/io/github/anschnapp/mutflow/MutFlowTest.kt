@@ -10,6 +10,10 @@ class MutFlowTest {
         MutFlow.reset()
     }
 
+    // Helper to simulate a mutation point with default test metadata
+    private fun simulateMutationPoint(pointId: String, variantCount: Int): Int? =
+        MutationRegistry.check(pointId, variantCount, "Test.kt:1", ">", ">=,<,==")
+
     // ==================== Baseline tests ====================
 
     @Test
@@ -30,8 +34,8 @@ class MutFlowTest {
         // Simulate mutation points being touched during baseline
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             // In real usage, compiler-injected code would call MutationRegistry.check()
-            MutationRegistry.check("point-a", 3)
-            MutationRegistry.check("point-b", 2)
+            simulateMutationPoint("point-a", 3)
+            simulateMutationPoint("point-b", 2)
             "result"
         }
 
@@ -44,14 +48,14 @@ class MutFlowTest {
     fun `multiple baseline runs increment touch counts`() {
         // First test touches point-a and point-b
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 3)
-            MutationRegistry.check("point-b", 2)
+            simulateMutationPoint("point-a", 3)
+            simulateMutationPoint("point-b", 2)
             "test1"
         }
 
         // Second test touches point-a only
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 3)
+            simulateMutationPoint("point-a", 3)
             "test2"
         }
 
@@ -66,7 +70,7 @@ class MutFlowTest {
     fun `mutation run returns block result`() {
         // Setup baseline
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 2)
+            simulateMutationPoint("point-a", 2)
             "baseline"
         }
 
@@ -87,7 +91,7 @@ class MutFlowTest {
 
         // Setup baseline
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 2)
+            simulateMutationPoint("point-a", 2)
             "baseline"
         }
 
@@ -106,7 +110,7 @@ class MutFlowTest {
 
         // Setup baseline with point that has 3 variants
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 3)
+            simulateMutationPoint("point-a", 3)
             "baseline"
         }
 
@@ -125,7 +129,7 @@ class MutFlowTest {
 
         // Setup baseline with only 2 mutations total
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 2)
+            simulateMutationPoint("point-a", 2)
             "baseline"
         }
 
@@ -160,12 +164,12 @@ class MutFlowTest {
     fun `MostLikelyStable selects mutation with lowest touch count`() {
         // Setup: point-a touched by 2 tests, point-b touched by 1 test
         MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 2)
-            MutationRegistry.check("point-b", 2)
+            simulateMutationPoint("point-a", 2)
+            simulateMutationPoint("point-b", 2)
             "test1"
         }
         MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 2)
+            simulateMutationPoint("point-a", 2)
             "test2"
         }
 
@@ -181,8 +185,8 @@ class MutFlowTest {
     fun `MostLikelyStable uses alphabetical tie-breaker`() {
         // Setup: both points touched equally
         MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-b", 2)
-            MutationRegistry.check("point-a", 2)
+            simulateMutationPoint("point-b", 2)
+            simulateMutationPoint("point-a", 2)
             "test1"
         }
 
@@ -200,7 +204,7 @@ class MutFlowTest {
     fun `Shuffle PerChange produces same selection for same discovered points`() {
         // First execution
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 3)
+            simulateMutationPoint("point-a", 3)
             "baseline"
         }
         MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r1" }
@@ -212,7 +216,7 @@ class MutFlowTest {
         MutationRegistry.reset()
 
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            MutationRegistry.check("point-a", 3)
+            simulateMutationPoint("point-a", 3)
             "baseline"
         }
         MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) { "r1" }
@@ -227,7 +231,7 @@ class MutFlowTest {
         MutFlow.setSeed(99999L)
 
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerRun) {
-            MutationRegistry.check("point-a", 3)
+            simulateMutationPoint("point-a", 3)
             "baseline"
         }
 

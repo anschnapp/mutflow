@@ -51,10 +51,14 @@ class Calculator {
 @MutationTarget
 class Calculator {
     fun isPositive(x: Int): Boolean {
-        val pointId = "sample.Calculator_0"  // className + counter (Phase 2: IR hash)
-        val variantCount = 3
-
-        return when (MutationRegistry.check(pointId, variantCount)) {
+        // Compiler injects metadata for display names
+        return when (MutationRegistry.check(
+            pointId = "sample.Calculator_0",
+            variantCount = 3,
+            sourceLocation = "Calculator.kt:4",
+            originalOperator = ">",
+            variantOperators = ">=,<,=="
+        )) {
             0 -> x >= 0
             1 -> x < 0
             2 -> x == 0
@@ -68,9 +72,9 @@ class Calculator {
 
 Mutation points are discovered **dynamically at runtime**, not statically at class load:
 
-1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
+1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" along with display metadata (source location, operator descriptions), and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
 
-**Note:** Point IDs currently use the format `ClassName_N` (e.g., `sample.Calculator_0`). Phase 2 will switch to IR-hash based IDs for stability across refactoring.
+**Note:** Point IDs use the format `ClassName_N` (e.g., `sample.Calculator_0`), but display names show source location and operator (e.g., `(Calculator.kt:7) > → >=`). Phase 2 will switch to IR-hash based IDs for stability across refactoring.
 
 2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointId, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
@@ -213,9 +217,9 @@ This ensures:
 
 ### 5. Trapping Surviving Mutants (Planned)
 
-When a mutant survives, its mutation ID is printed:
+When a mutant survives, its mutation ID is printed with source location:
 ```
-MUTANT SURVIVED: sample.Calculator_0:1
+MUTANT SURVIVED: (Calculator.kt:7) > → <
 ```
 
 This ID can be passed back to **trap** the mutant — ensuring it runs every time while you fix the test gap:
@@ -340,8 +344,9 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
 ```
 1. Compile time:
    ┌──────────────────┐      ┌───────────────────────────────────────────────────┐
-   │ x > 0            │ ───► │ when(registry.check("sample.Calculator_0", 3))    │
-   └──────────────────┘      └───────────────────────────────────────────────────┘
+   │ x > 0            │ ───► │ when(registry.check(pointId, 3, "Calc.kt:7", ">", │
+   └──────────────────┘      │                     ">=,<,=="))                   │
+                             └───────────────────────────────────────────────────┘
 
 2. Baseline (run=0) — ALL tests run first:
 
@@ -500,11 +505,11 @@ CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSE
 CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
 CalculatorTest > Baseline > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns true for positive numbers() PASSED
-CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for negative numbers() PASSED
-CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for zero() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true for positive numbers() PASSED
 ...
 
 ╔════════════════════════════════════════════════════════════════╗
@@ -517,11 +522,11 @@ CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for p
 ║  Remaining untested:           0                              ║
 ╠════════════════════════════════════════════════════════════════╣
 ║  DETAILS:                                                      ║
-║  ✓ sample.Calculator_0:0                                        ║
+║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
-║  ✓ sample.Calculator_0:1                                        ║
+║  ✓ (Calculator.kt:7) > → <                                      ║
 ║      killed by: isPositive returns true for positive numbers() ║
-║  ✓ sample.Calculator_0:2                                        ║
+║  ✓ (Calculator.kt:7) > → ==                                     ║
 ║      killed by: isPositive returns true for positive numbers() ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
@@ -540,7 +545,13 @@ The goal is that **all tests appear green when mutations are properly killed**. 
 fun isPositive(x: Int) = x > 0
 
 // After compiler plugin
-fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3)) {
+fun isPositive(x: Int) = when (MutationRegistry.check(
+    pointId = "sample.Calculator_0",
+    variantCount = 3,
+    sourceLocation = "Calculator.kt:7",
+    originalOperator = ">",
+    variantOperators = ">=,<,=="
+)) {
     0 -> x >= 0   // variant 0: greater-or-equal
     1 -> x < 0    // variant 1: less-than
     2 -> x == 0   // variant 2: equals
@@ -548,11 +559,8 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 }
 ```
 
-#### Deferred to Phase 2
-- Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
-
 ### Phase 2: Core Features
-- Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
+- ✓ **Variant descriptions in display names** — Mutations now show as `(Calculator.kt:7) > → >=` with clickable source locations
 - Multiple mutation types (arithmetic, boolean, null checks, all comparison operators)
 - IR-hash based mutation point IDs (currently uses class name + counter)
 - Trap mechanism for pinning survivors during debugging
