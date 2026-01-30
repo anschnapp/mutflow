@@ -527,9 +527,12 @@ CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for p
 ```
 
 **Key behavior:**
-- **Killed mutations**: Tests that catch the mutation appear as PASSED (the exception is caught and recorded)
-- **Surviving mutations**: If all tests pass with a mutation active, `MutantSurvivedException` is thrown and the build fails
-- **Summary**: At the end of each test class, a summary shows which mutations were tested and their results
+- **Killed mutations**: When a test assertion fails during a mutation run, the exception is **swallowed** and the test appears as PASSED. This is intentional — a failing assertion means the test caught the mutation (good!). The mutation is recorded as "killed" internally.
+- **Surviving mutations**: After all tests in a mutation run complete, if NO test caught the mutation (all tests passed naturally), `MutantSurvivedException` is thrown. This fails the build and indicates a gap in test coverage.
+- **Summary**: At the end of each test class, a summary shows which mutations were tested and their results.
+
+**Why this design?**
+The goal is that **all tests appear green when mutations are properly killed**. Failed assertions during mutation runs are expected and desirable — they prove your tests can detect code changes. Only when tests fail to catch a mutation does the build fail, alerting you to the coverage gap.
 
 **Transformation:**
 ```kotlin
@@ -546,11 +549,9 @@ fun isPositive(x: Int) = when (MutationRegistry.check("sample.Calculator_0", 3))
 ```
 
 #### Deferred to Phase 2
-- Survivor reporting (killed mutations currently show as test failures)
 - Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
 
 ### Phase 2: Core Features
-- Survivor reporting (distinguish killed mutations from surviving ones)
 - Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
 - Multiple mutation types (arithmetic, boolean, null checks, all comparison operators)
 - IR-hash based mutation point IDs (currently uses class name + counter)

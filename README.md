@@ -59,29 +59,38 @@ class CalculatorTest {
 
 That's it! The `@MutFlowTest` annotation handles everything:
 - **Baseline run**: Discovers mutation points, all tests pass normally
-- **Mutation runs**: Each mutation is activated, tests that fail = mutation killed
+- **Mutation runs**: Each mutation is activated across all tests; if any test catches it (assertion fails), the mutation is killed and tests appear green
+- **Survivor detection**: If no test catches a mutation, `MutantSurvivedException` is thrown and the build fails
 
 ### Example Output
 
 ```
-CalculatorTest > Baseline
-    [mutflow] Starting baseline run (discovery)
-    [mutflow] Discovered mutation point: sample.Calculator_0 with 3 variants
+CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Baseline > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:0
-    [mutflow] Activated mutation: sample.Calculator_0:0
-    isPositive returns false for zero() FAILED  ← mutation killed
+CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Mutation: sample.Calculator_0:0 > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: sample.Calculator_0:1
-    [mutflow] Activated mutation: sample.Calculator_0:1
-    isPositive returns true for positive numbers() FAILED  ← mutation killed
+CalculatorTest > Mutation: sample.Calculator_0:1 > isPositive returns true for positive numbers() PASSED
+...
 
-CalculatorTest > Mutation: sample.Calculator_0:2
-    [mutflow] Activated mutation: sample.Calculator_0:2
-    isPositive returns true for positive numbers() FAILED  ← mutation killed
+╔════════════════════════════════════════════════════════════════╗
+║                    MUTATION TESTING SUMMARY                    ║
+╠════════════════════════════════════════════════════════════════╣
+║  Total mutations discovered:   3                              ║
+║  Tested this run:              3                              ║
+║  ├─ Killed:                    3  ✓                           ║
+║  └─ Survived:                  0  ✓                           ║
+║  Remaining untested:           0                              ║
+╚════════════════════════════════════════════════════════════════╝
 ```
 
-**Note:** Test failures during mutation runs mean the mutation was killed (good!). If all tests pass during a mutation run, the mutation survived and your tests may have a gap.
+**How to read this output:**
+- **All tests PASSED** — This is the expected result! During mutation runs, when a test's assertion fails (catching the mutation), the exception is swallowed and the test appears green.
+- **Summary shows killed/survived** — After all runs complete, the summary shows which mutations were killed (good) vs survived (gap in coverage).
+- **Build fails with `MutantSurvivedException`** — Only if a mutation survives (no test caught it). This indicates missing test coverage.
 
 ## Configuration
 
@@ -122,14 +131,16 @@ class CalculatorTest { ... }
 - **Selection strategies** — `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
 - **Shuffle modes** — `PerRun` (exploratory) and `PerChange` (stable)
 - **Touch count tracking** — Prioritizes under-tested mutation points
+- **Mutation result tracking** — Killed mutations show as PASSED (exception swallowed), survivors fail the build
+- **Summary reporting** — Visual summary at end of test class showing killed/survived mutations
 
 ## Planned Features
 
-- Survivor reporting (currently killed mutations show as test failures)
 - Trap mechanism to pin surviving mutants while fixing tests
 - Additional mutation operators (arithmetic, boolean, null checks, all comparison operators)
 - Variant descriptions in display names (e.g., `> → >=` instead of `:0`)
 - Gradle plugin for easy setup
+- IR-hash based mutation point IDs (stable across refactoring)
 
 ## Manual API
 
