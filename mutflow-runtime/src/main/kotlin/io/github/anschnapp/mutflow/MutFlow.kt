@@ -40,19 +40,25 @@ object MutFlow {
      * Creates a new session for a test class.
      * Called by JUnit extension at the start of a @MutFlowTest class.
      *
+     * @param selection How to select mutations
+     * @param shuffle When to reseed selection
+     * @param maxRuns Maximum number of runs
+     * @param expectedTestCount Number of test methods in the class (for partial run detection)
      * @return The session ID
      */
     fun createSession(
         selection: Selection,
         shuffle: Shuffle,
-        maxRuns: Int
+        maxRuns: Int,
+        expectedTestCount: Int = 0
     ): String {
         val id = UUID.randomUUID().toString()
         val session = MutFlowSession(
             id = id,
             selection = selection,
             shuffle = shuffle,
-            maxRuns = maxRuns
+            maxRuns = maxRuns,
+            expectedTestCount = expectedTestCount
         )
         sessions[id] = session
         activeSessionId = id

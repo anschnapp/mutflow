@@ -3,6 +3,8 @@ package io.github.anschnapp.mutflow.junit
 import io.github.anschnapp.mutflow.MutFlow
 import io.github.anschnapp.mutflow.MutantSurvivedException
 import io.github.anschnapp.mutflow.Mutation
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.AfterTestExecutionCallback
 import org.junit.jupiter.api.extension.BeforeClassTemplateInvocationCallback
 import org.junit.jupiter.api.extension.AfterClassTemplateInvocationCallback
 import org.junit.jupiter.api.extension.ClassTemplateInvocationContext
@@ -41,11 +43,16 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
 
         val maxRuns = annotation.maxRuns
 
+        // Count test methods for partial run detection
+        val testClass = context.requiredTestClass
+        val expectedTestCount = countTestMethods(testClass)
+
         // Create session for this test class
         val sessionId = MutFlow.createSession(
             selection = annotation.selection,
             shuffle = annotation.shuffle,
-            maxRuns = maxRuns
+            maxRuns = maxRuns,
+            expectedTestCount = expectedTestCount
         )
 
         // Generate invocation contexts lazily
@@ -104,6 +111,13 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             println("[mutflow] Starting mutation run: $displayName")
                         }
                     },
+                    // Track test executions during baseline (for partial run detection)
+                    AfterTestExecutionCallback { testContext ->
+                        if (run == 0) {
+                            val session = MutFlow.getSession(sessionId)
+                            session?.trackTestExecution(testContext.uniqueId)
+                        }
+                    },
                     // Exception handler: during mutation runs, catch failures (= mutation killed)
                     TestExecutionExceptionHandler { context, throwable ->
                         if (run == 0) {
@@ -140,5 +154,15 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
     ): Boolean {
         // We always return at least the baseline run
         return false
+    }
+
+    /**
+     * Counts the number of test methods in a class.
+     * Used for partial run detection.
+     */
+    private fun countTestMethods(testClass: Class<*>): Int {
+        return testClass.methods.count { method ->
+            method.isAnnotationPresent(Test::class.java)
+        }
     }
 }

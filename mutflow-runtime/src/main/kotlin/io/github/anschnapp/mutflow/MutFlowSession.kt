@@ -12,7 +12,8 @@ class MutFlowSession internal constructor(
     val id: String,
     val selection: Selection,
     val shuffle: Shuffle,
-    val maxRuns: Int
+    val maxRuns: Int,
+    private val expectedTestCount: Int = 0
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -29,6 +30,9 @@ class MutFlowSession internal constructor(
     // Seed for Shuffle.PerRun mode - generated once per session
     private var sessionSeed: Long? = null
 
+    // Track unique test IDs executed during baseline (for partial run detection)
+    private val executedTestIds = mutableSetOf<String>()
+
     // Current run number (set by startRun, cleared by endRun)
     private var currentRun: Int? = null
 
@@ -42,6 +46,25 @@ class MutFlowSession internal constructor(
     private val mutationResults = mutableMapOf<Mutation, MutationResult>()
 
     /**
+     * Tracks a test execution during baseline.
+     * Called by JUnit extension's AfterTestExecutionCallback.
+     *
+     * @param testId Unique identifier for the test (typically the test's unique ID)
+     */
+    fun trackTestExecution(testId: String) {
+        executedTestIds.add(testId)
+    }
+
+    /**
+     * Returns true if this is a partial test run (e.g., running a single test method from IDE).
+     * Partial runs skip mutation testing because results would be misleading.
+     */
+    fun isPartialRun(): Boolean {
+        if (expectedTestCount <= 0) return false
+        return executedTestIds.size < expectedTestCount
+    }
+
+    /**
      * Selects the next mutation to test for the given run.
      * Called by JUnit extension when building invocation contexts.
      *
@@ -49,10 +72,15 @@ class MutFlowSession internal constructor(
      * the baseline discovery has already happened.
      *
      * @param run Run number (must be >= 1)
-     * @return The selected mutation, or null if exhausted
+     * @return The selected mutation, or null if exhausted or if this is a partial run
      */
     fun selectMutationForRun(run: Int): Mutation? {
         require(run >= 1) { "selectMutationForRun is only for mutation runs (run >= 1)" }
+
+        if (isPartialRun()) {
+            println("[mutflow] Partial test run detected (${executedTestIds.size}/$expectedTestCount tests) - skipping mutation testing")
+            return null
+        }
 
         if (discoveredPoints.isEmpty()) {
             return null

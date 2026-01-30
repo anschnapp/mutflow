@@ -27,12 +27,15 @@ mutflow uses the "mutant schemata" (or "meta-mutant") technique:
 
 **Test code:**
 ```kotlin
-@Test
-fun testIsPositive() {
-    val result = MutFlow.underTest(run, selection, shuffle) {
-        isPositive(5)
+@MutFlowTest
+class CalculatorTest {
+    @Test
+    fun testIsPositive() {
+        val result = MutFlow.underTest {  // parameterless with JUnit extension
+            isPositive(5)
+        }
+        assertTrue(result)
     }
-    assertTrue(result)
 }
 ```
 
@@ -90,18 +93,21 @@ This dynamic discovery matters because:
 Tests explicitly mark the action under test using BDD-style structure:
 
 ```kotlin
-@Test
-fun testIsPositive() {
-    // given
-    val x = 5
+@MutFlowTest
+class CalculatorTest {
+    @Test
+    fun testIsPositive() {
+        // given
+        val x = 5
 
-    // when
-    val result = MutFlow.underTest(run, selection, shuffle) {
-        isPositive(x)
+        // when
+        val result = MutFlow.underTest {  // parameterless when using @MutFlowTest
+            isPositive(x)
+        }
+
+        // then
+        assertTrue(result)
     }
-
-    // then
-    assertTrue(result)
 }
 ```
 
@@ -109,7 +115,7 @@ The `MutFlow.underTest` block:
 - Wraps only the action under test (the "when" in given/when/then)
 - Returns the result for assertions outside the block
 - Assertions stay outside — they should fail when mutations change behavior
-- Parameters (`run`, `selection`, `shuffle`) are typically injected by JUnit extension
+- When using `@MutFlowTest`, the JUnit extension manages session lifecycle internally
 
 ### 2. Global Baseline and Run Model
 
@@ -119,19 +125,24 @@ Mutation testing operates at the **test class level** with a global registry:
 2. **Run 1+**: ALL test cases execute with the **same mutation** active
 
 ```kotlin
-// Run 0: All tests execute baseline first
-@Test fun testIsPositive() {
-    val result = MutFlow.underTest(run = 0) { calculator.isPositive(5) }
-    assertTrue(result)
+// With @MutFlowTest, the JUnit extension orchestrates all runs automatically:
+// - Run 0 (baseline): All tests execute, mutation points discovered
+// - Run 1+: All tests execute with same mutation active
+
+@MutFlowTest
+class CalculatorTest {
+    @Test fun testIsPositive() {
+        val result = MutFlow.underTest { calculator.isPositive(5) }
+        assertTrue(result)
+    }
+
+    @Test fun testIsNegative() {
+        val result = MutFlow.underTest { calculator.isPositive(-5) }
+        assertFalse(result)
+    }
 }
 
-@Test fun testIsNegative() {
-    val result = MutFlow.underTest(run = 0) { calculator.isPositive(-5) }
-    assertFalse(result)
-}
-
-// Run 1: All tests execute with mutation #1 active
-// If ANY test fails, mutation #1 is killed
+// If ANY test fails during a mutation run, the mutation is killed
 ```
 
 **Key principles:**
@@ -267,6 +278,26 @@ class Logger {
 ```
 
 This limits bytecode bloat and keeps mutations relevant.
+
+### 7. Partial Run Detection
+
+When running a single test method from an IDE (e.g., IntelliJ's "Run Test" on one method), mutation testing is automatically skipped. This prevents false positives — mutations that would be killed by *other* tests in the class would incorrectly appear as survivors.
+
+**How it works:**
+1. At session creation, the extension counts `@Test` methods in the class
+2. During baseline, each executed test is tracked
+3. After baseline, if `executedTests < expectedTests`, mutation runs are skipped
+
+**Example output when running a single test:**
+```
+[mutflow] Starting baseline run (discovery)
+[mutflow] Discovered mutation point: (Calculator.kt:7) > with 3 variants
+[mutflow] Partial test run detected (1/3 tests) - skipping mutation testing
+```
+
+The baseline still runs normally (tests execute, mutations are discovered), but no mutation runs occur. This ensures you get your test results quickly without misleading mutation feedback.
+
+**Rationale:** Mutation testing evaluates the *entire test suite's* ability to catch mutations. Running it with a subset produces meaningless results — better to skip and provide a clear message.
 
 ## Architecture
 
@@ -561,6 +592,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check(
 
 ### Phase 2: Core Features
 - ✓ **Variant descriptions in display names** — Mutations now show as `(Calculator.kt:7) > → >=` with clickable source locations
+- ✓ **Partial run detection** — Automatically skips mutation testing when running single tests from IDE
 - Multiple mutation types (arithmetic, boolean, null checks, all comparison operators)
 - IR-hash based mutation point IDs (currently uses class name + counter)
 - Trap mechanism for pinning survivors during debugging

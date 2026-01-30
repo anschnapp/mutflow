@@ -143,6 +143,7 @@ class CalculatorTest { ... }
 - **Summary reporting** — Visual summary at end of test class showing killed/survived mutations
 - **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`)
 - **IDE-clickable links** — Source locations in IntelliJ-compatible format for quick navigation
+- **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 
 ## Planned Features
 
