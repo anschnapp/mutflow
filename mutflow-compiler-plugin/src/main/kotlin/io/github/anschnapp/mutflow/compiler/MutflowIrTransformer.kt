@@ -14,8 +14,6 @@ import org.jetbrains.kotlin.ir.expressions.impl.IrWhenImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
-import org.jetbrains.kotlin.ir.types.classOrNull
-import org.jetbrains.kotlin.ir.types.makeNullable
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.name.CallableId
@@ -26,15 +24,25 @@ import org.jetbrains.kotlin.name.Name
 /**
  * IR transformer that injects mutation points into @MutationTarget classes.
  *
- * For the tracer bullet, this transforms integer comparison operators (>)
- * into mutation-aware when expressions.
+ * Uses an extensible MutationOperator mechanism to support different
+ * categories of mutations (comparisons, arithmetic, etc.).
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class MutflowIrTransformer(
-    private val pluginContext: IrPluginContext
+    private val pluginContext: IrPluginContext,
+    private val operators: List<MutationOperator> = defaultOperators()
 ) : IrElementTransformerVoid() {
 
+    companion object {
+        private const val ENABLE_DEBUG_LOGGING = false
+
+        fun defaultOperators(): List<MutationOperator> = listOf(
+            RelationalComparisonOperator()
+        )
+    }
+
     private val mutationTargetFqName = FqName("io.github.anschnapp.mutflow.MutationTarget")
+    private val suppressMutationsFqName = FqName("io.github.anschnapp.mutflow.SuppressMutations")
     private val mutationRegistryFqName = FqName("io.github.anschnapp.mutflow.MutationRegistry")
 
     private val mutationRegistryClass: IrClassSymbol? by lazy {
@@ -42,8 +50,6 @@ class MutflowIrTransformer(
     }
 
     private val checkFunction: IrSimpleFunctionSymbol? by lazy {
-        // check is a member function of MutationRegistry object
-        // Look it up via the class ID
         val classId = ClassId.topLevel(mutationRegistryFqName)
         pluginContext.referenceFunctions(
             CallableId(classId, Name.identifier("check"))
@@ -55,6 +61,7 @@ class MutflowIrTransformer(
     private var currentClass: IrClass? = null
     private var currentFunction: IrSimpleFunction? = null
     private var isInMutationTarget = false
+    private var isInSuppressedScope = false
     private var mutationPointCounter = 0
 
     override fun visitFile(declaration: IrFile): IrFile {
@@ -67,12 +74,18 @@ class MutflowIrTransformer(
 
     override fun visitClass(declaration: IrClass): IrStatement {
         val wasMutationTarget = isInMutationTarget
+        val wasSuppressed = isInSuppressedScope
         val previousClass = currentClass
 
         isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName)
         currentClass = declaration
 
-        if (isInMutationTarget) {
+        // Check for @SuppressMutations on the class
+        if (isInMutationTarget && declaration.hasAnnotation(suppressMutationsFqName)) {
+            isInSuppressedScope = true
+        }
+
+        if (isInMutationTarget && !isInSuppressedScope) {
             mutationPointCounter = 0
             if (ENABLE_DEBUG_LOGGING) {
                 java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
@@ -84,6 +97,7 @@ class MutflowIrTransformer(
         val result = super.visitClass(declaration)
 
         isInMutationTarget = wasMutationTarget
+        isInSuppressedScope = wasSuppressed
         currentClass = previousClass
 
         return result
@@ -91,83 +105,91 @@ class MutflowIrTransformer(
 
     override fun visitSimpleFunction(declaration: IrSimpleFunction): IrStatement {
         val previousFunction = currentFunction
+        val wasSuppressed = isInSuppressedScope
+
         currentFunction = declaration
+
+        // Check for @SuppressMutations on the function
+        if (isInMutationTarget && declaration.hasAnnotation(suppressMutationsFqName)) {
+            isInSuppressedScope = true
+        }
 
         val result = super.visitSimpleFunction(declaration)
 
         currentFunction = previousFunction
+        isInSuppressedScope = wasSuppressed
         return result
     }
 
     override fun visitCall(expression: IrCall): IrExpression {
-        // First, transform children
+        // First, transform children (bottom-up for nested expressions)
         val transformed = super.visitCall(expression) as IrCall
 
-        // Only transform if we're in a @MutationTarget class
-        if (!isInMutationTarget) {
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
             return transformed
         }
 
-        // Check for GT (greater than) origin - this is the `>` operator
-        if (transformed.origin == IrStatementOrigin.GT) {
-            val fn = currentFunction ?: return transformed
-            val result = transformGreaterThan(transformed, fn)
-            if (ENABLE_DEBUG_LOGGING) {
-                java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
-                    "Transformed GT comparison at ${transformed.startOffset}\n"
-                )
-            }
-            return result
-        }
+        // Find a matching operator
+        val operator = operators.find { it.matches(transformed) }
+            ?: return transformed
 
-        return transformed
+        val fn = currentFunction ?: return transformed
+        return transformWithOperator(transformed, fn, operator)
     }
 
     /**
-     * Transforms a > (greater than) comparison into a mutation-aware when expression.
+     * Transforms an expression using the given mutation operator.
      *
-     * Original: `a > b`
-     *
-     * Transformed:
+     * Generates a when expression:
      * ```
-     * when (MutationRegistry.check(pointId, 3)) {
-     *     0 -> a >= b
-     *     1 -> a < b
-     *     2 -> a == b
-     *     else -> a > b
+     * when (MutationRegistry.check(pointId, variantCount, ...)) {
+     *     0 -> variant0
+     *     1 -> variant1
+     *     ...
+     *     else -> original
      * }
      * ```
      */
-    private fun transformGreaterThan(original: IrCall, containingFunction: IrSimpleFunction): IrExpression {
-        val checkFn = checkFunction
-        val registryClass = mutationRegistryClass
-
-        if (checkFn == null) {
-            java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText("checkFunction is NULL!\n")
+    private fun transformWithOperator(
+        original: IrCall,
+        containingFunction: IrSimpleFunction,
+        operator: MutationOperator
+    ): IrExpression {
+        val checkFn = checkFunction ?: run {
+            if (ENABLE_DEBUG_LOGGING) {
+                java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText("checkFunction is NULL!\n")
+            }
             return original
         }
-        if (registryClass == null) {
-            java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText("mutationRegistryClass is NULL!\n")
+        val registryClass = mutationRegistryClass ?: run {
+            if (ENABLE_DEBUG_LOGGING) {
+                java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText("mutationRegistryClass is NULL!\n")
+            }
             return original
         }
-
-        // Get the two arguments of the comparison
-        val left = original.arguments[0] ?: return original
-        val right = original.arguments[1] ?: return original
-
-        val pointId = generatePointId()
-        val variantCount = 3
-        val sourceLocation = getSourceLocation(original)
-        val originalOperator = ">"
-        val variantOperators = ">=,<,=="  // comma-separated
 
         val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder)
+
+        val variants = operator.variants(original, context)
+        if (variants.isEmpty()) {
+            return original
+        }
+
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = operator.originalDescription(original)
+        val variantOperators = variants.joinToString(",") { it.description }
+
+        if (ENABLE_DEBUG_LOGGING) {
+            java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
+                "Transformed $originalOperator at $sourceLocation with variants: $variantOperators\n"
+            )
+        }
 
         return builder.irBlock(resultType = pluginContext.irBuiltIns.booleanType) {
-            // Create temp variable for check result
-            // In K2 IR for member functions:
-            // - arguments[0] is the dispatch receiver (for object members)
-            // - arguments[1+] are the value parameters
             val checkCall = irCall(checkFn).also { call ->
                 call.arguments[0] = irGetObject(registryClass)  // dispatch receiver
                 call.arguments[1] = irString(pointId)           // pointId: String
@@ -178,87 +200,28 @@ class MutflowIrTransformer(
             }
             val checkResult = irTemporary(checkCall, nameHint = "mutationCheck")
 
-            // Build when expression
             +IrWhenImpl(
                 startOffset = original.startOffset,
                 endOffset = original.endOffset,
                 type = pluginContext.irBuiltIns.booleanType,
                 origin = null
             ).apply {
-                // Variant 0: >= (greater or equal)
-                branches += IrBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
-                    condition = irEquals(irGet(checkResult), irInt(0)),
-                    result = createComparisonWithBuiltins(
-                        left.deepCopyWithSymbols(),
-                        right.deepCopyWithSymbols(),
-                        ComparisonType.GREATER_OR_EQUAL
+                // Add branches for each variant
+                variants.forEachIndexed { index, variant ->
+                    branches += IrBranchImpl(
+                        startOffset = original.startOffset,
+                        endOffset = original.endOffset,
+                        condition = irEquals(irGet(checkResult), irInt(index)),
+                        result = variant.createExpression()
                     )
-                )
-                // Variant 1: < (less)
-                branches += IrBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
-                    condition = irEquals(irGet(checkResult), irInt(1)),
-                    result = createComparisonWithBuiltins(
-                        left.deepCopyWithSymbols(),
-                        right.deepCopyWithSymbols(),
-                        ComparisonType.LESS
-                    )
-                )
-                // Variant 2: == (equals)
-                branches += IrBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
-                    condition = irEquals(irGet(checkResult), irInt(2)),
-                    result = createComparisonWithBuiltins(
-                        left.deepCopyWithSymbols(),
-                        right.deepCopyWithSymbols(),
-                        ComparisonType.EQUALS
-                    )
-                )
-                // Else: original (>)
+                }
+                // Else: original expression
                 branches += IrElseBranchImpl(
                     startOffset = original.startOffset,
                     endOffset = original.endOffset,
                     condition = irTrue(),
                     result = original.deepCopyWithSymbols()
                 )
-            }
-        }
-    }
-
-    private enum class ComparisonType {
-        GREATER_OR_EQUAL, LESS, EQUALS
-    }
-
-    private fun IrBuilderWithScope.createComparisonWithBuiltins(
-        left: IrExpression,
-        right: IrExpression,
-        type: ComparisonType
-    ): IrExpression {
-        // Use the irBuiltIns comparison functions
-        return when (type) {
-            ComparisonType.GREATER_OR_EQUAL -> {
-                // a >= b is equivalent to !(a < b)
-                // Or we can use the greaterOrEqual intrinsic if available
-                irCall(pluginContext.irBuiltIns.greaterOrEqualFunByOperandType[pluginContext.irBuiltIns.intClass]!!).also {
-                    it.arguments[0] = left
-                    it.arguments[1] = right
-                }
-            }
-            ComparisonType.LESS -> {
-                irCall(pluginContext.irBuiltIns.lessFunByOperandType[pluginContext.irBuiltIns.intClass]!!).also {
-                    it.arguments[0] = left
-                    it.arguments[1] = right
-                }
-            }
-            ComparisonType.EQUALS -> {
-                irCall(pluginContext.irBuiltIns.eqeqSymbol).also {
-                    it.arguments[0] = left
-                    it.arguments[1] = right
-                }
             }
         }
     }
@@ -277,9 +240,5 @@ class MutflowIrTransformer(
         val fileName = file.fileEntry.name.substringAfterLast('/')
         val lineNumber = file.fileEntry.getLineNumber(expression.startOffset) + 1
         return "$fileName:$lineNumber"
-    }
-
-    companion object {
-        private const val ENABLE_DEBUG_LOGGING = false
     }
 }

@@ -23,7 +23,7 @@ mutflow trades exhaustiveness for practicality: low setup cost, no separate tool
 
 ## Status
 
-**Phase 1 Complete** — The tracer bullet is working end-to-end. The JUnit 6 integration runs your test class multiple times (baseline + mutation runs), and killed mutations are visible in test output. Not yet production-ready, but the core architecture is validated.
+**Phase 2 In Progress** — Core mutation testing features are working. All relational comparison operators (`>`, `<`, `>=`, `<=`) are supported with type-agnostic handling. The extensible `MutationOperator` architecture makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
 
 ## Quick Start
 
@@ -79,9 +79,9 @@ CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true f
 ╔════════════════════════════════════════════════════════════════╗
 ║                    MUTATION TESTING SUMMARY                    ║
 ╠════════════════════════════════════════════════════════════════╣
-║  Total mutations discovered:   3                              ║
-║  Tested this run:              3                              ║
-║  ├─ Killed:                    3  ✓                           ║
+║  Total mutations discovered:   2                              ║
+║  Tested this run:              2                              ║
+║  ├─ Killed:                    2  ✓                           ║
 ║  └─ Survived:                  0  ✓                           ║
 ║  Remaining untested:           0                              ║
 ╠════════════════════════════════════════════════════════════════╣
@@ -89,8 +89,6 @@ CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true f
 ║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
 ║  ✓ (Calculator.kt:7) > → <                                      ║
-║      killed by: isPositive returns true for positive numbers() ║
-║  ✓ (Calculator.kt:7) > → ==                                     ║
 ║      killed by: isPositive returns true for positive numbers() ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
@@ -133,7 +131,11 @@ class CalculatorTest { ... }
 ## Current Features
 
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
-- **K2 compiler plugin** — Transforms `>` operator in `@MutationTarget` classes
+- **K2 compiler plugin** — Transforms comparison operators in `@MutationTarget` classes
+- **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
+- **Type-agnostic** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
+- **`@SuppressMutations`** — Skip mutations on specific classes or functions
+- **Extensible architecture** — `MutationOperator` interface for adding new mutation types
 - **Session-based architecture** — Clean lifecycle, no leaked global state
 - **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension
 - **Selection strategies** — `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
@@ -148,7 +150,7 @@ class CalculatorTest { ... }
 ## Planned Features
 
 - Trap mechanism to pin surviving mutants while fixing tests
-- Additional mutation operators (arithmetic, boolean, null checks, all comparison operators)
+- Additional mutation operators (arithmetic, boolean, null checks, equality)
 - Gradle plugin for easy setup
 - IR-hash based mutation point IDs (stable across refactoring)
 

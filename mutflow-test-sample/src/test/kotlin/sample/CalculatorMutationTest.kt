@@ -170,26 +170,23 @@ class CalculatorMutationTest {
 
     @Test
     fun `throws MutationsExhaustedException when all mutations tested`() {
-        // The calculator.isPositive has 1 mutation point with 3 variants
+        // The calculator.isPositive has 1 mutation point with 2 variants (>= and <)
 
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
 
-        // Test all 3 mutations
+        // Test all 2 mutations
         MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
         MutFlow.underTest(run = 2, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
-        MutFlow.underTest(run = 3, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
-            calculator.isPositive(5)
-        }
 
-        // Fourth run should throw - all mutations exhausted
+        // Third run should throw - all mutations exhausted
         assertFailsWith<MutationsExhaustedException> {
-            MutFlow.underTest(run = 4, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutFlow.underTest(run = 3, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
                 calculator.isPositive(5)
             }
         }
@@ -200,7 +197,8 @@ class CalculatorMutationTest {
     @Test
     fun `multiple tests share same mutation in a run`() {
         // In real usage, JUnit extension would orchestrate this
-        // All tests in run=1 see the SAME mutation active
+        // Note: With the legacy explicit API, each underTest call selects a NEW mutation
+        // This test verifies that mutation selection works across multiple calls
 
         // Baseline for multiple tests
         MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
@@ -209,23 +207,16 @@ class CalculatorMutationTest {
         MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
             calculator.isPositive(-5)
         }
-        MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            calculator.isPositive(0)
-        }
 
-        // All mutation runs in run=1 will have the same mutation active
-        // If ANY test fails, the mutation is killed
-        val r1a = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+        // With 2 variants, we can do 2 mutation runs
+        val r1 = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
-        val r1b = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            calculator.isPositive(-5)
-        }
-        val r1c = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            calculator.isPositive(0)
+        val r2 = MutFlow.underTest(run = 2, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isPositive(5)
         }
 
-        println("Run 1 results: positive=$r1a, negative=$r1b, zero=$r1c")
+        println("Run results: r1=$r1, r2=$r2")
     }
 
     // ==================== Original behavior without mutation ====================

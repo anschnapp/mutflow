@@ -57,14 +57,13 @@ class Calculator {
         // Compiler injects metadata for display names
         return when (MutationRegistry.check(
             pointId = "sample.Calculator_0",
-            variantCount = 3,
+            variantCount = 2,
             sourceLocation = "Calculator.kt:4",
             originalOperator = ">",
-            variantOperators = ">=,<,=="
+            variantOperators = ">=,<"
         )) {
-            0 -> x >= 0
-            1 -> x < 0
-            2 -> x == 0
+            0 -> x >= 0  // boundary mutation: include equality
+            1 -> x < 0   // direction flip
             else -> x > 0  // original (null or -1)
         }
     }
@@ -279,6 +278,25 @@ class Logger {
 
 This limits bytecode bloat and keeps mutations relevant.
 
+Additionally, you can suppress mutations on specific functions using `@SuppressMutations`:
+
+```kotlin
+@MutationTarget
+class Calculator {
+    fun isPositive(x: Int) = x > 0  // mutations injected
+
+    @SuppressMutations
+    fun debugLog(x: Int): Boolean {
+        // no mutations here - logging code doesn't need mutation testing
+        return x > 100
+    }
+}
+```
+
+The `@SuppressMutations` annotation can be applied to:
+- **Classes**: Skip all mutations in the entire class
+- **Functions**: Skip mutations in specific functions only
+
 ### 7. Partial Run Detection
 
 When running a single test method from an IDE (e.g., IntelliJ's "Run Test" on one method), mutation testing is automatically skipped. This prevents false positives — mutations that would be killed by *other* tests in the class would incorrectly appear as survivors.
@@ -291,7 +309,7 @@ When running a single test method from an IDE (e.g., IntelliJ's "Run Test" on on
 **Example output when running a single test:**
 ```
 [mutflow] Starting baseline run (discovery)
-[mutflow] Discovered mutation point: (Calculator.kt:7) > with 3 variants
+[mutflow] Discovered mutation point: (Calculator.kt:7) > with 2 variants
 [mutflow] Partial test run detected (1/3 tests) - skipping mutation testing
 ```
 
@@ -323,9 +341,13 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
 │                           │  Injects MutationRegistry.check()   │
+│                           │  MutationOperator: extension iface  │
+│                           │  RelationalComparisonOperator:      │
+│                           │    handles >, <, >=, <= operators   │
 │                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-core             │  @MutationTarget annotation         │
+│                           │  @SuppressMutations annotation      │
 │                           │  MutationRegistry (per-underTest    │
 │                           │    session for discovery/activation)│
 │                           │  Shared types between all modules   │
@@ -375,8 +397,8 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
 ```
 1. Compile time:
    ┌──────────────────┐      ┌───────────────────────────────────────────────────┐
-   │ x > 0            │ ───► │ when(registry.check(pointId, 3, "Calc.kt:7", ">", │
-   └──────────────────┘      │                     ">=,<,=="))                   │
+   │ x > 0            │ ───► │ when(registry.check(pointId, 2, "Calc.kt:7", ">", │
+   └──────────────────┘      │                     ">=,<"))                      │
                              └───────────────────────────────────────────────────┘
 
 2. Baseline (run=0) — ALL tests run first:
@@ -384,7 +406,7 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
    Test A: underTest(run=0, selection, shuffle) { calculator.isPositive(5) }
         │
         ▼
-   registry.check("sample.Calculator_0", 3) → registers point, touchCount++, returns null
+   registry.check("sample.Calculator_0", 2) → registers point, touchCount++, returns null
    registry.check("sample.Calculator_1", 2) → registers point, touchCount++, returns null
         │
         ▼
@@ -393,7 +415,7 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
    Test B: underTest(run=0, selection, shuffle) { calculator.validate(-1) }
         │
         ▼
-   registry.check("sample.Calculator_0", 3) → already known, touchCount++, returns null
+   registry.check("sample.Calculator_0", 2) → already known, touchCount++, returns null
    registry.check("sample.Validator_0", 2) → registers point, touchCount++, returns null
         │
         ▼
@@ -401,7 +423,7 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
 
    After all run=0 complete:
    GlobalRegistry {
-       discoveredPoints: {sample.Calculator_0: 3, sample.Calculator_1: 2, sample.Validator_0: 2}
+       discoveredPoints: {sample.Calculator_0: 2, sample.Calculator_1: 2, sample.Validator_0: 2}
        touchCounts: {sample.Calculator_0: 2, sample.Calculator_1: 1, sample.Validator_0: 1}
        testedMutations: {}
    }
@@ -494,8 +516,11 @@ End-to-end proof that the architecture works. Thin slice through all layers.
 - `@MutationTarget` annotation for scoping mutations
 
 **mutflow-compiler-plugin:**
-- K2 compiler plugin that transforms `>` comparisons in `@MutationTarget` classes
-- Transformation produces `when(MutationRegistry.check(...))` branches with 3 variants
+- K2 compiler plugin with extensible `MutationOperator` mechanism
+- `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
+- Each operator produces 2 variants: boundary mutation + direction flip
+- Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
+- Respects `@SuppressMutations` annotation on classes and functions
 
 **mutflow-runtime:**
 - `MutFlowSession`: Per-class state (discovered points, touch counts, tested mutations)
@@ -546,9 +571,9 @@ CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true f
 ╔════════════════════════════════════════════════════════════════╗
 ║                    MUTATION TESTING SUMMARY                    ║
 ╠════════════════════════════════════════════════════════════════╣
-║  Total mutations discovered:   3                              ║
-║  Tested this run:              3                              ║
-║  ├─ Killed:                    3  ✓                           ║
+║  Total mutations discovered:   2                              ║
+║  Tested this run:              2                              ║
+║  ├─ Killed:                    2  ✓                           ║
 ║  └─ Survived:                  0  ✓                           ║
 ║  Remaining untested:           0                              ║
 ╠════════════════════════════════════════════════════════════════╣
@@ -556,8 +581,6 @@ CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true f
 ║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
 ║  ✓ (Calculator.kt:7) > → <                                      ║
-║      killed by: isPositive returns true for positive numbers() ║
-║  ✓ (Calculator.kt:7) > → ==                                     ║
 ║      killed by: isPositive returns true for positive numbers() ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
@@ -578,14 +601,13 @@ fun isPositive(x: Int) = x > 0
 // After compiler plugin
 fun isPositive(x: Int) = when (MutationRegistry.check(
     pointId = "sample.Calculator_0",
-    variantCount = 3,
+    variantCount = 2,
     sourceLocation = "Calculator.kt:7",
     originalOperator = ">",
-    variantOperators = ">=,<,=="
+    variantOperators = ">=,<"
 )) {
-    0 -> x >= 0   // variant 0: greater-or-equal
-    1 -> x < 0    // variant 1: less-than
-    2 -> x == 0   // variant 2: equals
+    0 -> x >= 0   // variant 0: boundary (include equality)
+    1 -> x < 0    // variant 1: direction flip
     else -> x > 0 // original (when check returns null)
 }
 ```
@@ -593,7 +615,10 @@ fun isPositive(x: Int) = when (MutationRegistry.check(
 ### Phase 2: Core Features
 - ✓ **Variant descriptions in display names** — Mutations now show as `(Calculator.kt:7) > → >=` with clickable source locations
 - ✓ **Partial run detection** — Automatically skips mutation testing when running single tests from IDE
-- Multiple mutation types (arithmetic, boolean, null checks, all comparison operators)
+- ✓ **All relational comparison operators** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
+- ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
+- ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions
+- ✓ **Extensible `MutationOperator` mechanism** — Easy to add new mutation types
 - IR-hash based mutation point IDs (currently uses class name + counter)
 - Trap mechanism for pinning survivors during debugging
 - Gradle plugin for easy setup
@@ -619,11 +644,11 @@ The key insight: instead of a separate "boundary analysis" feature with its own 
 This keeps the system focused on mutation testing rather than becoming a general boundary testing tool.
 
 ### Phase 3: Polish
-- More mutation operators
+- More mutation operators (arithmetic, boolean, null checks)
 - Configuration options (run count, etc.)
 - Documentation
 - State invalidation hooks
-- Mutation suppression annotations
+- Equality operators (`==`, `!=`)
 
 ## Open Questions
 
