@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  * Tests use the parameterless MutFlow.underTest { } - the JUnit extension
  * manages session lifecycle and run numbers automatically.
  */
-@MutFlowTest(maxRuns = 4, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
+@MutFlowTest(maxRuns = 5, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
 class CalculatorJUnitTest {
 
     private val calculator = Calculator()
@@ -32,6 +32,16 @@ class CalculatorJUnitTest {
         // During mutation runs: result may differ depending on active mutation
         // If assertion fails during mutation run = mutation killed (good!)
         assertTrue(result, "isPositive(5) should be true")
+    }
+
+    @Test
+    fun `isPositive returns true at boundary`() {
+        // This test catches the constant boundary mutation 0 → 1
+        // If mutation is active: x > 1 means isPositive(1) returns false
+        val result = MutFlow.underTest {
+            calculator.isPositive(1)
+        }
+        assertTrue(result, "isPositive(1) should be true - it's positive!")
     }
 
     @Test

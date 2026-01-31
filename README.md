@@ -23,7 +23,12 @@ mutflow trades exhaustiveness for practicality: low setup cost, no separate tool
 
 ## Status
 
-**Phase 2 In Progress** — Core mutation testing features are working. All relational comparison operators (`>`, `<`, `>=`, `<=`) are supported with type-agnostic handling. The extensible `MutationOperator` architecture makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
+**Phase 2 In Progress** — Core mutation testing features are working:
+- **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
+- **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1
+- **Recursive operator nesting** — multiple mutation types apply to the same expression
+
+The extensible `MutationOperator` architecture makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
 
 ## Quick Start
 
@@ -66,22 +71,21 @@ That's it! The `@MutFlowTest` annotation handles everything:
 
 ```
 CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Baseline > isPositive returns true at boundary() PASSED
 CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
 CalculatorTest > Baseline > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns true for positive numbers() PASSED
-CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for negative numbers() PASSED
-CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for zero() PASSED
-
-CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true for positive numbers() PASSED
-...
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > ... PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → < > ... PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) 0 → 1 > ... PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 
 ╔════════════════════════════════════════════════════════════════╗
 ║                    MUTATION TESTING SUMMARY                    ║
 ╠════════════════════════════════════════════════════════════════╣
-║  Total mutations discovered:   2                              ║
-║  Tested this run:              2                              ║
-║  ├─ Killed:                    2  ✓                           ║
+║  Total mutations discovered:   4                              ║
+║  Tested this run:              4                              ║
+║  ├─ Killed:                    4  ✓                           ║
 ║  └─ Survived:                  0  ✓                           ║
 ║  Remaining untested:           0                              ║
 ╠════════════════════════════════════════════════════════════════╣
@@ -89,7 +93,11 @@ CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true f
 ║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
 ║  ✓ (Calculator.kt:7) > → <                                      ║
-║      killed by: isPositive returns true for positive numbers() ║
+║      killed by: isPositive returns true at boundary()          ║
+║  ✓ (Calculator.kt:7) 0 → 1                                      ║
+║      killed by: isPositive returns true at boundary()          ║
+║  ✓ (Calculator.kt:7) 0 → -1                                     ║
+║      killed by: isPositive returns false for zero()            ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
 
@@ -133,6 +141,8 @@ class CalculatorTest { ... }
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
 - **K2 compiler plugin** — Transforms comparison operators in `@MutationTarget` classes
 - **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
+- **Constant boundary mutations** — Numeric constants in comparisons mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
+- **Recursive operator nesting** — Multiple mutation types combine on the same expression
 - **Type-agnostic** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - **`@SuppressMutations`** — Skip mutations on specific classes or functions
 - **Extensible architecture** — `MutationOperator` interface for adding new mutation types
@@ -143,7 +153,7 @@ class CalculatorTest { ... }
 - **Touch count tracking** — Prioritizes under-tested mutation points
 - **Mutation result tracking** — Killed mutations show as PASSED (exception swallowed), survivors fail the build
 - **Summary reporting** — Visual summary at end of test class showing killed/survived mutations
-- **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`)
+- **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`, `(Calculator.kt:7) 0 → 1`)
 - **IDE-clickable links** — Source locations in IntelliJ-compatible format for quick navigation
 - **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 
@@ -153,6 +163,21 @@ class CalculatorTest { ... }
 - Additional mutation operators (arithmetic, boolean, null checks, equality)
 - Gradle plugin for easy setup
 - IR-hash based mutation point IDs (stable across refactoring)
+
+## How Constant Boundary Mutations Work
+
+The constant boundary mutation detects poorly tested boundaries that operator mutations alone cannot find.
+
+**Example:** For `fun isPositive(x: Int) = x > 0`:
+
+| Mutation | Code becomes | Caught by test |
+|----------|--------------|----------------|
+| `> → >=` | `x >= 0` | `isPositive(0)` should be false |
+| `> → <` | `x < 0` | `isPositive(1)` should be true |
+| `0 → 1` | `x > 1` | `isPositive(1)` should be true |
+| `0 → -1` | `x > -1` | `isPositive(0)` should be false |
+
+If your tests only use values far from the boundary (e.g., `isPositive(5)` and `isPositive(-5)`), the constant mutations will survive — revealing the gap in boundary testing.
 
 ## Manual API
 

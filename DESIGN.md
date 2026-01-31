@@ -54,7 +54,7 @@ class Calculator {
 @MutationTarget
 class Calculator {
     fun isPositive(x: Int): Boolean {
-        // Compiler injects metadata for display names
+        // Compiler injects nested when expressions for multiple mutation types
         return when (MutationRegistry.check(
             pointId = "sample.Calculator_0",
             variantCount = 2,
@@ -62,13 +62,25 @@ class Calculator {
             originalOperator = ">",
             variantOperators = ">=,<"
         )) {
-            0 -> x >= 0  // boundary mutation: include equality
-            1 -> x < 0   // direction flip
-            else -> x > 0  // original (null or -1)
+            0 -> x >= 0  // operator mutation: include equality
+            1 -> x < 0   // operator mutation: direction flip
+            else -> when (MutationRegistry.check(
+                pointId = "sample.Calculator_1",
+                variantCount = 2,
+                sourceLocation = "Calculator.kt:4",
+                originalOperator = "0",
+                variantOperators = "1,-1"
+            )) {
+                0 -> x > 1   // constant mutation: increment
+                1 -> x > -1  // constant mutation: decrement
+                else -> x > 0  // original
+            }
         }
     }
 }
 ```
+
+This nested structure is generated recursively by the compiler plugin. Each matching `MutationOperator` wraps the expression, with the `else` branch feeding into the next operator. Since only one mutation is active at runtime, there's no complexity — the active mutation's branch executes, all others fall through to original.
 
 ### Runtime Discovery Model
 
@@ -344,6 +356,8 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 │                           │  MutationOperator: extension iface  │
 │                           │  RelationalComparisonOperator:      │
 │                           │    handles >, <, >=, <= operators   │
+│                           │  ConstantBoundaryOperator:          │
+│                           │    mutates constants by +1/-1       │
 │                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-core             │  @MutationTarget annotation         │
@@ -518,7 +532,11 @@ End-to-end proof that the architecture works. Thin slice through all layers.
 **mutflow-compiler-plugin:**
 - K2 compiler plugin with extensible `MutationOperator` mechanism
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
-- Each operator produces 2 variants: boundary mutation + direction flip
+  - Each operator produces 2 variants: boundary mutation + direction flip
+- `ConstantBoundaryOperator` mutates numeric constants in comparisons
+  - Produces 2 variants: +1 and -1 of the original constant
+  - Detects poorly tested boundaries that operator mutations miss
+- Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
 
@@ -558,22 +576,21 @@ class CalculatorTest {
 **Example output:**
 ```
 CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Baseline > isPositive returns true at boundary() PASSED
 CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
 CalculatorTest > Baseline > isPositive returns false for zero() PASSED
 
-CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns true for positive numbers() PASSED
-CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for negative numbers() PASSED
-CalculatorTest > Mutation: (Calculator.kt:7) > → >= > isPositive returns false for zero() PASSED
-
-CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true for positive numbers() PASSED
-...
+CalculatorTest > Mutation: (Calculator.kt:7) > → >= > ... PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) > → < > ... PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) 0 → 1 > ... PASSED
+CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 
 ╔════════════════════════════════════════════════════════════════╗
 ║                    MUTATION TESTING SUMMARY                    ║
 ╠════════════════════════════════════════════════════════════════╣
-║  Total mutations discovered:   2                              ║
-║  Tested this run:              2                              ║
-║  ├─ Killed:                    2  ✓                           ║
+║  Total mutations discovered:   4                              ║
+║  Tested this run:              4                              ║
+║  ├─ Killed:                    4  ✓                           ║
 ║  └─ Survived:                  0  ✓                           ║
 ║  Remaining untested:           0                              ║
 ╠════════════════════════════════════════════════════════════════╣
@@ -581,7 +598,11 @@ CalculatorTest > Mutation: (Calculator.kt:7) > → < > isPositive returns true f
 ║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
 ║  ✓ (Calculator.kt:7) > → <                                      ║
-║      killed by: isPositive returns true for positive numbers() ║
+║      killed by: isPositive returns true at boundary()          ║
+║  ✓ (Calculator.kt:7) 0 → 1                                      ║
+║      killed by: isPositive returns true at boundary()          ║
+║  ✓ (Calculator.kt:7) 0 → -1                                     ║
+║      killed by: isPositive returns false for zero()            ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
 
@@ -598,17 +619,15 @@ The goal is that **all tests appear green when mutations are properly killed**. 
 // Before (in @MutationTarget class)
 fun isPositive(x: Int) = x > 0
 
-// After compiler plugin
-fun isPositive(x: Int) = when (MutationRegistry.check(
-    pointId = "sample.Calculator_0",
-    variantCount = 2,
-    sourceLocation = "Calculator.kt:7",
-    originalOperator = ">",
-    variantOperators = ">=,<"
-)) {
-    0 -> x >= 0   // variant 0: boundary (include equality)
-    1 -> x < 0    // variant 1: direction flip
-    else -> x > 0 // original (when check returns null)
+// After compiler plugin (nested mutations for operator AND constant)
+fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<")) {
+    0 -> x >= 0   // operator: boundary (include equality)
+    1 -> x < 0    // operator: direction flip
+    else -> when (MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1")) {
+        0 -> x > 1    // constant: increment
+        1 -> x > -1   // constant: decrement
+        else -> x > 0 // original
+    }
 }
 ```
 
@@ -616,6 +635,8 @@ fun isPositive(x: Int) = when (MutationRegistry.check(
 - ✓ **Variant descriptions in display names** — Mutations now show as `(Calculator.kt:7) > → >=` with clickable source locations
 - ✓ **Partial run detection** — Automatically skips mutation testing when running single tests from IDE
 - ✓ **All relational comparison operators** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
+- ✓ **Constant boundary mutations** — Numeric constants in comparisons are mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
+- ✓ **Recursive operator nesting** — Multiple operators can match the same expression, generating nested `when` blocks
 - ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions
 - ✓ **Extensible `MutationOperator` mechanism** — Easy to add new mutation types

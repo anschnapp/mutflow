@@ -37,7 +37,8 @@ class MutflowIrTransformer(
         private const val ENABLE_DEBUG_LOGGING = false
 
         fun defaultOperators(): List<MutationOperator> = listOf(
-            RelationalComparisonOperator()
+            RelationalComparisonOperator(),
+            ConstantBoundaryOperator()
         )
     }
 
@@ -130,12 +131,35 @@ class MutflowIrTransformer(
             return transformed
         }
 
-        // Find a matching operator
-        val operator = operators.find { it.matches(transformed) }
-            ?: return transformed
-
         val fn = currentFunction ?: return transformed
-        return transformWithOperator(transformed, fn, operator)
+        return transformWithOperators(transformed, fn, operators)
+    }
+
+    /**
+     * Recursively applies matching operators to an expression.
+     *
+     * Each matching operator wraps the expression in a when block, with
+     * the else branch passing to the next operator. This enables multiple
+     * independent mutation points on the same expression (e.g., operator
+     * mutation AND constant boundary mutation).
+     */
+    private fun transformWithOperators(
+        original: IrCall,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<MutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return original.deepCopyWithSymbols()
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(original)) {
+            return transformWithOperators(original, containingFunction, rest)
+        }
+
+        return transformWithOperator(original, containingFunction, operator, rest)
     }
 
     /**
@@ -147,14 +171,15 @@ class MutflowIrTransformer(
      *     0 -> variant0
      *     1 -> variant1
      *     ...
-     *     else -> original
+     *     else -> <recursively apply remaining operators>
      * }
      * ```
      */
     private fun transformWithOperator(
         original: IrCall,
         containingFunction: IrSimpleFunction,
-        operator: MutationOperator
+        operator: MutationOperator,
+        remainingOperators: List<MutationOperator>
     ): IrExpression {
         val checkFn = checkFunction ?: run {
             if (ENABLE_DEBUG_LOGGING) {
@@ -174,7 +199,8 @@ class MutflowIrTransformer(
 
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {
-            return original
+            // No variants from this operator, try remaining operators
+            return transformWithOperators(original, containingFunction, remainingOperators)
         }
 
         val pointId = generatePointId()
@@ -215,12 +241,12 @@ class MutflowIrTransformer(
                         result = variant.createExpression()
                     )
                 }
-                // Else: original expression
+                // Else: recursively apply remaining operators (or original if none left)
                 branches += IrElseBranchImpl(
                     startOffset = original.startOffset,
                     endOffset = original.endOffset,
                     condition = irTrue(),
-                    result = original.deepCopyWithSymbols()
+                    result = transformWithOperators(original, containingFunction, remainingOperators)
                 )
             }
         }

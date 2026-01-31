@@ -170,23 +170,32 @@ class CalculatorMutationTest {
 
     @Test
     fun `throws MutationsExhaustedException when all mutations tested`() {
-        // The calculator.isPositive has 1 mutation point with 2 variants (>= and <)
+        // The calculator.isPositive has 2 mutation points:
+        // - Operator mutation (> → >=, > → <): 2 variants
+        // - Constant boundary mutation (0 → 1, 0 → -1): 2 variants
+        // Total: 4 mutations
 
         MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
 
-        // Test all 2 mutations
+        // Test all 4 mutations
         MutFlow.underTest(run = 1, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
         MutFlow.underTest(run = 2, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
+        MutFlow.underTest(run = 3, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            calculator.isPositive(5)
+        }
+        MutFlow.underTest(run = 4, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            calculator.isPositive(5)
+        }
 
-        // Third run should throw - all mutations exhausted
+        // Fifth run should throw - all mutations exhausted
         assertFailsWith<MutationsExhaustedException> {
-            MutFlow.underTest(run = 3, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            MutFlow.underTest(run = 5, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
                 calculator.isPositive(5)
             }
         }
@@ -208,7 +217,7 @@ class CalculatorMutationTest {
             calculator.isPositive(-5)
         }
 
-        // With 2 variants, we can do 2 mutation runs
+        // With 4 mutations total, we can do 4 mutation runs
         val r1 = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
             calculator.isPositive(5)
         }
