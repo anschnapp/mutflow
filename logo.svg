@@ -32,17 +32,20 @@
      inkscape:current-layer="g8" />
   <defs
      id="defs7">
-    <!-- Main gradient: orange to magenta to purple (diagonal) -->
+    <!-- Main gradient: Kotlin colors matching text gradient (horizontal span) -->
     <linearGradient
        id="mainGradient"
-       x1="86.939453"
-       y1="133.66765"
-       x2="91.142036"
-       y2="129.35564"
-       gradientTransform="matrix(1.506613,0,0,0.66374047,-32.643472,-64.174746)"
+       x1="23"
+       y1="30"
+       x2="75"
+       y2="30"
        gradientUnits="userSpaceOnUse">
       <stop
-         offset="0"
+         offset="0%"
+         style="stop-color:#F5A623"
+         id="stop1" />
+      <stop
+         offset="50%"
          style="stop-color:#E91E63"
          id="stop2" />
       <stop
