@@ -455,6 +455,8 @@ class MutFlowSession internal constructor(
         println("║  Remaining untested:         ${summary.untested.toString().padStart(3)}                              ║")
         println("╠════════════════════════════════════════════════════════════════╣")
 
+        val survivedMutations = mutableListOf<String>()
+
         if (summary.results.isNotEmpty()) {
             println("║  DETAILS:                                                      ║")
             for ((mutation, result) in summary.results) {
@@ -466,6 +468,7 @@ class MutFlowSession internal constructor(
                         println("║${testLine.take(64).padEnd(64)}║")
                     }
                     is MutationResult.Survived -> {
+                        survivedMutations.add(mutationStr)
                         println("║  ✗ ${mutationStr.padEnd(61)}║")
                         println("║      SURVIVED - no test caught this mutation!${" ".repeat(19)}║")
                     }
@@ -474,6 +477,13 @@ class MutFlowSession internal constructor(
         }
 
         println("╚════════════════════════════════════════════════════════════════╝")
+
+        if (survivedMutations.isNotEmpty()) {
+            println()
+            println("To trap all survived mutations, add to your test annotation:")
+            val trapsArg = survivedMutations.joinToString(", ") { "\"$it\"" }
+            println("traps = [$trapsArg]")
+        }
         println()
     }
 

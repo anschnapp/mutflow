@@ -445,5 +445,6 @@ class MutantSurvivedException(
     val displayName: String = "${mutation.pointId}:${mutation.variantIndex}"
 ) : AssertionError(
     "MUTANT SURVIVED: $displayName\n" +
-    "The mutation was not detected by any test. Consider adding a test that would fail when this mutation is active."
+    "The mutation was not detected by any test. Consider adding a test that would fail when this mutation is active.\n" +
+    "To debug this mutation, add it to your test annotation: traps = [\"$displayName\"]"
 )
