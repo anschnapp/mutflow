@@ -547,6 +547,11 @@ End-to-end proof that the architecture works. Thin slice through all layers.
   - Produces 2 variants: `true` and `false`
   - Only matches explicit return statements (block-bodied functions)
   - Skips synthetic returns from expression-bodied functions (detected by zero-width source span)
+- `NullableReturnOperator` mutates nullable return values to null
+  - Produces 1 variant: `null`
+  - Only matches explicit return statements in functions with nullable return types
+  - Skips returns that are already null (mutating null to null is pointless)
+  - Catches tests that only verify non-null without checking the actual value
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
@@ -648,6 +653,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 - ✓ **All relational comparison operators** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
 - ✓ **Constant boundary mutations** — Numeric constants in comparisons are mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
 - ✓ **Boolean return mutations** — Boolean return values mutated to `true`/`false` (explicit returns only)
+- ✓ **Nullable return mutations** — Nullable return values mutated to `null` (catches tests that don't verify actual values)
 - ✓ **Recursive operator nesting** — Multiple operators can match the same expression, generating nested `when` blocks
 - ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions

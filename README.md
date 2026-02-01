@@ -27,6 +27,7 @@ mutflow trades exhaustiveness for practicality: low setup cost, no separate tool
 - **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
 - **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1
 - **Boolean return mutations** — boolean return values replaced with `true`/`false`
+- **Nullable return mutations** — nullable return values replaced with `null`
 - **Recursive operator nesting** — multiple mutation types apply to the same expression
 
 The extensible mutation operator architecture (`MutationOperator` for calls, `ReturnMutationOperator` for returns) makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
@@ -172,6 +173,7 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 - **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
 - **Constant boundary mutations** — Numeric constants in comparisons mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
 - **Boolean return mutations** — Boolean return values replaced with `true`/`false` (explicit returns only)
+- **Nullable return mutations** — Nullable return values replaced with `null` (explicit returns only)
 - **Recursive operator nesting** — Multiple mutation types combine on the same expression
 - **Type-agnostic** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - **`@SuppressMutations`** — Skip mutations on specific classes or functions
@@ -229,6 +231,42 @@ fun isInRange(x: Int, min: Int, max: Int): Boolean {
 | `return true → false` | `return true` | `return false` | Test asserts true for in-range |
 
 **Note:** Boolean return mutations only apply to explicit `return` statements in block-bodied functions. Expression-bodied functions (`fun foo() = expr`) are mutated via their expression operators instead.
+
+## How Nullable Return Mutations Work
+
+Nullable return mutations verify that your tests check actual return values, not just non-null.
+
+**Example:** For a function that returns nullable:
+```kotlin
+fun findUser(id: Int): User? {
+    val user = database.query(id)
+    if (user != null) {
+        return user
+    }
+    return null
+}
+```
+
+| Mutation | Original | Becomes | Caught when |
+|----------|----------|---------|-------------|
+| `return user → null` | `return user` | `return null` | Test asserts actual user properties |
+
+**Common weak test patterns this catches:**
+```kotlin
+// WEAK: Only checks non-null, not the actual value
+val user = findUser(1)
+assertNotNull(user)  // Would still pass with null mutation? NO - but doesn't verify content
+
+// WEAK: Uses the value but doesn't verify it
+val user = findUser(1)
+println(user?.name)  // No assertion at all!
+
+// STRONG: Verifies actual content
+val user = findUser(1)
+assertEquals("Alice", user?.name)  // Catches null mutation
+```
+
+**Note:** Nullable return mutations only apply to explicit `return` statements in block-bodied functions that return nullable types. The mutation replaces the return value with `null`.
 
 ## Manual API
 

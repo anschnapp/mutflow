@@ -44,7 +44,8 @@ class MutflowIrTransformer(
         )
 
         fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(
-            BooleanReturnOperator()
+            BooleanReturnOperator(),
+            NullableReturnOperator()
         )
     }
 
@@ -339,8 +340,13 @@ class MutflowIrTransformer(
 
         val originalValue = original.value
 
+        // Use the function's return type for the block/when type.
+        // This is important when the original value type differs from the function return type
+        // (e.g., returning non-null Int from a function that returns Int?)
+        val blockType = containingFunction.returnType
+
         // Build the mutation check block (same pattern as call transformation)
-        val newValue = builder.irBlock(resultType = originalValue.type) {
+        val newValue = builder.irBlock(resultType = blockType) {
             val checkCall = irCall(checkFn).also { call ->
                 call.arguments[0] = irGetObject(registryClass)
                 call.arguments[1] = irString(pointId)
@@ -354,7 +360,7 @@ class MutflowIrTransformer(
             +IrWhenImpl(
                 startOffset = original.startOffset,
                 endOffset = original.endOffset,
-                type = originalValue.type,
+                type = blockType,
                 origin = null
             ).apply {
                 variants.forEachIndexed { index, variant ->

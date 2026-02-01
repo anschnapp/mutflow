@@ -31,4 +31,20 @@ class Calculator {
     fun isInRange(x: Int, min: Int, max: Int): Boolean {
         return x >= min && x <= max
     }
+
+    /**
+     * Function with nullable return type for testing null return mutations.
+     * Returns the absolute value if positive, null otherwise.
+     *
+     * This will have:
+     * - Operator mutation on >
+     * - Constant boundary mutation on 0
+     * - Null return mutation (return null instead of x)
+     */
+    fun getPositiveOrNull(x: Int): Int? {
+        if (x > 0) {
+            return x
+        }
+        return null
+    }
 }
