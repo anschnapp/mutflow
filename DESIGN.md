@@ -530,12 +530,19 @@ End-to-end proof that the architecture works. Thin slice through all layers.
 - `@MutationTarget` annotation for scoping mutations
 
 **mutflow-compiler-plugin:**
-- K2 compiler plugin with extensible `MutationOperator` mechanism
+- K2 compiler plugin with extensible mutation operator mechanism
+- Two operator interfaces for different IR node types:
+  - `MutationOperator` — for `IrCall` nodes (comparison operators, etc.)
+  - `ReturnMutationOperator` — for `IrReturn` nodes (return statement mutations)
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
   - Each operator produces 2 variants: boundary mutation + direction flip
 - `ConstantBoundaryOperator` mutates numeric constants in comparisons
   - Produces 2 variants: +1 and -1 of the original constant
   - Detects poorly tested boundaries that operator mutations miss
+- `BooleanReturnOperator` mutates boolean return values
+  - Produces 2 variants: `true` and `false`
+  - Only matches explicit return statements (block-bodied functions)
+  - Skips synthetic returns from expression-bodied functions (detected by zero-width source span)
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
@@ -636,10 +643,11 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 - ✓ **Partial run detection** — Automatically skips mutation testing when running single tests from IDE
 - ✓ **All relational comparison operators** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
 - ✓ **Constant boundary mutations** — Numeric constants in comparisons are mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
+- ✓ **Boolean return mutations** — Boolean return values mutated to `true`/`false` (explicit returns only)
 - ✓ **Recursive operator nesting** — Multiple operators can match the same expression, generating nested `when` blocks
 - ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions
-- ✓ **Extensible `MutationOperator` mechanism** — Easy to add new mutation types
+- ✓ **Extensible mutation operator mechanism** — Two interfaces (`MutationOperator` for calls, `ReturnMutationOperator` for returns) make it easy to add new mutation types
 - IR-hash based mutation point IDs (currently uses class name + counter)
 - Trap mechanism for pinning survivors during debugging
 - Gradle plugin for easy setup

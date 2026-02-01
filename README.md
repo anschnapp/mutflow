@@ -26,9 +26,10 @@ mutflow trades exhaustiveness for practicality: low setup cost, no separate tool
 **Phase 2 In Progress** — Core mutation testing features are working:
 - **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
 - **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1
+- **Boolean return mutations** — boolean return values replaced with `true`/`false`
 - **Recursive operator nesting** — multiple mutation types apply to the same expression
 
-The extensible `MutationOperator` architecture makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
+The extensible mutation operator architecture (`MutationOperator` for calls, `ReturnMutationOperator` for returns) makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
 
 ## Quick Start
 
@@ -139,13 +140,14 @@ class CalculatorTest { ... }
 ## Current Features
 
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
-- **K2 compiler plugin** — Transforms comparison operators in `@MutationTarget` classes
+- **K2 compiler plugin** — Transforms `@MutationTarget` classes with multiple mutation types
 - **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
 - **Constant boundary mutations** — Numeric constants in comparisons mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
+- **Boolean return mutations** — Boolean return values replaced with `true`/`false` (explicit returns only)
 - **Recursive operator nesting** — Multiple mutation types combine on the same expression
 - **Type-agnostic** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - **`@SuppressMutations`** — Skip mutations on specific classes or functions
-- **Extensible architecture** — `MutationOperator` interface for adding new mutation types
+- **Extensible architecture** — `MutationOperator` (for calls) and `ReturnMutationOperator` (for returns) interfaces for adding new mutation types
 - **Session-based architecture** — Clean lifecycle, no leaked global state
 - **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension
 - **Selection strategies** — `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
@@ -160,7 +162,7 @@ class CalculatorTest { ... }
 ## Planned Features
 
 - Trap mechanism to pin surviving mutants while fixing tests
-- Additional mutation operators (arithmetic, boolean, null checks, equality)
+- Additional mutation operators (arithmetic, null checks, equality)
 - Gradle plugin for easy setup
 - IR-hash based mutation point IDs (stable across refactoring)
 
@@ -178,6 +180,28 @@ The constant boundary mutation detects poorly tested boundaries that operator mu
 | `0 → -1` | `x > -1` | `isPositive(0)` should be false |
 
 If your tests only use values far from the boundary (e.g., `isPositive(5)` and `isPositive(-5)`), the constant mutations will survive — revealing the gap in boundary testing.
+
+## How Boolean Return Mutations Work
+
+Boolean return mutations verify that your tests actually check return values, not just that the code runs without error.
+
+**Example:** For a function with explicit returns:
+```kotlin
+fun isInRange(x: Int, min: Int, max: Int): Boolean {
+    if (x < min) return false
+    if (x > max) return false
+    return true
+}
+```
+
+| Mutation | Original | Becomes | Caught when |
+|----------|----------|---------|-------------|
+| `return false → true` | `return false` | `return true` | Test asserts false for out-of-range |
+| `return false → false` | `return false` | `return false` | (no change - original behavior) |
+| `return true → true` | `return true` | `return true` | (no change - original behavior) |
+| `return true → false` | `return true` | `return false` | Test asserts true for in-range |
+
+**Note:** Boolean return mutations only apply to explicit `return` statements in block-bodied functions. Expression-bodied functions (`fun foo() = expr`) are mutated via their expression operators instead.
 
 ## Manual API
 
