@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  * Tests use the parameterless MutFlow.underTest { } - the JUnit extension
  * manages session lifecycle and run numbers automatically.
  */
-@MutFlowTest(maxRuns = 5, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
+@MutFlowTest(maxRuns = 500, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
 class CalculatorJUnitTest {
 
     private val calculator = Calculator()

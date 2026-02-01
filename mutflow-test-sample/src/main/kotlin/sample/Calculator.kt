@@ -47,4 +47,32 @@ class Calculator {
         }
         return null
     }
+
+    // --- Arithmetic operations for testing arithmetic mutations ---
+
+    /**
+     * Simple addition for testing + → - mutation.
+     */
+    fun add(a: Int, b: Int): Int = a + b
+
+    /**
+     * Simple subtraction for testing - → + mutation.
+     */
+    fun subtract(a: Int, b: Int): Int = a - b
+
+    /**
+     * Simple multiplication for testing * → / mutation.
+     * Note: * → / uses safe division to avoid div-by-zero.
+     */
+    fun multiply(a: Int, b: Int): Int = a * b
+
+    /**
+     * Simple division for testing / → * mutation.
+     */
+    fun divide(a: Int, b: Int): Int = a / b
+
+    /**
+     * Simple modulo for testing % → / mutation.
+     */
+    fun modulo(a: Int, b: Int): Int = a % b
 }

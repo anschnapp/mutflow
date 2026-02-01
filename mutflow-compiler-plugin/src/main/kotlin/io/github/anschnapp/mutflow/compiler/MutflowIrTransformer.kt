@@ -40,7 +40,8 @@ class MutflowIrTransformer(
 
         fun defaultCallOperators(): List<MutationOperator> = listOf(
             RelationalComparisonOperator(),
-            ConstantBoundaryOperator()
+            ConstantBoundaryOperator(),
+            ArithmeticOperator()
         )
 
         fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(

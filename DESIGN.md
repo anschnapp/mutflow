@@ -552,6 +552,13 @@ End-to-end proof that the architecture works. Thin slice through all layers.
   - Only matches explicit return statements in functions with nullable return types
   - Skips returns that are already null (mutating null to null is pointless)
   - Catches tests that only verify non-null without checking the actual value
+- `ArithmeticOperator` mutates arithmetic operations
+  - `+` → `-` (1 variant)
+  - `-` → `+` (1 variant)
+  - `*` → `/` (1 variant, with safe division to avoid div-by-zero)
+  - `/` → `*` (1 variant)
+  - `%` → `/` (1 variant)
+  - Safe division for `*` → `/`: when b=0, computes b/a; when both are 0, returns 1
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
@@ -682,7 +689,7 @@ The key insight: instead of a separate "boundary analysis" feature with its own 
 This keeps the system focused on mutation testing rather than becoming a general boundary testing tool.
 
 ### Phase 3: Polish
-- More mutation operators (arithmetic, boolean, null checks)
+- More mutation operators (boolean logic, null checks)
 - Configuration options (run count, etc.)
 - Documentation
 - State invalidation hooks

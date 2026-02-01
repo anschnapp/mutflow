@@ -25,6 +25,7 @@ mutflow trades exhaustiveness for practicality: low setup cost, no separate tool
 
 **Phase 2 In Progress** — Core mutation testing features are working:
 - **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
+- **Arithmetic operators** (`+`, `-`, `*`, `/`, `%`) — simple swaps to detect wrong operations
 - **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1
 - **Boolean return mutations** — boolean return values replaced with `true`/`false`
 - **Nullable return mutations** — nullable return values replaced with `null`
@@ -171,6 +172,7 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
 - **K2 compiler plugin** — Transforms `@MutationTarget` classes with multiple mutation types
 - **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
+- **Arithmetic operators** — `+` ↔ `-`, `*` ↔ `/`, `%` → `/` (with safe division to avoid div-by-zero)
 - **Constant boundary mutations** — Numeric constants in comparisons mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
 - **Boolean return mutations** — Boolean return values replaced with `true`/`false` (explicit returns only)
 - **Nullable return mutations** — Nullable return values replaced with `null` (explicit returns only)
