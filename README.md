@@ -21,6 +21,12 @@ Traditional mutation testing is powerful but expensive. Most teams skip it entir
 
 mutflow trades exhaustiveness for practicality: low setup cost, no separate tooling, runs in your normal test suite. Some mutation testing is better than none.
 
+## What mutflow tests (and what it doesn't)
+
+mutflow closes the gap between code coverage and assertion quality. Coverage tells you code was executed; mutflow verifies your assertions actually catch behavioral changes.
+
+**Important:** mutflow only tests code reached within `MutFlow.underTest { }` blocks. Unreached code produces no mutations - mutflow won't warn you. This is intentional (keeps scope focused) but means you should use coverage tools separately to ensure code is exercised at all.
+
 ## Status
 
 **Phase 2 In Progress** — Core mutation testing features are working:

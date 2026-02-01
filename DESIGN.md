@@ -491,6 +491,15 @@ The compiler plugin is applied ONLY to test compilation, never production:
 
 ## Tradeoffs and Limitations
 
+### Scope: Coverage vs Assertion Quality
+
+mutflow closes the gap between code coverage and assertion quality - it doesn't replace coverage tools.
+
+- **Coverage tools** answer: "Was this code executed?"
+- **mutflow** answers: "Do your assertions catch behavioral changes?"
+
+Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. This can be good (setup code, logging) or bad (forgot to wrap the action under test). Use coverage tools to ensure code is exercised; use mutflow to ensure your assertions are meaningful.
+
 ### Advantages
 - **Low overhead**: Compile once, not once per mutant
 - **Low friction**: No separate tool, runs in normal tests
