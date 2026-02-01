@@ -137,6 +137,34 @@ class CalculatorTest { ... }
 - Development: `MostLikelyRandom` + `PerRun` to explore high-risk mutations
 - Merge requests: `MostLikelyStable` + `PerChange` for reproducible results
 
+### Traps (Pinning Mutations)
+
+When a mutation survives, you can **trap** it to run it first every time while you fix the test gap:
+
+```kotlin
+@MutFlowTest(
+    traps = ["(Calculator.kt:8) > → >="]  // Copy from survivor output
+)
+class CalculatorTest { ... }
+```
+
+**How traps work:**
+1. Mutation survives → build fails with display name like `(Calculator.kt:8) > → >=`
+2. Copy the display name into `traps` array
+3. Trapped mutation now runs first every time (before random selection)
+4. Fix your test until it catches the mutation
+5. Remove the trap
+
+Traps run in the order provided, regardless of selection strategy. After all traps are exhausted, normal selection continues.
+
+**Invalid trap handling:** If a trap doesn't match any discovered mutation (e.g., code moved), a warning is printed with available mutations:
+```
+[mutflow] WARNING: Trap not found: (Calculator.kt:999) > → >=
+[mutflow]   Available mutations:
+[mutflow]     (Calculator.kt:8) 0 → -1
+[mutflow]     (Calculator.kt:8) > → >=
+```
+
 ## Current Features
 
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
@@ -158,13 +186,12 @@ class CalculatorTest { ... }
 - **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`, `(Calculator.kt:7) 0 → 1`)
 - **IDE-clickable links** — Source locations in IntelliJ-compatible format for quick navigation
 - **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
+- **Trap mechanism** — Pin specific mutations to run first while debugging test gaps
 
 ## Planned Features
 
-- Trap mechanism to pin surviving mutants while fixing tests
 - Additional mutation operators (arithmetic, null checks, equality)
 - Gradle plugin for easy setup
-- IR-hash based mutation point IDs (stable across refactoring)
 
 ## How Constant Boundary Mutations Work
 

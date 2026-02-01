@@ -52,7 +52,8 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             selection = annotation.selection,
             shuffle = annotation.shuffle,
             maxRuns = maxRuns,
-            expectedTestCount = expectedTestCount
+            expectedTestCount = expectedTestCount,
+            traps = annotation.traps.toList()
         )
 
         // Generate invocation contexts lazily

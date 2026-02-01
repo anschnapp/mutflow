@@ -237,41 +237,45 @@ This ensures:
 - Natural termination when all mutations are covered
 - Run count (configured in JUnit) is the normal limit; exception is early-exit for small codebases
 
-### 5. Trapping Surviving Mutants (Planned)
+### 5. Trapping Surviving Mutants
 
-When a mutant survives, its mutation ID is printed with source location:
+When a mutant survives, the build fails with a display name like:
 ```
-MUTANT SURVIVED: (Calculator.kt:7) > → <
+MUTANT SURVIVED: (Calculator.kt:8) > → >=
 ```
 
-This ID can be passed back to **trap** the mutant — ensuring it runs every time while you fix the test gap:
+This display name can be copied into the `@MutFlowTest` annotation to **trap** the mutant — ensuring it runs first every time while you fix the test gap:
 
 ```kotlin
-@Test
-fun testCalculate() {
-    // given
-    val x = 10
-    val y = 5
-
-    // when
-    val result = MutFlow.underTest(
-        trap = listOf("sample.Calculator_0:1")
-    ) {
-        calculate(x, y)
+@MutFlowTest(
+    traps = ["(Calculator.kt:8) > → >="]
+)
+class CalculatorTest {
+    @Test
+    fun testIsPositive() {
+        val result = MutFlow.underTest { calculator.isPositive(5) }
+        assertTrue(result)
     }
-
-    // then
-    assertEquals(15, result)
 }
 ```
 
 Traps are a **temporary debugging aid**:
-1. Mutation survives → you get its ID
-2. Add ID to `trap` list to pin it
+1. Mutation survives → you get its display name
+2. Copy display name into `traps` array to pin it
 3. Fix your test until it catches the mutation
-4. Remove the ID once fixed
+4. Remove the trap once fixed
 
-Trapped mutations run **in addition to** normal mutation selection.
+**Trap behavior:**
+- Trapped mutations run **first**, before normal selection (regardless of selection strategy)
+- Multiple traps run in the order provided
+- After all traps are exhausted, normal selection continues
+- Invalid traps (e.g., code moved) print a warning with available mutations
+
+**Why display names instead of internal IDs?** The display name format `(FileName.kt:line) original → variant` is:
+- Human-readable and self-documenting in test code
+- Directly copy-pasteable from survivor output
+- Stable enough for temporary debugging (users typically change tests, not impl)
+- Easy to update if code moves (the warning shows available mutations)
 
 ### 6. Scoped Mutations via Annotations
 
@@ -648,8 +652,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 - ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions
 - ✓ **Extensible mutation operator mechanism** — Two interfaces (`MutationOperator` for calls, `ReturnMutationOperator` for returns) make it easy to add new mutation types
-- IR-hash based mutation point IDs (currently uses class name + counter)
-- Trap mechanism for pinning survivors during debugging
+- ✓ **Trap mechanism** — Pin surviving mutants using display names in `@MutFlowTest(traps = [...])`, runs first before random selection
 - Gradle plugin for easy setup
 - Smarter likelihood calculations (see below)
 
@@ -681,6 +684,5 @@ This keeps the system focused on mutation testing rather than becoming a general
 
 ## Open Questions
 
-- How to handle IR hash stability across Kotlin compiler versions?
 - Best approach for counting mutations inside loops/recursion? (per-invocation vs per-source-location)
 - How to present surviving mutants clearly in test output? (IDE integration?)

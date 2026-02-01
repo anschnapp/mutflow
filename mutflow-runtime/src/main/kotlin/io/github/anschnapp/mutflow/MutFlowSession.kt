@@ -13,7 +13,8 @@ class MutFlowSession internal constructor(
     val selection: Selection,
     val shuffle: Shuffle,
     val maxRuns: Int,
-    private val expectedTestCount: Int = 0
+    private val expectedTestCount: Int = 0,
+    private val traps: List<String> = emptyList()
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -26,6 +27,10 @@ class MutFlowSession internal constructor(
 
     // Mutations that have been tested in this session
     private val testedMutations = mutableSetOf<Mutation>()
+
+    // Resolved trapped mutations (populated after baseline discovery)
+    private val trappedMutations = mutableListOf<Mutation>()
+    private var trapsResolved = false
 
     // Seed for Shuffle.PerRun mode - generated once per session
     private var sessionSeed: Long? = null
@@ -86,7 +91,46 @@ class MutFlowSession internal constructor(
             return null
         }
 
+        // Resolve traps after baseline (when we have metadata)
+        if (!trapsResolved) {
+            resolveTraps()
+            trapsResolved = true
+        }
+
         return selectMutation(run)
+    }
+
+    /**
+     * Resolves trap display names to actual Mutation objects.
+     * Called once after baseline discovery when metadata is available.
+     */
+    private fun resolveTraps() {
+        if (traps.isEmpty()) return
+
+        // Build reverse lookup: displayName -> Mutation
+        val displayNameToMutation = mutableMapOf<String, Mutation>()
+        for ((pointId, variantCount) in discoveredPoints) {
+            for (variantIndex in 0 until variantCount) {
+                val mutation = Mutation(pointId, variantIndex)
+                val displayName = getDisplayName(mutation)
+                displayNameToMutation[displayName] = mutation
+            }
+        }
+
+        // Resolve each trap
+        for (trap in traps) {
+            val mutation = displayNameToMutation[trap]
+            if (mutation != null) {
+                trappedMutations.add(mutation)
+                println("[mutflow] Trap resolved: $trap")
+            } else {
+                println("[mutflow] WARNING: Trap not found: $trap")
+                println("[mutflow]   Available mutations:")
+                for (name in displayNameToMutation.keys.sorted()) {
+                    println("[mutflow]     $name")
+                }
+            }
+        }
     }
 
     /**
@@ -250,6 +294,15 @@ class MutFlowSession internal constructor(
             return null
         }
 
+        // Priority 1: Untested trapped mutations (in order provided)
+        val untestedTraps = trappedMutations.filter { it in untestedMutations }
+        if (untestedTraps.isNotEmpty()) {
+            val trap = untestedTraps.first()
+            println("[mutflow] Selecting trapped mutation: ${getDisplayName(trap)}")
+            return trap
+        }
+
+        // Priority 2: Normal selection strategy
         val seed = when (shuffle) {
             Shuffle.PerRun -> getOrCreateSessionSeed() + run
             Shuffle.PerChange -> computePointsHash() + run

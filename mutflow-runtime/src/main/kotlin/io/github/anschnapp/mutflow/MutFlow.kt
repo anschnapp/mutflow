@@ -44,13 +44,15 @@ object MutFlow {
      * @param shuffle When to reseed selection
      * @param maxRuns Maximum number of runs
      * @param expectedTestCount Number of test methods in the class (for partial run detection)
+     * @param traps Mutations to test first, by display name (e.g., "(Calculator.kt:8) > → >=")
      * @return The session ID
      */
     fun createSession(
         selection: Selection,
         shuffle: Shuffle,
         maxRuns: Int,
-        expectedTestCount: Int = 0
+        expectedTestCount: Int = 0,
+        traps: List<String> = emptyList()
     ): String {
         val id = UUID.randomUUID().toString()
         val session = MutFlowSession(
@@ -58,7 +60,8 @@ object MutFlow {
             selection = selection,
             shuffle = shuffle,
             maxRuns = maxRuns,
-            expectedTestCount = expectedTestCount
+            expectedTestCount = expectedTestCount,
+            traps = traps
         )
         sessions[id] = session
         activeSessionId = id
