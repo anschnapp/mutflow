@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrElseBranchImpl
+import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrWhenImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
@@ -30,15 +31,20 @@ import org.jetbrains.kotlin.name.Name
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class MutflowIrTransformer(
     private val pluginContext: IrPluginContext,
-    private val operators: List<MutationOperator> = defaultOperators()
+    private val callOperators: List<MutationOperator> = defaultCallOperators(),
+    private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators()
 ) : IrElementTransformerVoid() {
 
     companion object {
         private const val ENABLE_DEBUG_LOGGING = false
 
-        fun defaultOperators(): List<MutationOperator> = listOf(
+        fun defaultCallOperators(): List<MutationOperator> = listOf(
             RelationalComparisonOperator(),
             ConstantBoundaryOperator()
+        )
+
+        fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(
+            BooleanReturnOperator()
         )
     }
 
@@ -132,18 +138,31 @@ class MutflowIrTransformer(
         }
 
         val fn = currentFunction ?: return transformed
-        return transformWithOperators(transformed, fn, operators)
+        return transformCallWithOperators(transformed, fn, callOperators)
+    }
+
+    override fun visitReturn(expression: IrReturn): IrExpression {
+        // First, transform the return value (bottom-up for nested expressions)
+        val transformed = super.visitReturn(expression) as IrReturn
+
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+
+        val fn = currentFunction ?: return transformed
+        return transformReturnWithOperators(transformed, fn, returnOperators)
     }
 
     /**
-     * Recursively applies matching operators to an expression.
+     * Recursively applies matching call operators to an expression.
      *
      * Each matching operator wraps the expression in a when block, with
      * the else branch passing to the next operator. This enables multiple
      * independent mutation points on the same expression (e.g., operator
      * mutation AND constant boundary mutation).
      */
-    private fun transformWithOperators(
+    private fun transformCallWithOperators(
         original: IrCall,
         containingFunction: IrSimpleFunction,
         remainingOperators: List<MutationOperator>
@@ -156,14 +175,14 @@ class MutflowIrTransformer(
         val rest = remainingOperators.drop(1)
 
         if (!operator.matches(original)) {
-            return transformWithOperators(original, containingFunction, rest)
+            return transformCallWithOperators(original, containingFunction, rest)
         }
 
-        return transformWithOperator(original, containingFunction, operator, rest)
+        return transformCallWithOperator(original, containingFunction, operator, rest)
     }
 
     /**
-     * Transforms an expression using the given mutation operator.
+     * Transforms a call expression using the given mutation operator.
      *
      * Generates a when expression:
      * ```
@@ -175,7 +194,7 @@ class MutflowIrTransformer(
      * }
      * ```
      */
-    private fun transformWithOperator(
+    private fun transformCallWithOperator(
         original: IrCall,
         containingFunction: IrSimpleFunction,
         operator: MutationOperator,
@@ -200,7 +219,7 @@ class MutflowIrTransformer(
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {
             // No variants from this operator, try remaining operators
-            return transformWithOperators(original, containingFunction, remainingOperators)
+            return transformCallWithOperators(original, containingFunction, remainingOperators)
         }
 
         val pointId = generatePointId()
@@ -246,9 +265,125 @@ class MutflowIrTransformer(
                     startOffset = original.startOffset,
                     endOffset = original.endOffset,
                     condition = irTrue(),
-                    result = transformWithOperators(original, containingFunction, remainingOperators)
+                    result = transformCallWithOperators(original, containingFunction, remainingOperators)
                 )
             }
+        }
+    }
+
+    /**
+     * Applies matching return operators to a return statement.
+     *
+     * Unlike call operators which can nest, return operators replace the
+     * return value directly. Only the first matching operator is applied.
+     */
+    private fun transformReturnWithOperators(
+        original: IrReturn,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<ReturnMutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return original
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(original)) {
+            return transformReturnWithOperators(original, containingFunction, rest)
+        }
+
+        return transformReturnWithOperator(original, containingFunction, operator)
+    }
+
+    /**
+     * Transforms a return statement using the given mutation operator.
+     *
+     * Generates a return with a when expression as its value:
+     * ```
+     * return when (MutationRegistry.check(pointId, variantCount, ...)) {
+     *     0 -> true
+     *     1 -> false
+     *     else -> <original expression>
+     * }
+     * ```
+     */
+    private fun transformReturnWithOperator(
+        original: IrReturn,
+        containingFunction: IrSimpleFunction,
+        operator: ReturnMutationOperator
+    ): IrExpression {
+        val checkFn = checkFunction ?: return original
+        val registryClass = mutationRegistryClass ?: return original
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder)
+
+        val variants = operator.variants(original, context)
+        if (variants.isEmpty()) {
+            return original
+        }
+
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(original.value)
+        val originalDescription = operator.originalDescription(original)
+        val variantDescriptions = variants.joinToString(",") { it.description }
+
+        if (ENABLE_DEBUG_LOGGING) {
+            val fnName = containingFunction.name.asString()
+            java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
+                "Transformed RETURN in $fnName at $sourceLocation with variants: $variantDescriptions\n"
+            )
+        }
+
+        val originalValue = original.value
+
+        // Build the mutation check block (same pattern as call transformation)
+        val newValue = builder.irBlock(resultType = originalValue.type) {
+            val checkCall = irCall(checkFn).also { call ->
+                call.arguments[0] = irGetObject(registryClass)
+                call.arguments[1] = irString(pointId)
+                call.arguments[2] = irInt(variantCount)
+                call.arguments[3] = irString(sourceLocation)
+                call.arguments[4] = irString(originalDescription)
+                call.arguments[5] = irString(variantDescriptions)
+            }
+            val checkResult = irTemporary(checkCall, nameHint = "mutationCheck")
+
+            +IrWhenImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                type = originalValue.type,
+                origin = null
+            ).apply {
+                variants.forEachIndexed { index, variant ->
+                    branches += IrBranchImpl(
+                        startOffset = original.startOffset,
+                        endOffset = original.endOffset,
+                        condition = irEquals(irGet(checkResult), irInt(index)),
+                        result = variant.createExpression()
+                    )
+                }
+                branches += IrElseBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = irTrue(),
+                    result = originalValue.deepCopyWithSymbols()
+                )
+            }
+        }
+
+        // Create a new IrReturn with the mutated value, preserving the original's return target
+        return IrReturnImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = original.type,
+            returnTargetSymbol = original.returnTargetSymbol,
+            value = newValue
+        ).also {
+            // Ensure all declarations have their parent properly set
+            it.patchDeclarationParents(containingFunction)
         }
     }
 

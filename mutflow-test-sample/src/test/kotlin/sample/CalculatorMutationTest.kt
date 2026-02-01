@@ -254,4 +254,63 @@ class CalculatorMutationTest {
         assertFalse(negative, "isPositive(-5) should be false")
         assertFalse(zero, "isPositive(0) should be false")
     }
+
+    // ==================== Return value mutations ====================
+
+    @Test
+    fun `isInRange has return value mutations`() {
+        // isInRange uses explicit return (block body), so it gets return value mutations
+        // In addition to comparison operator mutations
+
+        // Baseline - discover mutations
+        val baseline = MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            calculator.isInRange(5, 0, 10)
+        }
+        assertTrue(baseline, "Baseline: isInRange(5, 0, 10) should be true")
+
+        val state = MutFlow.getRegistryState()
+        // isInRange(x, min, max) has:
+        // - x >= min: 2 operator variants (>, <=)
+        // - x <= max: 2 operator variants (<, >=)
+        // - return: 2 variants (true, false)
+        // Total: 6 mutations (3 mutation points × 2 variants each)
+        val totalMutations = state.discoveredPoints.values.sum()
+        assertEquals(6, totalMutations, "isInRange should have 6 total mutations")
+
+        // Should have 3 mutation points (2 comparisons + 1 return)
+        assertEquals(3, state.discoveredPoints.size, "isInRange should have 3 mutation points")
+    }
+
+    @Test
+    fun `return mutation can replace result with true or false`() {
+        // This test verifies that tests which don't check both outcomes would fail
+
+        // Baseline
+        MutFlow.underTest(run = 0, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+            calculator.isInRange(5, 0, 10)
+        }
+
+        // Track mutation results - with return mutations, some runs will return
+        // constant true or false regardless of the actual logic
+        var sawDifferentResult = false
+        var originalResult = true
+
+        // Run several mutation tests
+        for (run in 1..6) {
+            try {
+                val result = MutFlow.underTest(run = run, selection = Selection.PureRandom, shuffle = Shuffle.PerChange) {
+                    calculator.isInRange(5, 0, 10)
+                }
+                if (result != originalResult) {
+                    sawDifferentResult = true
+                }
+            } catch (e: MutationsExhaustedException) {
+                // Expected when all mutations are tested
+                break
+            }
+        }
+
+        // Some mutation should have changed the result
+        assertTrue(sawDifferentResult, "At least one mutation should change the result")
+    }
 }
