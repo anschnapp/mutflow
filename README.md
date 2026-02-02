@@ -39,6 +39,24 @@ mutflow closes the gap between code coverage and assertion quality. Coverage tel
 
 The extensible mutation operator architecture (`MutationOperator` for calls, `ReturnMutationOperator` for returns) makes it easy to add new mutation types. `@SuppressMutations` annotation allows skipping mutations on specific code. Not yet production-ready, but ready for experimentation.
 
+## Setup
+
+Add the mutflow Gradle plugin to your `build.gradle.kts`:
+
+```kotlin
+plugins {
+    kotlin("jvm") version "2.3.0"
+    id("io.github.anschnapp.mutflow") version "0.1.0"
+}
+```
+
+That's it! The plugin automatically:
+- Adds `mutflow-core` to your implementation dependencies (for `@MutationTarget` annotation)
+- Adds `mutflow-junit6` to your test dependencies (for `@MutFlowTest` annotation)
+- Configures the compiler plugin for mutation injection
+
+**Important:** The plugin uses a dual-compilation approach — your production JAR remains clean (no mutation code), while tests run against mutated code.
+
 ## Quick Start
 
 ```kotlin
@@ -200,8 +218,7 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 
 ## Planned Features
 
-- Additional mutation operators (arithmetic, null checks, equality)
-- Gradle plugin for easy setup
+- Additional mutation operators (null checks, equality)
 
 ## How Constant Boundary Mutations Work
 

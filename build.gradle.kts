@@ -1,10 +1,11 @@
 plugins {
     kotlin("jvm") apply false
+    id("com.vanniktech.maven.publish") version "0.30.0" apply false
 }
 
 allprojects {
     group = "io.github.anschnapp.mutflow"
-    version = "0.1.0-SNAPSHOT"
+    version = findProperty("releaseVersion")?.toString() ?: "0.1.0-SNAPSHOT"
 
     repositories {
         mavenCentral()
