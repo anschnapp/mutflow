@@ -11,6 +11,36 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
+// Generate version constant at build time
+val generatedSrcDir = layout.buildDirectory.dir("generated/src/main/kotlin")
+
+sourceSets {
+    main {
+        kotlin.srcDir(generatedSrcDir)
+    }
+}
+
+val generateVersionFile by tasks.registering {
+    val outputDir = generatedSrcDir
+    val projectVersion = project.version.toString()
+
+    outputs.dir(outputDir)
+
+    doLast {
+        val file = outputDir.get().file("io/github/anschnapp/mutflow/gradle/Version.kt").asFile
+        file.parentFile.mkdirs()
+        file.writeText("""
+            package io.github.anschnapp.mutflow.gradle
+
+            internal const val MUTFLOW_VERSION = "$projectVersion"
+        """.trimIndent())
+    }
+}
+
+tasks.named("compileKotlin") {
+    dependsOn(generateVersionFile)
+}
+
 gradlePlugin {
     plugins {
         create("mutflow") {

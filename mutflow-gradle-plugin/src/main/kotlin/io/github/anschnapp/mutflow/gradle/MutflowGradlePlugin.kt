@@ -23,7 +23,6 @@ import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
 class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
 
     companion object {
-        const val VERSION = "0.1.0-SNAPSHOT"
         const val MUTATED_MAIN = "mutatedMain"
         const val GROUP_ID = "io.github.anschnapp.mutflow"
     }
@@ -71,11 +70,11 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
     private fun addDependencies(project: Project) {
         project.dependencies.add(
             "implementation",
-            "$GROUP_ID:mutflow-core:$VERSION"
+            "$GROUP_ID:mutflow-core:$MUTFLOW_VERSION"
         )
         project.dependencies.add(
             "testImplementation",
-            "$GROUP_ID:mutflow-junit6:$VERSION"
+            "$GROUP_ID:mutflow-junit6:$MUTFLOW_VERSION"
         )
     }
 
@@ -86,7 +85,7 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
     override fun getPluginArtifact(): SubpluginArtifact = SubpluginArtifact(
         groupId = GROUP_ID,
         artifactId = "mutflow-compiler-plugin",
-        version = VERSION
+        version = MUTFLOW_VERSION
     )
 
     override fun isApplicable(kotlinCompilation: KotlinCompilation<*>): Boolean {
