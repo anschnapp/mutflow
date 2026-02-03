@@ -41,6 +41,8 @@ The extensible mutation operator architecture (`MutationOperator` for calls, `Re
 
 ## Setup
 
+> **Coming soon:** The Gradle plugin will be published to Maven Central. For now, experimenters can build it locally from source.
+
 Add the mutflow Gradle plugin to your `build.gradle.kts`:
 
 ```kotlin
@@ -50,7 +52,7 @@ plugins {
 }
 ```
 
-That's it! The plugin automatically:
+Once available, the plugin automatically:
 - Adds `mutflow-core` to your implementation dependencies (for `@MutationTarget` annotation)
 - Adds `mutflow-junit6` to your test dependencies (for `@MutFlowTest` annotation)
 - Configures the compiler plugin for mutation injection
