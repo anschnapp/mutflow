@@ -41,6 +41,12 @@ tasks.named("compileKotlin") {
     dependsOn(generateVersionFile)
 }
 
+tasks.withType<Jar>().configureEach {
+    if (name == "sourcesJar") {
+        dependsOn(generateVersionFile)
+    }
+}
+
 gradlePlugin {
     plugins {
         create("mutflow") {
