@@ -14,11 +14,29 @@ import org.jetbrains.kotlin.config.CompilerConfiguration
 @OptIn(ExperimentalCompilerApi::class)
 class MutflowCompilerPluginRegistrar : CompilerPluginRegistrar() {
 
-    override val supportsK2: Boolean = true
+    companion object {
+        private const val DEBUG = false
+        private fun debug(msg: String) {
+            if (DEBUG) {
+                val logFile = java.io.File("/tmp/mutflow-debug.log")
+                logFile.appendText("[MUTFLOW-REGISTRAR] $msg\n")
+                println("[MUTFLOW-REGISTRAR] $msg")
+            }
+        }
+    }
+
+    override val supportsK2: Boolean
+        get() {
+            debug("supportsK2 called -> true")
+            return true
+        }
 
     override val pluginId: String = "io.github.anschnapp.mutflow"
 
     override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
+        debug("registerExtensions() called!")
+        debug("  configuration: $configuration")
         IrGenerationExtension.registerExtension(MutflowIrGenerationExtension())
+        debug("  IrGenerationExtension registered")
     }
 }

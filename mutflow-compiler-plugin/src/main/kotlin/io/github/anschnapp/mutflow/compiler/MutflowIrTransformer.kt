@@ -38,6 +38,14 @@ class MutflowIrTransformer(
     companion object {
         private const val ENABLE_DEBUG_LOGGING = false
 
+        private fun debug(msg: String) {
+            if (ENABLE_DEBUG_LOGGING) {
+                val logFile = java.io.File("/tmp/mutflow-debug.log")
+                logFile.appendText("[MUTFLOW-TRANSFORMER] $msg\n")
+                println("[MUTFLOW-TRANSFORMER] $msg")
+            }
+        }
+
         fun defaultCallOperators(): List<MutationOperator> = listOf(
             RelationalComparisonOperator(),
             ConstantBoundaryOperator(),
@@ -74,6 +82,7 @@ class MutflowIrTransformer(
     private var mutationPointCounter = 0
 
     override fun visitFile(declaration: IrFile): IrFile {
+        debug("visitFile: ${declaration.fileEntry.name}")
         val previousFile = currentFile
         currentFile = declaration
         val result = super.visitFile(declaration)
@@ -82,12 +91,17 @@ class MutflowIrTransformer(
     }
 
     override fun visitClass(declaration: IrClass): IrStatement {
+        debug("visitClass: ${declaration.fqNameWhenAvailable}")
+        debug("  annotations count: ${declaration.annotations.size}")
+
         val wasMutationTarget = isInMutationTarget
         val wasSuppressed = isInSuppressedScope
         val previousClass = currentClass
 
         isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName)
         currentClass = declaration
+
+        debug("  hasAnnotation($mutationTargetFqName): $isInMutationTarget")
 
         // Check for @SuppressMutations on the class
         if (isInMutationTarget && declaration.hasAnnotation(suppressMutationsFqName)) {
@@ -96,11 +110,7 @@ class MutflowIrTransformer(
 
         if (isInMutationTarget && !isInSuppressedScope) {
             mutationPointCounter = 0
-            if (ENABLE_DEBUG_LOGGING) {
-                java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
-                    "Found @MutationTarget class: ${declaration.fqNameWhenAvailable}\n"
-                )
-            }
+            debug("  -> WILL TRANSFORM this class!")
         }
 
         val result = super.visitClass(declaration)
@@ -203,15 +213,11 @@ class MutflowIrTransformer(
         remainingOperators: List<MutationOperator>
     ): IrExpression {
         val checkFn = checkFunction ?: run {
-            if (ENABLE_DEBUG_LOGGING) {
-                java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText("checkFunction is NULL!\n")
-            }
+            debug("ERROR: checkFunction is NULL! MutationRegistry.check not found on classpath")
             return original
         }
         val registryClass = mutationRegistryClass ?: run {
-            if (ENABLE_DEBUG_LOGGING) {
-                java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText("mutationRegistryClass is NULL!\n")
-            }
+            debug("ERROR: mutationRegistryClass is NULL! MutationRegistry not found on classpath")
             return original
         }
 
@@ -230,11 +236,7 @@ class MutflowIrTransformer(
         val originalOperator = operator.originalDescription(original)
         val variantOperators = variants.joinToString(",") { it.description }
 
-        if (ENABLE_DEBUG_LOGGING) {
-            java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
-                "Transformed $originalOperator at $sourceLocation with variants: $variantOperators\n"
-            )
-        }
+        debug("MUTATION: $originalOperator at $sourceLocation -> variants: $variantOperators")
 
         return builder.irBlock(resultType = pluginContext.irBuiltIns.booleanType) {
             val checkCall = irCall(checkFn).also { call ->
@@ -332,12 +334,8 @@ class MutflowIrTransformer(
         val originalDescription = operator.originalDescription(original)
         val variantDescriptions = variants.joinToString(",") { it.description }
 
-        if (ENABLE_DEBUG_LOGGING) {
-            val fnName = containingFunction.name.asString()
-            java.io.File("/tmp/mutflow-plugin-invoked.txt").appendText(
-                "Transformed RETURN in $fnName at $sourceLocation with variants: $variantDescriptions\n"
-            )
-        }
+        val fnName = containingFunction.name.asString()
+        debug("MUTATION: RETURN in $fnName at $sourceLocation -> variants: $variantDescriptions")
 
         val originalValue = original.value
 

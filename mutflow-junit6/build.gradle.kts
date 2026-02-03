@@ -4,7 +4,7 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":mutflow-runtime"))
+    api(project(":mutflow-runtime"))  // Use api so consumers get MutFlow at compile time
 
     implementation("org.junit.jupiter:junit-jupiter-api:${property("junitVersion")}")
     implementation("org.junit.jupiter:junit-jupiter-engine:${property("junitVersion")}")
