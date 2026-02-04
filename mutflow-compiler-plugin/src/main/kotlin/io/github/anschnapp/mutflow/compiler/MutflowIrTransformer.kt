@@ -42,7 +42,7 @@ class MutflowIrTransformer(
 ) : IrElementTransformerVoid() {
 
     companion object {
-        private const val ENABLE_DEBUG_LOGGING = false
+        private const val ENABLE_DEBUG_LOGGING = true
 
         private fun debug(msg: String) {
             if (ENABLE_DEBUG_LOGGING) {
@@ -255,7 +255,7 @@ class MutflowIrTransformer(
             call.arguments[5] = builder.irString(variantOperators)  // variantOperators: String
         }
 
-        // Create temporary variable manually with parent set BEFORE construction completes
+        // Create temporary variable manually with parent set explicitly
         val checkResultVar = IrVariableImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
@@ -266,10 +266,11 @@ class MutflowIrTransformer(
             isVar = false,
             isConst = false,
             isLateinit = false
-        ).apply {
-            parent = containingFunction  // Set parent immediately
-            initializer = checkCall
-        }
+        )
+        // Set parent and initializer AFTER construction (not in apply block)
+        checkResultVar.parent = containingFunction
+        checkResultVar.initializer = checkCall
+        debug("  Created checkResultVar, parent set to: ${(checkResultVar.parent as? IrSimpleFunction)?.name ?: checkResultVar.parent}")
 
         // Create the when expression
         val whenExpr = IrWhenImpl(
@@ -399,7 +400,7 @@ class MutflowIrTransformer(
             call.arguments[5] = builder.irString(variantDescriptions)
         }
 
-        // Create temporary variable manually with parent set BEFORE construction completes
+        // Create temporary variable manually with parent set explicitly
         val checkResultVar = IrVariableImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
@@ -410,10 +411,11 @@ class MutflowIrTransformer(
             isVar = false,
             isConst = false,
             isLateinit = false
-        ).apply {
-            parent = containingFunction  // Set parent immediately
-            initializer = checkCall
-        }
+        )
+        // Set parent and initializer AFTER construction (not in apply block)
+        checkResultVar.parent = containingFunction
+        checkResultVar.initializer = checkCall
+        debug("  Created checkResultVar, parent set to: ${(checkResultVar.parent as? IrSimpleFunction)?.name ?: checkResultVar.parent}")
 
         // Create the when expression
         val whenExpr = IrWhenImpl(
