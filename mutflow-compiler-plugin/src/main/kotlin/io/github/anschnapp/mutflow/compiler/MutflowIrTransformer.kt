@@ -307,18 +307,29 @@ class MutflowIrTransformer(
         }
 
         // Create block containing variable declaration and when expression
-        return IrBlockImpl(
+        val resultBlock = IrBlockImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
-            type = pluginContext.irBuiltIns.booleanType,
+            type = original.type,  // Use original expression's type
             origin = null
         ).apply {
             statements += checkResultVar
             statements += whenExpr
-        }.also {
-            // Patch any nested declarations (from variant expressions)
-            it.patchDeclarationParents(containingFunction)
         }
+
+        // Set parent on all declarations in the block
+        resultBlock.patchDeclarationParents(containingFunction)
+
+        // Verify parent was set correctly
+        debug("  After patchDeclarationParents, checkResultVar.parent = ${(checkResultVar.parent as? IrSimpleFunction)?.name ?: checkResultVar.parent}")
+        if (checkResultVar.parent == null) {
+            debug("  ERROR: Parent is still null after patchDeclarationParents!")
+            // Force set parent again
+            checkResultVar.parent = containingFunction
+            debug("  Force-set parent to: ${containingFunction.name}")
+        }
+
+        return resultBlock
     }
 
     /**
@@ -461,16 +472,26 @@ class MutflowIrTransformer(
         }
 
         // Create a new IrReturn with the mutated value, preserving the original's return target
-        return IrReturnImpl(
+        val result = IrReturnImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
             type = original.type,
             returnTargetSymbol = original.returnTargetSymbol,
             value = newValue
-        ).also {
-            // Patch any nested declarations (from variant expressions)
-            it.patchDeclarationParents(containingFunction)
+        )
+
+        // Set parent on all declarations
+        result.patchDeclarationParents(containingFunction)
+
+        // Verify parent was set correctly
+        debug("  After patchDeclarationParents, checkResultVar.parent = ${(checkResultVar.parent as? IrSimpleFunction)?.name ?: checkResultVar.parent}")
+        if (checkResultVar.parent == null) {
+            debug("  ERROR: Parent is still null after patchDeclarationParents!")
+            checkResultVar.parent = containingFunction
+            debug("  Force-set parent to: ${containingFunction.name}")
         }
+
+        return result
     }
 
     private fun generatePointId(): String {
