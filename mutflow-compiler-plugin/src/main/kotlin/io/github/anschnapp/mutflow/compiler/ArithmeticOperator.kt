@@ -189,8 +189,12 @@ class ArithmeticOperator : MutationOperator {
 
         return builder.irBlock(resultType = resultType) {
             // Evaluate left and right once, store in temporaries
-            val leftVar = irTemporary(left.deepCopyWithSymbols(), nameHint = "left")
-            val rightVar = irTemporary(right.deepCopyWithSymbols(), nameHint = "right")
+            val leftVar = irTemporary(left.deepCopyWithSymbols(), nameHint = "left").also {
+                it.parent = context.containingFunction
+            }
+            val rightVar = irTemporary(right.deepCopyWithSymbols(), nameHint = "right").also {
+                it.parent = context.containingFunction
+            }
 
             val zero = createZeroConstant(resultType)
             val one = createOneConstant(resultType)

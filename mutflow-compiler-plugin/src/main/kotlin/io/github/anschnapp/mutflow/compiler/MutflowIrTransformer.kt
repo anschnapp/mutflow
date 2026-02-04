@@ -222,7 +222,7 @@ class MutflowIrTransformer(
         }
 
         val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
-        val context = MutationContext(pluginContext, builder)
+        val context = MutationContext(pluginContext, builder, containingFunction)
 
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {
@@ -247,7 +247,10 @@ class MutflowIrTransformer(
                 call.arguments[4] = irString(originalOperator)  // originalOperator: String
                 call.arguments[5] = irString(variantOperators)  // variantOperators: String
             }
-            val checkResult = irTemporary(checkCall, nameHint = "mutationCheck")
+            val checkResult = irTemporary(checkCall, nameHint = "mutationCheck").also {
+                // Explicitly set parent - irTemporary doesn't always do this correctly
+                it.parent = containingFunction
+            }
 
             +IrWhenImpl(
                 startOffset = original.startOffset,
@@ -273,7 +276,7 @@ class MutflowIrTransformer(
                 )
             }
         }.also {
-            // Ensure all declarations (including the temporary variable) have their parent set
+            // Ensure all nested declarations also have their parent set
             it.patchDeclarationParents(containingFunction)
         }
     }
@@ -324,7 +327,7 @@ class MutflowIrTransformer(
         val registryClass = mutationRegistryClass ?: return original
 
         val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
-        val context = MutationContext(pluginContext, builder)
+        val context = MutationContext(pluginContext, builder, containingFunction)
 
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {
@@ -357,7 +360,10 @@ class MutflowIrTransformer(
                 call.arguments[4] = irString(originalDescription)
                 call.arguments[5] = irString(variantDescriptions)
             }
-            val checkResult = irTemporary(checkCall, nameHint = "mutationCheck")
+            val checkResult = irTemporary(checkCall, nameHint = "mutationCheck").also {
+                // Explicitly set parent - irTemporary doesn't always do this correctly
+                it.parent = containingFunction
+            }
 
             +IrWhenImpl(
                 startOffset = original.startOffset,

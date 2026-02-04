@@ -2,6 +2,7 @@ package io.github.anschnapp.mutflow.compiler
 
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.ir.builders.IrBuilderWithScope
+import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 
@@ -49,5 +50,6 @@ interface MutationOperator {
  */
 data class MutationContext(
     val pluginContext: IrPluginContext,
-    val builder: IrBuilderWithScope
+    val builder: IrBuilderWithScope,
+    val containingFunction: IrSimpleFunction
 )
