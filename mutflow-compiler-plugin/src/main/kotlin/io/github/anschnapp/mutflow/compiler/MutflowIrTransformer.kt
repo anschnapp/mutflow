@@ -272,6 +272,9 @@ class MutflowIrTransformer(
                     result = transformCallWithOperators(original, containingFunction, remainingOperators)
                 )
             }
+        }.also {
+            // Ensure all declarations (including the temporary variable) have their parent set
+            it.patchDeclarationParents(containingFunction)
         }
     }
 
