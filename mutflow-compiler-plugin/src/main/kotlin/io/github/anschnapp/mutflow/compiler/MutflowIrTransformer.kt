@@ -8,19 +8,13 @@ import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.*
-import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
-import org.jetbrains.kotlin.ir.declarations.impl.IrVariableImpl
-import org.jetbrains.kotlin.ir.expressions.impl.IrBlockImpl
-import org.jetbrains.kotlin.ir.symbols.impl.IrVariableSymbolImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrElseBranchImpl
-import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrWhenImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
-import org.jetbrains.kotlin.ir.types.makeNullable
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.name.CallableId
@@ -244,77 +238,46 @@ class MutflowIrTransformer(
 
         debug("MUTATION: $originalOperator at $sourceLocation -> variants: $variantOperators")
 
-        // Build IR manually to ensure proper parent setting
-        // Create the check call
-        val checkCall = builder.irCall(checkFn).also { call ->
-            call.arguments[0] = builder.irGetObject(registryClass)  // dispatch receiver
-            call.arguments[1] = builder.irString(pointId)           // pointId: String
-            call.arguments[2] = builder.irInt(variantCount)         // variantCount: Int
-            call.arguments[3] = builder.irString(sourceLocation)    // sourceLocation: String
-            call.arguments[4] = builder.irString(originalOperator)  // originalOperator: String
-            call.arguments[5] = builder.irString(variantOperators)  // variantOperators: String
-        }
-
-        // Create temporary variable manually with parent set explicitly
-        val checkResultVar = IrVariableImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
-            origin = IrDeclarationOrigin.IR_TEMPORARY_VARIABLE,
-            symbol = IrVariableSymbolImpl(),
-            name = Name.identifier("mutationCheck"),
-            type = pluginContext.irBuiltIns.intType.makeNullable(),
-            isVar = false,
-            isConst = false,
-            isLateinit = false
-        )
-        // Set parent and initializer AFTER construction (not in apply block)
-        checkResultVar.parent = containingFunction
-        checkResultVar.initializer = checkCall
-        debug("  Created checkResultVar, parent set to: ${(checkResultVar.parent as? IrSimpleFunction)?.name ?: checkResultVar.parent}")
-
-        // Create the when expression
-        val whenExpr = IrWhenImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
-            type = pluginContext.irBuiltIns.booleanType,
-            origin = null
-        ).apply {
-            // Add branches for each variant
-            variants.forEachIndexed { index, variant ->
-                branches += IrBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
-                    condition = builder.irEquals(
-                        IrGetValueImpl(
-                            startOffset = original.startOffset,
-                            endOffset = original.endOffset,
-                            type = checkResultVar.type,
-                            symbol = checkResultVar.symbol,
-                            origin = null
-                        ),
-                        builder.irInt(index)
-                    ),
-                    result = variant.createExpression()
-                )
+        // Use irBlock builder which properly handles parent setting for temporaries
+        return builder.irBlock(resultType = pluginContext.irBuiltIns.booleanType) {
+            // Create the check call
+            val checkCall = irCall(checkFn).also { call ->
+                call.arguments[0] = irGetObject(registryClass)  // dispatch receiver
+                call.arguments[1] = irString(pointId)           // pointId: String
+                call.arguments[2] = irInt(variantCount)         // variantCount: Int
+                call.arguments[3] = irString(sourceLocation)    // sourceLocation: String
+                call.arguments[4] = irString(originalOperator)  // originalOperator: String
+                call.arguments[5] = irString(variantOperators)  // variantOperators: String
             }
-            // Else: recursively apply remaining operators (or original if none left)
-            branches += IrElseBranchImpl(
+
+            // Use irTemporary from the builder scope - this handles parent setting correctly
+            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck")
+            debug("  Created checkResultVar via irTemporary, parent: ${checkResultVar.parent}")
+
+            // Create the when expression - use + operator to add it to the block
+            +IrWhenImpl(
                 startOffset = original.startOffset,
                 endOffset = original.endOffset,
-                condition = builder.irTrue(),
-                result = transformCallWithOperators(original, containingFunction, remainingOperators)
-            )
-        }
-
-        // Create block containing variable declaration and when expression
-        return IrBlockImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
-            type = pluginContext.irBuiltIns.booleanType,
-            origin = null
-        ).apply {
-            statements += checkResultVar
-            statements += whenExpr
+                type = pluginContext.irBuiltIns.booleanType,
+                origin = null
+            ).apply {
+                // Add branches for each variant
+                variants.forEachIndexed { index, variant ->
+                    branches += IrBranchImpl(
+                        startOffset = original.startOffset,
+                        endOffset = original.endOffset,
+                        condition = irEquals(irGet(checkResultVar), irInt(index)),
+                        result = variant.createExpression()
+                    )
+                }
+                // Else: recursively apply remaining operators (or original if none left)
+                branches += IrElseBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = irTrue(),
+                    result = transformCallWithOperators(original, containingFunction, remainingOperators)
+                )
+            }
         }.also {
             // Patch any nested declarations (from variant expressions)
             it.patchDeclarationParents(containingFunction)
@@ -390,74 +353,47 @@ class MutflowIrTransformer(
         // (e.g., returning non-null Int from a function that returns Int?)
         val blockType = containingFunction.returnType
 
-        // Build IR manually to ensure proper parent setting
-        val checkCall = builder.irCall(checkFn).also { call ->
-            call.arguments[0] = builder.irGetObject(registryClass)
-            call.arguments[1] = builder.irString(pointId)
-            call.arguments[2] = builder.irInt(variantCount)
-            call.arguments[3] = builder.irString(sourceLocation)
-            call.arguments[4] = builder.irString(originalDescription)
-            call.arguments[5] = builder.irString(variantDescriptions)
-        }
-
-        // Create temporary variable manually with parent set explicitly
-        val checkResultVar = IrVariableImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
-            origin = IrDeclarationOrigin.IR_TEMPORARY_VARIABLE,
-            symbol = IrVariableSymbolImpl(),
-            name = Name.identifier("mutationCheck"),
-            type = pluginContext.irBuiltIns.intType.makeNullable(),
-            isVar = false,
-            isConst = false,
-            isLateinit = false
-        )
-        // Set parent and initializer AFTER construction (not in apply block)
-        checkResultVar.parent = containingFunction
-        checkResultVar.initializer = checkCall
-        debug("  Created checkResultVar, parent set to: ${(checkResultVar.parent as? IrSimpleFunction)?.name ?: checkResultVar.parent}")
-
-        // Create the when expression
-        val whenExpr = IrWhenImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
-            type = blockType,
-            origin = null
-        ).apply {
-            variants.forEachIndexed { index, variant ->
-                branches += IrBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
-                    condition = builder.irEquals(
-                        IrGetValueImpl(
-                            startOffset = original.startOffset,
-                            endOffset = original.endOffset,
-                            type = checkResultVar.type,
-                            symbol = checkResultVar.symbol,
-                            origin = null
-                        ),
-                        builder.irInt(index)
-                    ),
-                    result = variant.createExpression()
-                )
+        // Use irBlock builder which properly handles parent setting for temporaries
+        val newValue = builder.irBlock(resultType = blockType) {
+            // Create the check call
+            val checkCall = irCall(checkFn).also { call ->
+                call.arguments[0] = irGetObject(registryClass)
+                call.arguments[1] = irString(pointId)
+                call.arguments[2] = irInt(variantCount)
+                call.arguments[3] = irString(sourceLocation)
+                call.arguments[4] = irString(originalDescription)
+                call.arguments[5] = irString(variantDescriptions)
             }
-            branches += IrElseBranchImpl(
+
+            // Use irTemporary from the builder scope - this handles parent setting correctly
+            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck")
+            debug("  Created checkResultVar via irTemporary, parent: ${checkResultVar.parent}")
+
+            // Create the when expression
+            +IrWhenImpl(
                 startOffset = original.startOffset,
                 endOffset = original.endOffset,
-                condition = builder.irTrue(),
-                result = originalValue.deepCopyWithSymbols()
-            )
-        }
-
-        // Create block containing variable declaration and when expression
-        val newValue = IrBlockImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
-            type = blockType,
-            origin = null
-        ).apply {
-            statements += checkResultVar
-            statements += whenExpr
+                type = blockType,
+                origin = null
+            ).apply {
+                variants.forEachIndexed { index, variant ->
+                    branches += IrBranchImpl(
+                        startOffset = original.startOffset,
+                        endOffset = original.endOffset,
+                        condition = irEquals(irGet(checkResultVar), irInt(index)),
+                        result = variant.createExpression()
+                    )
+                }
+                branches += IrElseBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = irTrue(),
+                    result = originalValue.deepCopyWithSymbols()
+                )
+            }
+        }.also {
+            // Patch any nested declarations (from variant expressions)
+            it.patchDeclarationParents(containingFunction)
         }
 
         // Create a new IrReturn with the mutated value, preserving the original's return target
@@ -467,10 +403,7 @@ class MutflowIrTransformer(
             type = original.type,
             returnTargetSymbol = original.returnTargetSymbol,
             value = newValue
-        ).also {
-            // Patch any nested declarations (from variant expressions)
-            it.patchDeclarationParents(containingFunction)
-        }
+        )
     }
 
     private fun generatePointId(): String {
