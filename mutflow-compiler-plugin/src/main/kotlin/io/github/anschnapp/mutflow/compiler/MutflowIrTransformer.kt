@@ -36,7 +36,7 @@ class MutflowIrTransformer(
 ) : IrElementTransformerVoid() {
 
     companion object {
-        private const val ENABLE_DEBUG_LOGGING = true
+        private const val ENABLE_DEBUG_LOGGING = false
 
         private fun debug(msg: String) {
             if (ENABLE_DEBUG_LOGGING) {
@@ -202,15 +202,19 @@ class MutflowIrTransformer(
     /**
      * Transforms a call expression using the given mutation operator.
      *
-     * Generates a when expression:
+     * Generates a when expression with inline check() calls (no temporary variable):
      * ```
-     * when (MutationRegistry.check(pointId, variantCount, ...)) {
-     *     0 -> variant0
-     *     1 -> variant1
+     * when {
+     *     MutationRegistry.check(...) == 0 -> variant0
+     *     MutationRegistry.check(...) == 1 -> variant1
      *     ...
      *     else -> <recursively apply remaining operators>
      * }
      * ```
+     *
+     * check() is idempotent for the same pointId, so calling it per branch is safe.
+     * This avoids creating temporary variables that can have their parent references
+     * invalidated by other compiler plugins (e.g., kotlin-allopen/Spring plugin).
      */
     private fun transformCallWithOperator(
         original: IrCall,
@@ -232,7 +236,6 @@ class MutflowIrTransformer(
 
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {
-            // No variants from this operator, try remaining operators
             return transformCallWithOperators(original, containingFunction, remainingOperators)
         }
 
@@ -244,51 +247,37 @@ class MutflowIrTransformer(
 
         debug("MUTATION: $originalOperator at $sourceLocation -> variants: $variantOperators")
 
-        // Use irBlock builder which properly handles parent setting for temporaries
-        return builder.irBlock(resultType = pluginContext.irBuiltIns.booleanType) {
-            // Create the check call
-            val checkCall = irCall(checkFn).also { call ->
-                call.arguments[0] = irGetObject(registryClass)  // dispatch receiver
-                call.arguments[1] = irString(pointId)           // pointId: String
-                call.arguments[2] = irInt(variantCount)         // variantCount: Int
-                call.arguments[3] = irString(sourceLocation)    // sourceLocation: String
-                call.arguments[4] = irString(originalOperator)  // originalOperator: String
-                call.arguments[5] = irString(variantOperators)  // variantOperators: String
-            }
+        // Helper to create a fresh check() call for each branch condition
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+        }
 
-            // Use irTemporary and EXPLICITLY set parent - irTemporary doesn't set it
-            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck").also { v ->
-                v.parent = containingFunction
-            }
-            debug("  Created checkResultVar, parent: ${checkResultVar.parent}")
-
-            // Create the when expression - use + operator to add it to the block
-            +IrWhenImpl(
-                startOffset = original.startOffset,
-                endOffset = original.endOffset,
-                type = pluginContext.irBuiltIns.booleanType,
-                origin = null
-            ).apply {
-                // Add branches for each variant
-                variants.forEachIndexed { index, variant ->
-                    branches += IrBranchImpl(
-                        startOffset = original.startOffset,
-                        endOffset = original.endOffset,
-                        condition = irEquals(irGet(checkResultVar), irInt(index)),
-                        result = variant.createExpression()
-                    )
-                }
-                // Else: recursively apply remaining operators (or original if none left)
-                branches += IrElseBranchImpl(
+        // Generate when expression with inline check() calls - no temporary variable
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = pluginContext.irBuiltIns.booleanType,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
                     startOffset = original.startOffset,
                     endOffset = original.endOffset,
-                    condition = irTrue(),
-                    result = transformCallWithOperators(original, containingFunction, remainingOperators)
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
                 )
             }
-        }.also {
-            // Patch any nested declarations (from variant expressions)
-            it.patchDeclarationParents(containingFunction)
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = transformCallWithOperators(original, containingFunction, remainingOperators)
+            )
         }
     }
 
@@ -320,11 +309,11 @@ class MutflowIrTransformer(
     /**
      * Transforms a return statement using the given mutation operator.
      *
-     * Generates a return with a when expression as its value:
+     * Generates a return with a when expression using inline check() calls:
      * ```
-     * return when (MutationRegistry.check(pointId, variantCount, ...)) {
-     *     0 -> true
-     *     1 -> false
+     * return when {
+     *     MutationRegistry.check(...) == 0 -> true
+     *     MutationRegistry.check(...) == 1 -> false
      *     else -> <original expression>
      * }
      * ```
@@ -356,57 +345,42 @@ class MutflowIrTransformer(
 
         val originalValue = original.value
 
-        // Use the function's return type for the block/when type.
-        // This is important when the original value type differs from the function return type
-        // (e.g., returning non-null Int from a function that returns Int?)
+        // Use the function's return type for the when type
         val blockType = containingFunction.returnType
 
-        // Use irBlock builder which properly handles parent setting for temporaries
-        val newValue = builder.irBlock(resultType = blockType) {
-            // Create the check call
-            val checkCall = irCall(checkFn).also { call ->
-                call.arguments[0] = irGetObject(registryClass)
-                call.arguments[1] = irString(pointId)
-                call.arguments[2] = irInt(variantCount)
-                call.arguments[3] = irString(sourceLocation)
-                call.arguments[4] = irString(originalDescription)
-                call.arguments[5] = irString(variantDescriptions)
-            }
-
-            // Use irTemporary and EXPLICITLY set parent - irTemporary doesn't set it
-            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck").also { v ->
-                v.parent = containingFunction
-            }
-            debug("  Created checkResultVar, parent: ${checkResultVar.parent}")
-
-            // Create the when expression
-            +IrWhenImpl(
-                startOffset = original.startOffset,
-                endOffset = original.endOffset,
-                type = blockType,
-                origin = null
-            ).apply {
-                variants.forEachIndexed { index, variant ->
-                    branches += IrBranchImpl(
-                        startOffset = original.startOffset,
-                        endOffset = original.endOffset,
-                        condition = irEquals(irGet(checkResultVar), irInt(index)),
-                        result = variant.createExpression()
-                    )
-                }
-                branches += IrElseBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
-                    condition = irTrue(),
-                    result = originalValue.deepCopyWithSymbols()
-                )
-            }
-        }.also {
-            // Patch any nested declarations (from variant expressions)
-            it.patchDeclarationParents(containingFunction)
+        // Helper to create a fresh check() call for each branch condition
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalDescription)
+            call.arguments[5] = builder.irString(variantDescriptions)
         }
 
-        // Create a new IrReturn with the mutated value, preserving the original's return target
+        // Generate when expression with inline check() calls - no temporary variable
+        val newValue = IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = blockType,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = originalValue.deepCopyWithSymbols()
+            )
+        }
+
         return IrReturnImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
