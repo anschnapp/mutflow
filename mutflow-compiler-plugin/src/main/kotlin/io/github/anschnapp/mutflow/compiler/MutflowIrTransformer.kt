@@ -36,7 +36,7 @@ class MutflowIrTransformer(
 ) : IrElementTransformerVoid() {
 
     companion object {
-        private const val ENABLE_DEBUG_LOGGING = false
+        private const val ENABLE_DEBUG_LOGGING = true
 
         private fun debug(msg: String) {
             if (ENABLE_DEBUG_LOGGING) {
@@ -140,6 +140,14 @@ class MutflowIrTransformer(
         }
 
         val result = super.visitSimpleFunction(declaration)
+
+        // After all transformations, fix parent pointers for all declarations.
+        // deepCopyWithSymbols() and IR tree restructuring (wrapping expressions
+        // in when blocks) can leave declaration parents unset - particularly for
+        // lambda function declarations within the transformed tree.
+        if (isInMutationTarget && !isInSuppressedScope) {
+            declaration.body?.patchDeclarationParents(declaration)
+        }
 
         currentFunction = previousFunction
         isInSuppressedScope = wasSuppressed
