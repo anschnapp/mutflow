@@ -40,9 +40,15 @@ class MutflowIrTransformer(
 
         private fun debug(msg: String) {
             if (ENABLE_DEBUG_LOGGING) {
-                val logFile = java.io.File("/tmp/mutflow-debug.log")
-                logFile.appendText("[MUTFLOW-TRANSFORMER] $msg\n")
-                println("[MUTFLOW-TRANSFORMER] $msg")
+                // Use System.err which reliably shows in build output
+                System.err.println("[MUTFLOW] $msg")
+                // Also try to write to a log file in user home (more reliable than /tmp)
+                try {
+                    val logFile = java.io.File(System.getProperty("user.home"), "mutflow-debug.log")
+                    logFile.appendText("[MUTFLOW] $msg\n")
+                } catch (_: Exception) {
+                    // Ignore file write errors
+                }
             }
         }
 
@@ -250,9 +256,11 @@ class MutflowIrTransformer(
                 call.arguments[5] = irString(variantOperators)  // variantOperators: String
             }
 
-            // Use irTemporary from the builder scope - this handles parent setting correctly
-            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck")
-            debug("  Created checkResultVar via irTemporary, parent: ${checkResultVar.parent}")
+            // Use irTemporary and EXPLICITLY set parent - irTemporary doesn't set it
+            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck").also { v ->
+                v.parent = containingFunction
+            }
+            debug("  Created checkResultVar, parent: ${checkResultVar.parent}")
 
             // Create the when expression - use + operator to add it to the block
             +IrWhenImpl(
@@ -365,9 +373,11 @@ class MutflowIrTransformer(
                 call.arguments[5] = irString(variantDescriptions)
             }
 
-            // Use irTemporary from the builder scope - this handles parent setting correctly
-            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck")
-            debug("  Created checkResultVar via irTemporary, parent: ${checkResultVar.parent}")
+            // Use irTemporary and EXPLICITLY set parent - irTemporary doesn't set it
+            val checkResultVar = irTemporary(checkCall, nameHint = "mutationCheck").also { v ->
+                v.parent = containingFunction
+            }
+            debug("  Created checkResultVar, parent: ${checkResultVar.parent}")
 
             // Create the when expression
             +IrWhenImpl(
