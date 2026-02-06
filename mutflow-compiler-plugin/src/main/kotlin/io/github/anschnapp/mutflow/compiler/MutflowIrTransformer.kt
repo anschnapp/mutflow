@@ -194,7 +194,11 @@ class MutflowIrTransformer(
         remainingOperators: List<MutationOperator>
     ): IrExpression {
         if (remainingOperators.isEmpty()) {
-            return original.deepCopyWithSymbols()
+            // Use original directly - no deep copy needed.
+            // The original is no longer at its old tree position (replaced by the when block),
+            // so it's safe to place it in the else branch. Avoiding deepCopyWithSymbols()
+            // prevents creating copies of lambda declarations with unset parent pointers.
+            return original
         }
 
         val operator = remainingOperators.first()
@@ -385,7 +389,11 @@ class MutflowIrTransformer(
                 startOffset = original.startOffset,
                 endOffset = original.endOffset,
                 condition = builder.irTrue(),
-                result = originalValue.deepCopyWithSymbols()
+                // Use original value directly - no deep copy needed.
+                // The original return is replaced by a new IrReturnImpl, so originalValue
+                // is no longer at its old position. Avoiding deepCopyWithSymbols()
+                // prevents creating copies of lambda declarations with unset parent pointers.
+                result = originalValue
             )
         }
 
