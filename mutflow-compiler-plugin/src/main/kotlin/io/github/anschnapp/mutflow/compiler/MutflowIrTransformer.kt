@@ -36,7 +36,7 @@ class MutflowIrTransformer(
 ) : IrElementTransformerVoid() {
 
     companion object {
-        private const val ENABLE_DEBUG_LOGGING = true
+        private const val ENABLE_DEBUG_LOGGING = false
 
         private fun debug(msg: String) {
             if (ENABLE_DEBUG_LOGGING) {
