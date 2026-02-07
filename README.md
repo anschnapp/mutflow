@@ -29,7 +29,7 @@ mutflow closes the gap between code coverage and assertion quality. Coverage tel
 
 ## Status
 
-**Phase 2 In Progress** — Core mutation testing features are working:
+Core mutation testing features are working:
 - **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
 - **Arithmetic operators** (`+`, `-`, `*`, `/`, `%`) — simple swaps to detect wrong operations
 - **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1

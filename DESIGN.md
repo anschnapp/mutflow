@@ -88,7 +88,7 @@ Mutation points are discovered **dynamically at runtime**, not statically at cla
 
 1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" along with display metadata (source location, operator descriptions), and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
 
-**Note:** Point IDs use the format `ClassName_N` (e.g., `sample.Calculator_0`), but display names show source location and operator (e.g., `(Calculator.kt:7) > → >=`). Phase 2 will switch to IR-hash based IDs for stability across refactoring.
+**Note:** Point IDs use the format `ClassName_N` (e.g., `sample.Calculator_0`), but display names show source location and operator (e.g., `(Calculator.kt:7) > → >=`). A future improvement is switching to IR-hash based IDs for stability across refactoring.
 
 2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointId, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
@@ -540,13 +540,9 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Trap mechanism to pin surviving mutants while fixing test gaps
 - IR-hash based mutation point identification (stable across refactoring)
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1: Tracer Bullet ✓ COMPLETE
-
-End-to-end proof that the architecture works. Thin slice through all layers.
-
-#### What Was Built
+### What's Built
 
 **mutflow-core:**
 - `MutationRegistry` with `check()`, `startSession()`, `endSession()` API
@@ -606,7 +602,7 @@ End-to-end proof that the architecture works. Thin slice through all layers.
 **mutflow-test-sample:**
 - Integration tests demonstrating both APIs
 
-#### Target API (Achieved)
+### Target API
 
 ```kotlin
 // Simple: use @MutFlowTest annotation
@@ -680,26 +676,16 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 }
 ```
 
-### Phase 2: Core Features
-- ✓ **Variant descriptions in display names** — Mutations now show as `(Calculator.kt:7) > → >=` with clickable source locations
-- ✓ **Partial run detection** — Automatically skips mutation testing when running single tests from IDE
-- ✓ **All relational comparison operators** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
-- ✓ **Constant boundary mutations** — Numeric constants in comparisons are mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
-- ✓ **Boolean return mutations** — Boolean return values mutated to `true`/`false` (explicit returns only)
-- ✓ **Nullable return mutations** — Nullable return values mutated to `null` (catches tests that don't verify actual values)
-- ✓ **Recursive operator nesting** — Multiple operators can match the same expression, generating nested `when` blocks
-- ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
-- ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions
-- ✓ **Extensible mutation operator mechanism** — Three interfaces (`MutationOperator` for calls, `ReturnMutationOperator` for returns, `FunctionBodyMutationOperator` for function bodies) make it easy to add new mutation types
-- ✓ **Trap mechanism** — Pin surviving mutants using display names in `@MutFlowTest(traps = [...])`, runs first before random selection
-- ✓ **Arithmetic mutations** — `+` ↔ `-`, `*` ↔ `/`, `%` → `/` with safe division for `*` → `/`
-- ✓ **Void function body removal** — Unit function bodies replaced with empty bodies, catching untested side effects
+### Planned
+
 - Gradle plugin for easy setup
+- More mutation operators (boolean logic, equality operators `==`/`!=`, negation removal)
 - Smarter likelihood calculations (see below)
+- State invalidation hooks
 
 #### Smarter Likelihood Calculations
 
-The current touch count metric is a simple proxy for "how well tested is this mutation point". In Phase 2, we could enhance the likelihood calculation by analyzing observed runtime values during baseline.
+The current touch count metric is a simple proxy for "how well tested is this mutation point". A future improvement is enhancing the likelihood calculation by analyzing observed runtime values during baseline.
 
 **Simple cases** (e.g., `x > 5` where one side is a literal):
 - Track observed values of `x` during baseline
@@ -715,11 +701,6 @@ The current touch count metric is a simple proxy for "how well tested is this mu
 The key insight: instead of a separate "boundary analysis" feature with its own warnings/control flow, we integrate this into the existing likelihood score. Boundary-untested variants naturally bubble to the top of selection priority, get tested first, and produce standard "mutation survived" feedback if they survive.
 
 This keeps the system focused on mutation testing rather than becoming a general boundary testing tool.
-
-### Phase 3: Polish
-- More mutation operators (boolean logic, equality operators `==`/`!=`, negation removal)
-- Configuration options (run count, etc.)
-- State invalidation hooks
 
 ## Open Questions
 
