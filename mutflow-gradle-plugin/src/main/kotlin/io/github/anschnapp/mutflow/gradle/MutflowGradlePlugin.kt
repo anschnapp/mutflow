@@ -112,8 +112,14 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
     }
 
     private fun addDependencies(project: Project) {
+        // Production only needs annotations (no mutation runtime infrastructure)
         project.dependencies.add(
             "implementation",
+            "$GROUP_ID:mutflow-annotations:$MUTFLOW_VERSION"
+        )
+        // MutatedMain needs MutationRegistry for compiler-generated check() calls
+        project.dependencies.add(
+            "${MUTATED_MAIN}Implementation",
             "$GROUP_ID:mutflow-core:$MUTFLOW_VERSION"
         )
         project.dependencies.add(

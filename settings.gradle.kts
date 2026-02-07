@@ -7,6 +7,7 @@ pluginManagement {
 
 rootProject.name = "mutflow"
 
+include("mutflow-annotations")
 include("mutflow-core")
 include("mutflow-runtime")
 include("mutflow-compiler-plugin")

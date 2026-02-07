@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    api(project(":mutflow-annotations"))
     testImplementation(kotlin("test"))
 }
 
@@ -17,7 +18,7 @@ mavenPublishing {
 
     pom {
         name.set("mutflow-core")
-        description.set("Core annotations and registry for Mutflow - Lightweight mutation testing for Kotlin")
+        description.set("Core registry for Mutflow - Lightweight mutation testing for Kotlin")
         url.set("https://github.com/anschnapp/mutflow")
 
         licenses {
