@@ -357,11 +357,22 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
 │                           │  Injects MutationRegistry.check()   │
-│                           │  MutationOperator: extension iface  │
+│                           │  Three operator interfaces:         │
+│                           │    MutationOperator (IrCall nodes)  │
+│                           │    ReturnMutationOperator (IrReturn)│
+│                           │    FunctionBodyMutationOperator     │
 │                           │  RelationalComparisonOperator:      │
 │                           │    handles >, <, >=, <= operators   │
 │                           │  ConstantBoundaryOperator:          │
 │                           │    mutates constants by +1/-1       │
+│                           │  ArithmeticOperator:                │
+│                           │    handles +, -, *, /, % operators  │
+│                           │  BooleanReturnOperator:             │
+│                           │    replaces bool returns with T/F   │
+│                           │  NullableReturnOperator:            │
+│                           │    replaces nullable returns w/ null│
+│                           │  VoidFunctionBodyOperator:          │
+│                           │    removes Unit function bodies     │
 │                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-core             │  @MutationTarget annotation         │
@@ -544,9 +555,10 @@ End-to-end proof that the architecture works. Thin slice through all layers.
 
 **mutflow-compiler-plugin:**
 - K2 compiler plugin with extensible mutation operator mechanism
-- Two operator interfaces for different IR node types:
+- Three operator interfaces for different IR node types:
   - `MutationOperator` — for `IrCall` nodes (comparison operators, etc.)
   - `ReturnMutationOperator` — for `IrReturn` nodes (return statement mutations)
+  - `FunctionBodyMutationOperator` — for function declarations (body-level mutations)
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
   - Each operator produces 2 variants: boundary mutation + direction flip
 - `ConstantBoundaryOperator` mutates numeric constants in comparisons
@@ -568,6 +580,11 @@ End-to-end proof that the architecture works. Thin slice through all layers.
   - `/` → `*` (1 variant)
   - `%` → `/` (1 variant)
   - Safe division for `*` → `/`: when b=0, computes b/a; when both are 0, returns 1
+- `VoidFunctionBodyOperator` removes entire function bodies of Unit/void functions
+  - Produces 1 variant: empty body (all side effects removed)
+  - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
+  - Catches tests that don't verify side effects — "what if this function did nothing?"
+  - Operates at the function declaration level, not at call sites
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
@@ -673,8 +690,10 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 - ✓ **Recursive operator nesting** — Multiple operators can match the same expression, generating nested `when` blocks
 - ✓ **Type-agnostic operand handling** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - ✓ **`@SuppressMutations` annotation** — Skip mutations on specific classes or functions
-- ✓ **Extensible mutation operator mechanism** — Two interfaces (`MutationOperator` for calls, `ReturnMutationOperator` for returns) make it easy to add new mutation types
+- ✓ **Extensible mutation operator mechanism** — Three interfaces (`MutationOperator` for calls, `ReturnMutationOperator` for returns, `FunctionBodyMutationOperator` for function bodies) make it easy to add new mutation types
 - ✓ **Trap mechanism** — Pin surviving mutants using display names in `@MutFlowTest(traps = [...])`, runs first before random selection
+- ✓ **Arithmetic mutations** — `+` ↔ `-`, `*` ↔ `/`, `%` → `/` with safe division for `*` → `/`
+- ✓ **Void function body removal** — Unit function bodies replaced with empty bodies, catching untested side effects
 - Gradle plugin for easy setup
 - Smarter likelihood calculations (see below)
 
@@ -698,11 +717,9 @@ The key insight: instead of a separate "boundary analysis" feature with its own 
 This keeps the system focused on mutation testing rather than becoming a general boundary testing tool.
 
 ### Phase 3: Polish
-- More mutation operators (boolean logic, null checks)
+- More mutation operators (boolean logic, equality operators `==`/`!=`, negation removal)
 - Configuration options (run count, etc.)
-- Documentation
 - State invalidation hooks
-- Equality operators (`==`, `!=`)
 
 ## Open Questions
 

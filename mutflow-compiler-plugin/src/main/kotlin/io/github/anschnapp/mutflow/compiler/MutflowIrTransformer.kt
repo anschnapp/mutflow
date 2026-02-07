@@ -7,7 +7,9 @@ import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.*
+import org.jetbrains.kotlin.ir.expressions.impl.IrBlockImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrElseBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
@@ -32,7 +34,8 @@ import org.jetbrains.kotlin.name.Name
 class MutflowIrTransformer(
     private val pluginContext: IrPluginContext,
     private val callOperators: List<MutationOperator> = defaultCallOperators(),
-    private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators()
+    private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators(),
+    private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators()
 ) : IrElementTransformerVoid() {
 
     companion object {
@@ -61,6 +64,10 @@ class MutflowIrTransformer(
         fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(
             BooleanReturnOperator(),
             NullableReturnOperator()
+        )
+
+        fun defaultFunctionBodyOperators(): List<FunctionBodyMutationOperator> = listOf(
+            VoidFunctionBodyOperator()
         )
     }
 
@@ -140,6 +147,12 @@ class MutflowIrTransformer(
         }
 
         val result = super.visitSimpleFunction(declaration)
+
+        // Apply function body operators (e.g., void function body removal).
+        // This runs after child transformations so inner expressions are already mutated.
+        if (isInMutationTarget && !isInSuppressedScope) {
+            transformFunctionBody(declaration)
+        }
 
         // After all transformations, fix parent pointers for all declarations.
         // deepCopyWithSymbols() and IR tree restructuring (wrapping expressions
@@ -404,6 +417,104 @@ class MutflowIrTransformer(
             returnTargetSymbol = original.returnTargetSymbol,
             value = newValue
         )
+    }
+
+    /**
+     * Applies matching function body operators to a function declaration.
+     *
+     * Wraps the function body in a when expression that either skips the body
+     * entirely (mutation active) or executes normally (else branch):
+     * ```
+     * fun save(entity: Entity) {
+     *     when {
+     *         MutationRegistry.check(...) == 0 -> { }  // empty — skip body
+     *         else -> { original statements }
+     *     }
+     * }
+     * ```
+     */
+    private fun transformFunctionBody(declaration: IrSimpleFunction) {
+        val operator = functionBodyOperators.firstOrNull { it.matches(declaration) } ?: return
+
+        val checkFn = checkFunction ?: return
+        val registryClass = mutationRegistryClass ?: return
+        val body = declaration.body as? IrBlockBody ?: return
+
+        val builder = DeclarationIrBuilder(pluginContext, declaration.symbol)
+
+        val pointId = generatePointId()
+        val variantCount = operator.variantCount(declaration)
+        val sourceLocation = getFunctionSourceLocation(declaration)
+        val originalDescription = operator.originalDescription(declaration)
+        val variantDescriptions = operator.variantDescriptions(declaration).joinToString(",")
+
+        debug("MUTATION: BODY of $originalDescription at $sourceLocation -> variants: $variantDescriptions")
+
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalDescription)
+            call.arguments[5] = builder.irString(variantDescriptions)
+        }
+
+        val unitType = pluginContext.irBuiltIns.unitType
+
+        // Move original statements into a block expression for the else branch
+        val originalStatements = body.statements.toList()
+        val originalBlock = IrBlockImpl(
+            startOffset = declaration.startOffset,
+            endOffset = declaration.endOffset,
+            type = unitType,
+            origin = null
+        ).apply {
+            statements.addAll(originalStatements)
+        }
+
+        // Build the when expression
+        val whenExpr = IrWhenImpl(
+            startOffset = declaration.startOffset,
+            endOffset = declaration.endOffset,
+            type = unitType,
+            origin = null
+        ).apply {
+            // Mutation branch: empty block (skip body)
+            for (index in 0 until variantCount) {
+                branches += IrBranchImpl(
+                    startOffset = declaration.startOffset,
+                    endOffset = declaration.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = IrBlockImpl(
+                        startOffset = declaration.startOffset,
+                        endOffset = declaration.endOffset,
+                        type = unitType,
+                        origin = null
+                    )
+                )
+            }
+            // Else branch: original body
+            branches += IrElseBranchImpl(
+                startOffset = declaration.startOffset,
+                endOffset = declaration.endOffset,
+                condition = builder.irTrue(),
+                result = originalBlock
+            )
+        }
+
+        // Replace body statements with the single when expression
+        body.statements.clear()
+        body.statements.add(whenExpr)
+    }
+
+    /**
+     * Extracts source location from a function declaration.
+     */
+    private fun getFunctionSourceLocation(function: IrSimpleFunction): String {
+        val file = currentFile ?: return "unknown:0"
+        val fileName = file.fileEntry.name.substringAfterLast('/')
+        val lineNumber = file.fileEntry.getLineNumber(function.startOffset) + 1
+        return "$fileName:$lineNumber"
     }
 
     private fun generatePointId(): String {

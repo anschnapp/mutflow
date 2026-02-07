@@ -48,6 +48,19 @@ class Calculator {
         return null
     }
 
+    // --- Void function for testing void body removal mutation ---
+
+    /** Mutable state to verify side effects. */
+    var lastResult: Int = 0
+
+    /**
+     * Void function that performs a side effect (updates state).
+     * The void body removal mutation will replace this with a no-op.
+     */
+    fun recordResult(value: Int) {
+        lastResult = value
+    }
+
     // --- Arithmetic operations for testing arithmetic mutations ---
 
     /**
