@@ -214,6 +214,47 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 [mutflow]     (Calculator.kt:8) > → >=
 ```
 
+### Suppressing Mutations
+
+mutflow provides three levels of suppression granularity:
+
+**Class level** — skip all mutations in a class:
+```kotlin
+@MutationTarget
+@SuppressMutations
+class LegacyCalculator { ... }
+```
+
+**Function level** — skip mutations in a specific function:
+```kotlin
+@MutationTarget
+class Calculator {
+    @SuppressMutations
+    fun debugLog(x: Int): Boolean = x > 100
+}
+```
+
+**Line level** — skip mutations on a single line using comments:
+```kotlin
+@MutationTarget
+class Calculator {
+    fun process(x: Int): Boolean {
+        val threshold = x > 100 // mutflow:ignore this is just a heuristic
+        // mutflow:falsePositive equivalent mutant, boundary doesn't matter
+        val inRange = x >= 0
+        return threshold && inRange
+    }
+}
+```
+
+Two comment keywords are supported — same technical effect, different intent:
+- `mutflow:ignore` — the code is not worth testing (logging, debug utilities, heuristics)
+- `mutflow:falsePositive` — the mutation is an equivalent mutant or not meaningful to test
+
+Free-form text after the keyword documents the reason for reviewers.
+
+**Inline comment** suppresses mutations on the same line. **Standalone comment** (on its own line) suppresses mutations on the next line. Comments have zero production overhead — they are stripped by the compiler and nothing appears in the production bytecode.
+
 ## Current Features
 
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
@@ -226,6 +267,7 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 - **Recursive operator nesting** — Multiple mutation types combine on the same expression
 - **Type-agnostic** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - **`@SuppressMutations`** — Skip mutations on specific classes or functions
+- **Comment-based line suppression** — `// mutflow:ignore` and `// mutflow:falsePositive` to skip individual lines (zero production overhead)
 - **Extensible architecture** — `MutationOperator` (for calls) and `ReturnMutationOperator` (for returns) interfaces for adding new mutation types
 - **Session-based architecture** — Clean lifecycle, no leaked global state
 - **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension

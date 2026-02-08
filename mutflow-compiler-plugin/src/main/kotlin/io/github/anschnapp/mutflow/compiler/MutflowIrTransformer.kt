@@ -94,6 +94,10 @@ class MutflowIrTransformer(
     private var isInSuppressedScope = false
     private var mutationPointCounter = 0
 
+    // Comment-based line suppression (mutflow:ignore / mutflow:falsePositive)
+    private var suppressedLines: Set<Int> = emptySet()
+    private val suppressedLinesCache = mutableMapOf<String, Set<Int>>()
+
     override fun visitFile(declaration: IrFile): IrFile {
         debug("visitFile: ${declaration.fileEntry.name}")
         val previousFile = currentFile
@@ -109,6 +113,7 @@ class MutflowIrTransformer(
 
         val wasMutationTarget = isInMutationTarget
         val wasSuppressed = isInSuppressedScope
+        val previousSuppressedLines = suppressedLines
         val previousClass = currentClass
 
         isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName)
@@ -123,6 +128,9 @@ class MutflowIrTransformer(
 
         if (isInMutationTarget && !isInSuppressedScope) {
             mutationPointCounter = 0
+            // Parse source file for comment-based line suppression
+            val filePath = currentFile?.fileEntry?.name
+            suppressedLines = if (filePath != null) parseSuppressedLines(filePath) else emptySet()
             debug("  -> WILL TRANSFORM this class!")
         }
 
@@ -130,6 +138,7 @@ class MutflowIrTransformer(
 
         isInMutationTarget = wasMutationTarget
         isInSuppressedScope = wasSuppressed
+        suppressedLines = previousSuppressedLines
         currentClass = previousClass
 
         return result
@@ -150,7 +159,7 @@ class MutflowIrTransformer(
 
         // Apply function body operators (e.g., void function body removal).
         // This runs after child transformations so inner expressions are already mutated.
-        if (isInMutationTarget && !isInSuppressedScope) {
+        if (isInMutationTarget && !isInSuppressedScope && !isLineSuppressedByComment(declaration.startOffset)) {
             transformFunctionBody(declaration)
         }
 
@@ -175,6 +184,9 @@ class MutflowIrTransformer(
         if (!isInMutationTarget || isInSuppressedScope) {
             return transformed
         }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
 
         val fn = currentFunction ?: return transformed
         return transformCallWithOperators(transformed, fn, callOperators)
@@ -186,6 +198,9 @@ class MutflowIrTransformer(
 
         // Only transform if we're in a @MutationTarget class and not suppressed
         if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
             return transformed
         }
 
@@ -531,5 +546,67 @@ class MutflowIrTransformer(
         val fileName = file.fileEntry.name.substringAfterLast('/')
         val lineNumber = file.fileEntry.getLineNumber(expression.startOffset) + 1
         return "$fileName:$lineNumber"
+    }
+
+    /**
+     * Checks if the given IR offset falls on a line suppressed by a comment
+     * (mutflow:ignore or mutflow:falsePositive).
+     */
+    private fun isLineSuppressedByComment(startOffset: Int): Boolean {
+        if (suppressedLines.isEmpty()) return false
+        val file = currentFile ?: return false
+        val lineNumber = file.fileEntry.getLineNumber(startOffset) + 1 // 1-based
+        return lineNumber in suppressedLines
+    }
+
+    /**
+     * Reads a source file and parses lines containing mutflow:ignore or mutflow:falsePositive
+     * comments. Returns a set of 1-based line numbers that should be suppressed.
+     *
+     * Supports two styles:
+     * - Inline: `if (a > b) { // mutflow:ignore reason` → suppresses this line
+     * - Standalone: `// mutflow:ignore reason\nif (a > b)` → suppresses the next line
+     *
+     * Results are cached per file path.
+     */
+    private fun parseSuppressedLines(filePath: String): Set<Int> {
+        suppressedLinesCache[filePath]?.let { return it }
+
+        val lines = try {
+            java.io.File(filePath).readLines()
+        } catch (e: Exception) {
+            System.err.println(
+                "[mutflow] WARNING: Could not read source file $filePath — " +
+                    "comment-based suppression (mutflow:ignore / mutflow:falsePositive) " +
+                    "unavailable for this file"
+            )
+            suppressedLinesCache[filePath] = emptySet()
+            return emptySet()
+        }
+
+        val suppressed = mutableSetOf<Int>()
+
+        for ((index, line) in lines.withIndex()) {
+            val lineNumber = index + 1 // 1-based
+            val commentStart = line.indexOf("//")
+            if (commentStart < 0) continue
+
+            val commentText = line.substring(commentStart + 2)
+            if (!commentText.contains("mutflow:ignore") && !commentText.contains("mutflow:falsePositive")) {
+                continue
+            }
+
+            if (line.trimStart().startsWith("//")) {
+                // Standalone comment line → suppress the next line
+                suppressed.add(lineNumber + 1)
+            } else {
+                // Inline comment → suppress this line
+                suppressed.add(lineNumber)
+            }
+        }
+
+        debug("Parsed suppressed lines for $filePath: $suppressed")
+        suppressedLinesCache[filePath] = suppressed
+        return suppressed
     }
 }

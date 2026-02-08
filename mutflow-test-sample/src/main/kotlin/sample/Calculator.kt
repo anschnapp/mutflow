@@ -88,4 +88,29 @@ class Calculator {
      * Simple modulo for testing % → / mutation.
      */
     fun modulo(a: Int, b: Int): Int = a % b
+
+    // --- Comment-based line suppression tests ---
+
+    /**
+     * Inline mutflow:ignore comment — the comparison on this line should NOT be mutated.
+     */
+    fun isLargeIgnored(x: Int): Boolean = x > 100 // mutflow:ignore this is just a heuristic threshold
+
+    /**
+     * Standalone mutflow:falsePositive comment — the comparison on the next line should NOT be mutated.
+     */
+    fun isSmallFalsePositive(x: Int): Boolean {
+        // mutflow:falsePositive equivalent mutant, boundary doesn't matter here
+        return x < 10
+    }
+
+    /**
+     * Mixed: one suppressed line and one normal line in the same function.
+     * Only the non-suppressed comparison should produce mutations.
+     */
+    fun mixedSuppression(a: Int, b: Int): Boolean {
+        val first = a > 0 // mutflow:ignore not relevant
+        val second = b > 0
+        return first && second
+    }
 }

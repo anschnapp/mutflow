@@ -18,6 +18,9 @@ package io.github.anschnapp.mutflow
  *     }
  * }
  * ```
+ *
+ * For **line-level** suppression, use `// mutflow:ignore` or `// mutflow:falsePositive`
+ * comments instead. See [MutationTarget] for details and examples.
  */
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.BINARY)

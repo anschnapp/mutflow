@@ -313,6 +313,42 @@ The `@SuppressMutations` annotation can be applied to:
 - **Classes**: Skip all mutations in the entire class
 - **Functions**: Skip mutations in specific functions only
 
+#### Line-Level Suppression via Comments
+
+For finer granularity, individual lines can be suppressed using comments — similar to SonarQube's `// NOSONAR`. Two keywords are supported with the same technical effect but different semantic intent:
+
+- `mutflow:ignore` — the code is not worth testing (logging, debug utilities, heuristics)
+- `mutflow:falsePositive` — the mutation is an equivalent mutant or not meaningful to test
+
+Free-form text after the keyword serves as documentation for reviewers.
+
+**Inline comment** — suppresses mutations on the same line:
+```kotlin
+val threshold = x > 100 // mutflow:ignore this is just a heuristic threshold
+```
+
+**Standalone comment** — suppresses mutations on the next line:
+```kotlin
+// mutflow:falsePositive equivalent mutant, >= and > both valid here
+if (retryCount > MAX_RETRIES) { ... }
+```
+
+**How it works:**
+1. The IR transformer reads the source file when entering a `@MutationTarget` class
+2. Lines containing `mutflow:ignore` or `mutflow:falsePositive` after `//` are parsed
+3. A set of suppressed line numbers is built (inline = same line, standalone = next line)
+4. Mutation operators skip IR nodes whose source line falls in the suppressed set
+5. Source file reads are cached per file path (no re-reading for multiple classes in the same file)
+
+**Zero production overhead:** Comments are stripped by the Kotlin compiler — nothing appears in production bytecode. The suppression logic runs entirely during compilation.
+
+**Defensive behavior:** If the source file cannot be read (e.g., generated sources, unusual build setups), a warning is printed and compilation continues without comment-based suppression:
+```
+[mutflow] WARNING: Could not read source file Calculator.kt — comment-based suppression (mutflow:ignore / mutflow:falsePositive) unavailable for this file
+```
+
+**Why not a function call or annotation?** A function call like `ignoreMutationsForNextLine()` would leave a no-op call in production bytecode (the compiler plugin only runs during test compilation in the dual-build setup). Annotations cannot target individual expressions/lines in Kotlin. Comments are zero-cost and familiar from tools like SonarQube and PMD.
+
 ### 7. Target Filtering for Integration Tests
 
 In integration tests, `MutFlow.underTest {}` blocks often exercise multiple `@MutationTarget` classes, but you may only care about mutations in the class you're actually testing. Target filtering lets you scope which classes produce active mutations:
@@ -611,6 +647,10 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
+- Comment-based line suppression: `// mutflow:ignore` and `// mutflow:falsePositive`
+  - Reads source files for `@MutationTarget` classes during IR transformation
+  - Inline comments suppress mutations on the same line, standalone comments suppress the next line
+  - Cached per file, defensive fallback with warning if source file is unreadable
 
 **mutflow-runtime:**
 - `MutFlowSession`: Per-class state (discovered points, touch counts, tested mutations)
