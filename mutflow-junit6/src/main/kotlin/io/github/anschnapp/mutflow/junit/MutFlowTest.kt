@@ -4,6 +4,7 @@ import io.github.anschnapp.mutflow.Selection
 import io.github.anschnapp.mutflow.Shuffle
 import org.junit.jupiter.api.ClassTemplate
 import org.junit.jupiter.api.extension.ExtendWith
+import kotlin.reflect.KClass
 
 /**
  * Marks a test class for mutation testing with mutflow.
@@ -45,6 +46,11 @@ import org.junit.jupiter.api.extension.ExtendWith
  * @param traps Mutations to test first, before random selection. Use display name format
  *              from mutation survivor output, e.g., "(Calculator.kt:8) > → >=".
  *              Trapped mutations run in order provided, regardless of selection strategy.
+ * @param includeTargets Only test mutations from these @MutationTarget classes.
+ *                       Empty (default) means all discovered classes are included.
+ * @param excludeTargets Skip mutations from these @MutationTarget classes.
+ *                       Empty (default) means no classes are excluded.
+ *                       When both are specified, include narrows first, then exclude removes from that set.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
@@ -54,5 +60,7 @@ annotation class MutFlowTest(
     val maxRuns: Int = 5,
     val selection: Selection = Selection.MostLikelyStable,
     val shuffle: Shuffle = Shuffle.PerChange,
-    val traps: Array<String> = []
+    val traps: Array<String> = [],
+    val includeTargets: Array<KClass<*>> = [],
+    val excludeTargets: Array<KClass<*>> = []
 )

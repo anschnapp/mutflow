@@ -165,6 +165,27 @@ class CalculatorTest { ... }
 - Development: `MostLikelyRandom` + `PerRun` to explore high-risk mutations
 - Merge requests: `MostLikelyStable` + `PerChange` for reproducible results
 
+### Target Filtering (Integration Tests)
+
+When an integration test exercises multiple `@MutationTarget` classes but you only want to test mutations in specific ones:
+
+```kotlin
+// Only test mutations from Calculator — ignore other @MutationTarget classes reached by underTest
+@MutFlowTest(includeTargets = [Calculator::class])
+class CalculatorIntegrationTest { ... }
+
+// Test everything except infrastructure classes
+@MutFlowTest(excludeTargets = [AuditLogger::class, MetricsService::class])
+class PaymentServiceTest { ... }
+```
+
+- `includeTargets`: Whitelist — only these classes produce active mutations
+- `excludeTargets`: Blacklist — these classes are skipped
+- Both can be combined: include narrows first, exclude removes from that set
+- Empty (default) = no filtering, all discovered mutations are candidates
+
+All mutation points are still discovered during baseline (for accurate touch counts), but only filtered mutations are selected, counted in the summary, and considered for exhaustion.
+
 ### Traps (Pinning Mutations)
 
 When a mutation survives, you can **trap** it to run it first every time while you fix the test gap:
@@ -217,6 +238,7 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 - **IDE-clickable links** — Source locations in IntelliJ-compatible format for quick navigation
 - **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 - **Trap mechanism** — Pin specific mutations to run first while debugging test gaps
+- **Target filtering** — `includeTargets`/`excludeTargets` to scope mutations by class in integration tests
 
 ## Planned Features
 

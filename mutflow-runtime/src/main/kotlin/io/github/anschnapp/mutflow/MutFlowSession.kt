@@ -14,7 +14,9 @@ class MutFlowSession internal constructor(
     val shuffle: Shuffle,
     val maxRuns: Int,
     private val expectedTestCount: Int = 0,
-    private val traps: List<String> = emptyList()
+    private val traps: List<String> = emptyList(),
+    private val includeTargets: List<String> = emptyList(),
+    private val excludeTargets: List<String> = emptyList()
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -146,10 +148,25 @@ class MutFlowSession internal constructor(
         activeMutation = mutation
         testFailedInCurrentRun = false
 
+        if (run == 0 && hasTargetFilter()) {
+            if (includeTargets.isNotEmpty()) {
+                val names = includeTargets.map { it.substringAfterLast('.') }
+                println("[mutflow] Target filter active: including $names")
+            }
+            if (excludeTargets.isNotEmpty()) {
+                val names = excludeTargets.map { it.substringAfterLast('.') }
+                println("[mutflow] Target filter active: excluding $names")
+            }
+        }
+
         if (mutation != null) {
             testedMutations.add(mutation)
             println("[mutflow] Activated mutation: ${getDisplayName(mutation)}")
         }
+    }
+
+    private fun hasTargetFilter(): Boolean {
+        return includeTargets.isNotEmpty() || excludeTargets.isNotEmpty()
     }
 
     // Name of the first test that killed the current mutation
@@ -318,6 +335,7 @@ class MutFlowSession internal constructor(
     private fun buildUntestedMutations(): List<Mutation> {
         val untested = mutableListOf<Mutation>()
         for ((pointId, variantCount) in discoveredPoints) {
+            if (!isPointIncluded(pointId)) continue
             for (variantIndex in 0 until variantCount) {
                 val mutation = Mutation(pointId, variantIndex)
                 if (mutation !in testedMutations) {
@@ -326,6 +344,27 @@ class MutFlowSession internal constructor(
             }
         }
         return untested
+    }
+
+    /**
+     * Extracts the class name from a pointId.
+     * PointIds have the format "fully.qualified.ClassName_N" (e.g., "sample.Calculator_0").
+     */
+    private fun extractClassName(pointId: String): String {
+        return pointId.substringBeforeLast('_')
+    }
+
+    /**
+     * Checks whether a mutation point passes the include/exclude target filters.
+     * - If includeTargets is non-empty, only points from those classes pass
+     * - If excludeTargets is non-empty, points from those classes are rejected
+     * - Both can be combined: include narrows first, exclude removes from that set
+     */
+    private fun isPointIncluded(pointId: String): Boolean {
+        val className = extractClassName(pointId)
+        if (includeTargets.isNotEmpty() && className !in includeTargets) return false
+        if (excludeTargets.isNotEmpty() && className in excludeTargets) return false
+        return true
     }
 
     private fun selectPureRandom(mutations: List<Mutation>, seed: Long): Mutation {
@@ -422,7 +461,9 @@ class MutFlowSession internal constructor(
      * Returns a summary of the mutation testing results.
      */
     fun getSummary(): MutationTestingSummary {
-        val totalMutations = discoveredPoints.values.sum()
+        val totalMutations = discoveredPoints
+            .filter { isPointIncluded(it.key) }
+            .values.sum()
         val tested = mutationResults.size
         val killed = mutationResults.count { it.value is MutationResult.Killed }
         val survived = mutationResults.count { it.value is MutationResult.Survived }

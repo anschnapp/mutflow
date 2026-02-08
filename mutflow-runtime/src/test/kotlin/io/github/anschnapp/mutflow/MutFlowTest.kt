@@ -255,4 +255,185 @@ class MutFlowTest {
 
         assertEquals("no mutations", result)
     }
+
+    // ==================== Target filter tests (session-based) ====================
+
+    private fun runBaselineWithSession(sessionId: String, block: () -> Unit) {
+        MutFlow.startRun(sessionId, 0)
+        MutFlow.underTest(block)
+        MutFlow.endRun(sessionId)
+    }
+
+    private fun runMutationWithSession(sessionId: String, run: Int): Mutation? {
+        val mutation = MutFlow.selectMutationForRun(sessionId, run) ?: return null
+        MutFlow.startRun(sessionId, run, mutation)
+        MutFlow.underTest { /* execute with mutation active */ }
+        MutFlow.endRun(sessionId)
+        return mutation
+    }
+
+    @Test
+    fun `includeTargets filters mutations to only included classes`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10,
+            includeTargets = listOf("com.example.Calculator")
+        )
+
+        // Baseline discovers points from two classes
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("com.example.Calculator_0", 2)
+            simulateMutationPoint("com.example.Logger_0", 2)
+        }
+
+        // All selected mutations should be from Calculator only
+        val selected = mutableListOf<Mutation>()
+        for (run in 1..5) {
+            val mutation = runMutationWithSession(sessionId, run) ?: break
+            selected.add(mutation)
+        }
+
+        assertTrue(selected.isNotEmpty(), "Should select at least one mutation")
+        assertTrue(selected.all { it.pointId.startsWith("com.example.Calculator") },
+            "All mutations should be from Calculator, got: $selected")
+        assertEquals(2, selected.size, "Should exhaust only Calculator's 2 variants")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `excludeTargets filters out excluded classes`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10,
+            excludeTargets = listOf("com.example.Logger")
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("com.example.Calculator_0", 2)
+            simulateMutationPoint("com.example.Logger_0", 2)
+        }
+
+        val selected = mutableListOf<Mutation>()
+        for (run in 1..5) {
+            val mutation = runMutationWithSession(sessionId, run) ?: break
+            selected.add(mutation)
+        }
+
+        assertTrue(selected.isNotEmpty(), "Should select at least one mutation")
+        assertTrue(selected.none { it.pointId.startsWith("com.example.Logger") },
+            "No mutations should be from Logger, got: $selected")
+        assertEquals(2, selected.size, "Should exhaust only Calculator's 2 variants")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `includeTargets and excludeTargets work together`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10,
+            includeTargets = listOf("com.example.Calculator", "com.example.Logger"),
+            excludeTargets = listOf("com.example.Logger")
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("com.example.Calculator_0", 2)
+            simulateMutationPoint("com.example.Logger_0", 2)
+            simulateMutationPoint("com.example.Service_0", 1)
+        }
+
+        // Include narrows to Calculator+Logger, exclude removes Logger => only Calculator
+        val selected = mutableListOf<Mutation>()
+        for (run in 1..5) {
+            val mutation = runMutationWithSession(sessionId, run) ?: break
+            selected.add(mutation)
+        }
+
+        assertEquals(2, selected.size, "Should exhaust only Calculator's 2 variants")
+        assertTrue(selected.all { it.pointId.startsWith("com.example.Calculator") },
+            "All mutations should be from Calculator, got: $selected")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `empty filters preserve default behavior`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10,
+            includeTargets = emptyList(),
+            excludeTargets = emptyList()
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("com.example.Calculator_0", 1)
+            simulateMutationPoint("com.example.Logger_0", 1)
+        }
+
+        val selected = mutableListOf<Mutation>()
+        for (run in 1..5) {
+            val mutation = runMutationWithSession(sessionId, run) ?: break
+            selected.add(mutation)
+        }
+
+        assertEquals(2, selected.size, "Both classes should contribute mutations")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `summary reflects filtered totals`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10,
+            includeTargets = listOf("com.example.Calculator")
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("com.example.Calculator_0", 2)
+            simulateMutationPoint("com.example.Logger_0", 3)
+        }
+
+        val session = MutFlow.getSession(sessionId)!!
+        val summary = session.getSummary()
+
+        // Total should only count Calculator's 2 variants, not Logger's 3
+        assertEquals(2, summary.totalMutations, "Total should reflect filtered set")
+        assertEquals(2, summary.untested, "Untested should reflect filtered set")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `exhaustion works correctly with target filter`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10,
+            includeTargets = listOf("com.example.Calculator")
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("com.example.Calculator_0", 1)
+            simulateMutationPoint("com.example.Logger_0", 5)
+        }
+
+        // Should exhaust after 1 mutation (Calculator only has 1 variant)
+        val m1 = runMutationWithSession(sessionId, 1)
+        assertNotNull(m1, "First mutation should be selected")
+
+        val m2 = MutFlow.selectMutationForRun(sessionId, 2)
+        assertNull(m2, "Should be exhausted after testing all filtered mutations")
+
+        assertFalse(MutFlow.hasUntestedMutations(sessionId),
+            "hasUntestedMutations should be false when filtered mutations are exhausted")
+
+        MutFlow.closeSession(sessionId)
+    }
 }

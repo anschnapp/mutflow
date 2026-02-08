@@ -313,7 +313,34 @@ The `@SuppressMutations` annotation can be applied to:
 - **Classes**: Skip all mutations in the entire class
 - **Functions**: Skip mutations in specific functions only
 
-### 7. Partial Run Detection
+### 7. Target Filtering for Integration Tests
+
+In integration tests, `MutFlow.underTest {}` blocks often exercise multiple `@MutationTarget` classes, but you may only care about mutations in the class you're actually testing. Target filtering lets you scope which classes produce active mutations:
+
+```kotlin
+// Only test mutations from Calculator (ignore Logger, AuditService, etc.)
+@MutFlowTest(includeTargets = [Calculator::class])
+class CalculatorIntegrationTest { ... }
+
+// Test mutations from everything except infrastructure classes
+@MutFlowTest(excludeTargets = [AuditLogger::class, MetricsService::class])
+class PaymentServiceTest { ... }
+```
+
+**How it works:**
+- `includeTargets`: Only mutations from these `@MutationTarget` classes are selected. Empty (default) = all classes included.
+- `excludeTargets`: Mutations from these classes are skipped. Empty (default) = no classes excluded.
+- Both can be combined: include narrows the set first, then exclude removes from it.
+
+**Key design decisions:**
+- **Discovery is unfiltered**: All mutation points are still discovered during baseline (touch counts remain accurate for selection weighting)
+- **Filtering applies at selection time**: Only when picking which mutation to activate next
+- **Summary reflects the filter**: Total/untested counts only show filtered mutations, so "all mutations tested" means "all mutations you care about"
+- **Exhaustion respects the filter**: The session exhausts when all *filtered* mutations are tested, not all discovered mutations
+
+**Why class-level filtering?** Point IDs encode the fully qualified class name (e.g., `com.example.Calculator_0`), so class-based matching is natural. The annotation uses `KClass<*>` references, which are type-safe and refactoring-friendly.
+
+### 8. Partial Run Detection
 
 When running a single test method from an IDE (e.g., IntelliJ's "Run Test" on one method), mutation testing is automatically skipped. This prevents false positives — mutations that would be killed by *other* tests in the class would incorrectly appear as survivors.
 
@@ -591,6 +618,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
 - Shuffle modes: `PerRun`, `PerChange`
 - Touch count tracking during baseline
+- Target filtering: `includeTargets`/`excludeTargets` for scoping mutations by class
 - `MutationsExhaustedException` when all mutations tested
 
 **mutflow-junit6:**
