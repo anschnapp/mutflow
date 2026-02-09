@@ -21,6 +21,7 @@ object MutationRegistry {
      * @param sourceLocation Source file and line number (e.g., "Calculator.kt:5")
      * @param originalOperator The original operator (e.g., ">")
      * @param variantOperators Comma-separated variant operators (e.g., ">=,<,==")
+     * @param occurrenceOnLine 1-based occurrence index when the same operator appears multiple times on the same line
      * @return Variant index to use (0-based), or null to use original code
      */
     fun check(
@@ -28,7 +29,8 @@ object MutationRegistry {
         variantCount: Int,
         sourceLocation: String,
         originalOperator: String,
-        variantOperators: String
+        variantOperators: String,
+        occurrenceOnLine: Int = 1
     ): Int? {
         val session = currentSession ?: return null
 
@@ -41,7 +43,8 @@ object MutationRegistry {
                     variantCount = variantCount,
                     sourceLocation = sourceLocation,
                     originalOperator = originalOperator,
-                    variantOperators = variantOperators.split(",")
+                    variantOperators = variantOperators.split(","),
+                    occurrenceOnLine = occurrenceOnLine
                 )
             )
         }
@@ -119,13 +122,15 @@ data class ActiveMutation(
  * @property sourceLocation Source file and line number (e.g., "Calculator.kt:5")
  * @property originalOperator The original operator (e.g., ">")
  * @property variantOperators List of variant operators (e.g., [">=", "<", "=="])
+ * @property occurrenceOnLine 1-based occurrence index when the same operator appears multiple times on the same line
  */
 data class DiscoveredPoint(
     val pointId: String,
     val variantCount: Int,
     val sourceLocation: String,
     val originalOperator: String,
-    val variantOperators: List<String>
+    val variantOperators: List<String>,
+    val occurrenceOnLine: Int = 1
 )
 
 /**

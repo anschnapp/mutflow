@@ -268,7 +268,8 @@ class MutFlowSession internal constructor(
                 pointMetadata[point.pointId] = PointMetadata(
                     sourceLocation = point.sourceLocation,
                     originalOperator = point.originalOperator,
-                    variantOperators = point.variantOperators
+                    variantOperators = point.variantOperators,
+                    occurrenceOnLine = point.occurrenceOnLine
                 )
                 val displayLoc = "(${point.sourceLocation})"
                 println("[mutflow] Discovered mutation point: $displayLoc ${point.originalOperator} with ${point.variantCount} variants")
@@ -450,7 +451,8 @@ class MutFlowSession internal constructor(
         val meta = pointMetadata[mutation.pointId]
         return if (meta != null) {
             val variantOp = meta.variantOperators.getOrNull(mutation.variantIndex) ?: "?"
-            "(${meta.sourceLocation}) ${meta.originalOperator} → $variantOp"
+            val occurrenceSuffix = if (meta.occurrenceOnLine > 1) " #${meta.occurrenceOnLine}" else ""
+            "(${meta.sourceLocation}) ${meta.originalOperator} → $variantOp$occurrenceSuffix"
         } else {
             // Fallback for mutations without metadata
             "${mutation.pointId}:${mutation.variantIndex}"
@@ -575,5 +577,6 @@ data class MutationTestingSummary(
 internal data class PointMetadata(
     val sourceLocation: String,
     val originalOperator: String,
-    val variantOperators: List<String>
+    val variantOperators: List<String>,
+    val occurrenceOnLine: Int = 1
 )

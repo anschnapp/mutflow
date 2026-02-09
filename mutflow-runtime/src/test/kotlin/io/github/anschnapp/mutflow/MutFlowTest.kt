@@ -410,6 +410,49 @@ class MutFlowTest {
         MutFlow.closeSession(sessionId)
     }
 
+    // ==================== Display name occurrence tests ====================
+
+    @Test
+    fun `getDisplayName shows no suffix for first occurrence on line`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10
+        )
+
+        runBaselineWithSession(sessionId) {
+            MutationRegistry.check("Class_0", 2, "Calc.kt:4", ">", ">=,<", 1)
+        }
+
+        val session = MutFlow.getSession(sessionId)!!
+        val displayName = session.getDisplayName(Mutation("Class_0", 0))
+        assertEquals("(Calc.kt:4) > → >=", displayName)
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `getDisplayName shows occurrence suffix for second operator on same line`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10
+        )
+
+        runBaselineWithSession(sessionId) {
+            MutationRegistry.check("Class_0", 2, "Calc.kt:4", ">", ">=,<", 1)
+            MutationRegistry.check("Class_1", 2, "Calc.kt:4", ">", ">=,<", 2)
+        }
+
+        val session = MutFlow.getSession(sessionId)!!
+        val first = session.getDisplayName(Mutation("Class_0", 0))
+        val second = session.getDisplayName(Mutation("Class_1", 0))
+        assertEquals("(Calc.kt:4) > → >=", first)
+        assertEquals("(Calc.kt:4) > → >= #2", second)
+
+        MutFlow.closeSession(sessionId)
+    }
+
     @Test
     fun `exhaustion works correctly with target filter`() {
         val sessionId = MutFlow.createSession(

@@ -276,7 +276,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **Touch count tracking** — Prioritizes under-tested mutation points
 - **Mutation result tracking** — Killed mutations show as PASSED (exception swallowed), survivors fail the build
 - **Summary reporting** — Visual summary at end of test class showing killed/survived mutations
-- **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`, `(Calculator.kt:7) 0 → 1`)
+- **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`, `(Calculator.kt:7) 0 → 1`). When the same operator appears multiple times on one line, an occurrence suffix disambiguates (e.g., `> → >= #2`)
 - **IDE-clickable links** — Source locations in IntelliJ-compatible format for quick navigation
 - **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 - **Trap mechanism** — Pin specific mutations to run first while debugging test gaps

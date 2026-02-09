@@ -94,6 +94,11 @@ class MutflowIrTransformer(
     private var isInSuppressedScope = false
     private var mutationPointCounter = 0
 
+    // Tracks how many times the same (lineNumber, originalOperator) pair has been seen
+    // within the current class, so we can disambiguate display names.
+    // Key: "lineNumber:originalOperator", Value: current count (1-based)
+    private val lineOperatorOccurrences = mutableMapOf<String, Int>()
+
     // Comment-based line suppression (mutflow:ignore / mutflow:falsePositive)
     private var suppressedLines: Set<Int> = emptySet()
     private val suppressedLinesCache = mutableMapOf<String, Set<Int>>()
@@ -128,6 +133,7 @@ class MutflowIrTransformer(
 
         if (isInMutationTarget && !isInSuppressedScope) {
             mutationPointCounter = 0
+            lineOperatorOccurrences.clear()
             // Parse source file for comment-based line suppression
             val filePath = currentFile?.fileEntry?.name
             suppressedLines = if (filePath != null) parseSuppressedLines(filePath) else emptySet()
@@ -284,8 +290,10 @@ class MutflowIrTransformer(
         val sourceLocation = getSourceLocation(original)
         val originalOperator = operator.originalDescription(original)
         val variantOperators = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
 
-        debug("MUTATION: $originalOperator at $sourceLocation -> variants: $variantOperators")
+        debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
 
         // Helper to create a fresh check() call for each branch condition
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
@@ -295,6 +303,7 @@ class MutflowIrTransformer(
             call.arguments[3] = builder.irString(sourceLocation)
             call.arguments[4] = builder.irString(originalOperator)
             call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
         }
 
         // Generate when expression with inline check() calls - no temporary variable
@@ -379,9 +388,11 @@ class MutflowIrTransformer(
         val sourceLocation = getSourceLocation(original.value)
         val originalDescription = operator.originalDescription(original)
         val variantDescriptions = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.value.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalDescription)
 
         val fnName = containingFunction.name.asString()
-        debug("MUTATION: RETURN in $fnName at $sourceLocation -> variants: $variantDescriptions")
+        debug("MUTATION: RETURN in $fnName at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantDescriptions")
 
         val originalValue = original.value
 
@@ -396,6 +407,7 @@ class MutflowIrTransformer(
             call.arguments[3] = builder.irString(sourceLocation)
             call.arguments[4] = builder.irString(originalDescription)
             call.arguments[5] = builder.irString(variantDescriptions)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
         }
 
         // Generate when expression with inline check() calls - no temporary variable
@@ -462,8 +474,10 @@ class MutflowIrTransformer(
         val sourceLocation = getFunctionSourceLocation(declaration)
         val originalDescription = operator.originalDescription(declaration)
         val variantDescriptions = operator.variantDescriptions(declaration).joinToString(",")
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(declaration.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalDescription)
 
-        debug("MUTATION: BODY of $originalDescription at $sourceLocation -> variants: $variantDescriptions")
+        debug("MUTATION: BODY of $originalDescription at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantDescriptions")
 
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
             call.arguments[0] = builder.irGetObject(registryClass)
@@ -472,6 +486,7 @@ class MutflowIrTransformer(
             call.arguments[3] = builder.irString(sourceLocation)
             call.arguments[4] = builder.irString(originalDescription)
             call.arguments[5] = builder.irString(variantDescriptions)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
         }
 
         val unitType = pluginContext.irBuiltIns.unitType
@@ -535,6 +550,17 @@ class MutflowIrTransformer(
     private fun generatePointId(): String {
         val className = currentClass?.fqNameWhenAvailable?.asString() ?: "unknown"
         return "${className}_${mutationPointCounter++}"
+    }
+
+    /**
+     * Returns the 1-based occurrence index for this (line, operator) combination
+     * and increments the counter. First occurrence returns 1, second returns 2, etc.
+     */
+    private fun nextOccurrenceOnLine(lineNumber: Int, originalOperator: String): Int {
+        val key = "$lineNumber:$originalOperator"
+        val occurrence = (lineOperatorOccurrences[key] ?: 0) + 1
+        lineOperatorOccurrences[key] = occurrence
+        return occurrence
     }
 
     /**

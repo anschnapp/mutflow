@@ -60,7 +60,8 @@ class Calculator {
             variantCount = 2,
             sourceLocation = "Calculator.kt:4",
             originalOperator = ">",
-            variantOperators = ">=,<"
+            variantOperators = ">=,<",
+            occurrenceOnLine = 1
         )) {
             0 -> x >= 0  // operator mutation: include equality
             1 -> x < 0   // operator mutation: direction flip
@@ -69,7 +70,8 @@ class Calculator {
                 variantCount = 2,
                 sourceLocation = "Calculator.kt:4",
                 originalOperator = "0",
-                variantOperators = "1,-1"
+                variantOperators = "1,-1",
+                occurrenceOnLine = 1
             )) {
                 0 -> x > 1   // constant mutation: increment
                 1 -> x > -1  // constant mutation: decrement
@@ -88,7 +90,7 @@ Mutation points are discovered **dynamically at runtime**, not statically at cla
 
 1. **Discovery run**: Code executes normally (no `activeMutation`). Each `MutationRegistry.check()` call registers "I exist with these variants" along with display metadata (source location, operator descriptions), and returns `null` (use original). After execution, the registry returns: *"discovered 5 mutation points with their variant counts"*.
 
-**Note:** Point IDs use the format `ClassName_N` (e.g., `sample.Calculator_0`), but display names show source location and operator (e.g., `(Calculator.kt:7) > → >=`). A future improvement is switching to IR-hash based IDs for stability across refactoring.
+**Note:** Point IDs use the format `ClassName_N` (e.g., `sample.Calculator_0`), but display names show source location and operator (e.g., `(Calculator.kt:7) > → >=`). When the same operator appears multiple times on the same line (e.g., `if (a > b && c > d)`), an occurrence suffix disambiguates: the first stays `> → >=`, the second becomes `> → >= #2`. A future improvement is switching to IR-hash based IDs for stability across refactoring.
 
 2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointId, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
@@ -271,11 +273,12 @@ Traps are a **temporary debugging aid**:
 - After all traps are exhausted, normal selection continues
 - Invalid traps (e.g., code moved) print a warning with available mutations
 
-**Why display names instead of internal IDs?** The display name format `(FileName.kt:line) original → variant` is:
+**Why display names instead of internal IDs?** The display name format `(FileName.kt:line) original → variant` (or `… variant #N` when disambiguating) is:
 - Human-readable and self-documenting in test code
 - Directly copy-pasteable from survivor output
 - Stable enough for temporary debugging (users typically change tests, not impl)
 - Easy to update if code moves (the warning shows available mutations)
+- Unambiguous even when the same operator appears multiple times on one line
 
 ### 6. Scoped Mutations via Annotations
 
@@ -490,7 +493,7 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
 1. Compile time:
    ┌──────────────────┐      ┌───────────────────────────────────────────────────┐
    │ x > 0            │ ───► │ when(registry.check(pointId, 2, "Calc.kt:7", ">", │
-   └──────────────────┘      │                     ">=,<"))                      │
+   └──────────────────┘      │                     ">=,<", occurrenceOnLine=1))  │
                              └───────────────────────────────────────────────────┘
 
 2. Baseline (run=0) — ALL tests run first:
@@ -611,6 +614,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - `MutationRegistry` with `check()`, `startSession()`, `endSession()` API
 - Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `@MutationTarget` annotation for scoping mutations
+- Occurrence-on-line tracking for disambiguating duplicate operators on the same source line
 
 **mutflow-compiler-plugin:**
 - K2 compiler plugin with extensible mutation operator mechanism
@@ -733,10 +737,10 @@ The goal is that **all tests appear green when mutations are properly killed**. 
 fun isPositive(x: Int) = x > 0
 
 // After compiler plugin (nested mutations for operator AND constant)
-fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<")) {
+fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<", 1)) {
     0 -> x >= 0   // operator: boundary (include equality)
     1 -> x < 0    // operator: direction flip
-    else -> when (MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1")) {
+    else -> when (MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1", 1)) {
         0 -> x > 1    // constant: increment
         1 -> x > -1   // constant: decrement
         else -> x > 0 // original
