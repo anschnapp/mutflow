@@ -43,7 +43,16 @@ The extensible mutation operator architecture (`MutationOperator` for calls, `Re
 
 ## Setup
 
-> **Coming soon:** The Gradle plugin will be published to Maven Central. For now, experimenters can build it locally from source.
+Add Maven Central to your plugin repositories in `settings.gradle.kts`:
+
+```kotlin
+pluginManagement {
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+```
 
 Add the mutflow Gradle plugin to your `build.gradle.kts`:
 
