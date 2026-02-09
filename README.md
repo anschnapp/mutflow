@@ -6,6 +6,8 @@
   A Kotlin compiler plugin for lightweight, progressive mutation testing.
 </p>
 
+> **Early Stage Software:** mutflow is in an experimental phase. While the core architecture is designed to keep production builds clean (mutations only exist in a separate test compilation), it has not yet been broadly tested in the wild. If you're working on a high-stakes production system, please evaluate carefully before adopting. Bug reports and feedback are very welcome!
+
 ## What is this?
 
 mutflow brings mutation testing to Kotlin with minimal overhead. Instead of the traditional approach (compile and run each mutant separately), mutflow:
