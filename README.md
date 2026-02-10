@@ -33,6 +33,7 @@ mutflow closes the gap between code coverage and assertion quality. Coverage tel
 
 Core mutation testing features are working:
 - **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
+- **Equality swaps** (`==` ↔ `!=`) — detects missing equality/inequality assertions
 - **Arithmetic operators** (`+`, `-`, `*`, `/`, `%`) — simple swaps to detect wrong operations
 - **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1
 - **Boolean return mutations** — boolean return values replaced with `true`/`false`
@@ -271,6 +272,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
 - **K2 compiler plugin** — Transforms `@MutationTarget` classes with multiple mutation types
 - **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
+- **Equality swaps** — `==` ↔ `!=` (1 variant each)
 - **Arithmetic operators** — `+` ↔ `-`, `*` ↔ `/`, `%` → `/` (with safe division to avoid div-by-zero)
 - **Constant boundary mutations** — Numeric constants in comparisons mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
 - **Boolean return mutations** — Boolean return values replaced with `true`/`false` (explicit returns only)
@@ -295,7 +297,25 @@ Free-form text after the keyword documents the reason for reviewers.
 
 ## Planned Features
 
-- Additional mutation operators (null checks, equality)
+- Additional mutation operators (boolean logic, negation removal)
+
+## How Equality Swap Mutations Work
+
+Equality swap mutations verify that your tests distinguish between `==` and `!=` conditions.
+
+**Example:** For `fun isZero(x: Int) = x == 0`:
+
+| Mutation | Code becomes | Caught by test |
+|----------|--------------|----------------|
+| `== → !=` | `x != 0` | `isZero(0)` should be true |
+
+And for `fun isNotZero(x: Int) = x != 0`:
+
+| Mutation | Code becomes | Caught by test |
+|----------|--------------|----------------|
+| `!= → ==` | `x == 0` | `isNotZero(5)` should be true |
+
+If your tests only exercise values where `==` and `!=` produce different results for obvious inputs, the mutations will be killed. But if tests use ambiguous inputs or don't assert the return value, survivors reveal the gap.
 
 ## How Constant Boundary Mutations Work
 

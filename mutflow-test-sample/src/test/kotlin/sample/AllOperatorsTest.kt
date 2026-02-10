@@ -364,4 +364,70 @@ class AllOperatorsTest {
         }
         assertEquals(2, mutant1, "With / mutation, modulo(7, 3) should be 2")
     }
+
+    // ==================== Equality swap operators (==, !=) ====================
+
+    @Test
+    fun `equality operator generates mutation`() {
+        // isZero uses == operator: x == 0
+        // Variant should be: !=
+
+        MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isZero(0)
+        }
+
+        val state = MutFlow.getRegistryState()
+        val points = state.discoveredPoints.entries.filter { it.key.contains("Calculator") }
+        assertTrue(points.isNotEmpty(), "Should discover mutation points for isZero")
+    }
+
+    @Test
+    fun `equality mutation changes behavior correctly`() {
+        // Original: x == 0
+        // Variant (!=): x != 0
+
+        // Baseline: isZero(0) should be true
+        val baseline = MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isZero(0)
+        }
+        assertTrue(baseline, "isZero(0) should be true")
+
+        // With != mutation, isZero(0) should be false
+        val mutant1 = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isZero(0)
+        }
+        assertFalse(mutant1, "With != mutation, isZero(0) should be false")
+    }
+
+    @Test
+    fun `inequality operator generates mutation`() {
+        // isNotZero uses != operator: x != 0
+        // Variant should be: ==
+
+        MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isNotZero(0)
+        }
+
+        val state = MutFlow.getRegistryState()
+        val points = state.discoveredPoints.entries.filter { it.key.contains("Calculator") }
+        assertTrue(points.isNotEmpty(), "Should discover mutation points for isNotZero")
+    }
+
+    @Test
+    fun `inequality mutation changes behavior correctly`() {
+        // Original: x != 0
+        // Variant (==): x == 0
+
+        // Baseline: isNotZero(5) should be true
+        val baseline = MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isNotZero(5)
+        }
+        assertTrue(baseline, "isNotZero(5) should be true")
+
+        // With == mutation, isNotZero(5) should be false
+        val mutant1 = MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
+            calculator.isNotZero(5)
+        }
+        assertFalse(mutant1, "With == mutation, isNotZero(5) should be false")
+    }
 }

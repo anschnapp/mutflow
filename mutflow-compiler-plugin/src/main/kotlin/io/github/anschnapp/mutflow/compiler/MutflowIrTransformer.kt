@@ -58,7 +58,8 @@ class MutflowIrTransformer(
         fun defaultCallOperators(): List<MutationOperator> = listOf(
             RelationalComparisonOperator(),
             ConstantBoundaryOperator(),
-            ArithmeticOperator()
+            ArithmeticOperator(),
+            EqualitySwapOperator()
         )
 
         fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(

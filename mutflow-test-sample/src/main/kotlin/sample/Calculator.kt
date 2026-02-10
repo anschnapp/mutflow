@@ -113,4 +113,8 @@ class Calculator {
         val second = b > 0
         return first && second
     }
+
+    // --- Equality swap operations for testing == ↔ != mutations ---
+
+    fun isNotZero(x: Int): Boolean = x != 0
 }

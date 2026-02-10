@@ -433,6 +433,8 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 │                           │    mutates constants by +1/-1       │
 │                           │  ArithmeticOperator:                │
 │                           │    handles +, -, *, /, % operators  │
+│                           │  EqualitySwapOperator:              │
+│                           │    handles == ↔ != swaps            │
 │                           │  BooleanReturnOperator:             │
 │                           │    replaces bool returns with T/F   │
 │                           │  NullableReturnOperator:            │
@@ -643,6 +645,12 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - `/` → `*` (1 variant)
   - `%` → `/` (1 variant)
   - Safe division for `*` → `/`: when b=0, computes b/a; when both are 0, returns 1
+- `EqualitySwapOperator` swaps equality operators
+  - `==` → `!=` (1 variant: wraps EQEQ intrinsic with `Boolean.not()`)
+  - `!=` → `==` (1 variant: unwraps the `not()` wrapper to expose the inner EQEQ call)
+  - In K2 IR, `==` is a single EQEQ intrinsic; `!=` is `not(EQEQ(a, b))` — two calls both with EXCLEQ origin
+  - Matches EQEQ calls with EQEQ origin for `==`, and `not()` calls with EXCLEQ origin for `!=`
+  - Avoids double-matching the inner EQEQ of `!=` expressions (which would create spurious mutation points)
 - `VoidFunctionBodyOperator` removes entire function bodies of Unit/void functions
   - Produces 1 variant: empty body (all side effects removed)
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
@@ -751,7 +759,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 ### Planned
 
 - Gradle plugin for easy setup
-- More mutation operators (boolean logic, equality operators `==`/`!=`, negation removal)
+- More mutation operators (boolean logic, negation removal)
 - Smarter likelihood calculations (see below)
 - State invalidation hooks
 
