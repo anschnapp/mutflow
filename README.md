@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://central.sonatype.com/artifact/io.github.anschnapp/mutflow-gradle-plugin"><img src="https://img.shields.io/maven-central/v/io.github.anschnapp/mutflow-gradle-plugin" alt="Maven Central"></a>
+  <a href="https://central.sonatype.com/artifact/io.github.anschnapp.mutflow/mutflow-gradle-plugin"><img src="https://img.shields.io/maven-central/v/io.github.anschnapp.mutflow/mutflow-gradle-plugin" alt="Maven Central"></a>
 </p>
 
 > **Early Stage Software:** mutflow is in an experimental phase. While the core architecture is designed to keep production builds clean (mutations only exist in a separate test compilation), it has not yet been broadly tested in the wild. If you're working on a high-stakes production system, please evaluate carefully before adopting. Bug reports and feedback are very welcome!
