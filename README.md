@@ -6,6 +6,10 @@
   A Kotlin compiler plugin for lightweight, progressive mutation testing.
 </p>
 
+<p align="center">
+  <a href="https://central.sonatype.com/artifact/io.github.anschnapp/mutflow-gradle-plugin"><img src="https://img.shields.io/maven-central/v/io.github.anschnapp/mutflow-gradle-plugin" alt="Maven Central"></a>
+</p>
+
 > **Early Stage Software:** mutflow is in an experimental phase. While the core architecture is designed to keep production builds clean (mutations only exist in a separate test compilation), it has not yet been broadly tested in the wild. If you're working on a high-stakes production system, please evaluate carefully before adopting. Bug reports and feedback are very welcome!
 
 ## What is this?
@@ -44,23 +48,12 @@ The extensible mutation operator architecture (`MutationOperator` for calls, `Re
 
 ## Setup
 
-Add Maven Central to your plugin repositories in `settings.gradle.kts`:
-
-```kotlin
-pluginManagement {
-    repositories {
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-```
-
 Add the mutflow Gradle plugin to your `build.gradle.kts`:
 
 ```kotlin
 plugins {
     kotlin("jvm") version "2.3.0"
-    id("io.github.anschnapp.mutflow") version "0.1.0"
+    id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 ```
 
