@@ -247,16 +247,9 @@ class MutFlowSession internal constructor(
     }
 
     private fun <T> executeBaseline(block: () -> T): T {
-        // Run discovery (no active mutation)
-        MutationRegistry.startSession(activeMutation = null)
-
-        val result = try {
+        val (result, sessionResult) = MutationRegistry.withSession(activeMutation = null) {
             block()
-        } finally {
-            // Session will be ended below
         }
-
-        val sessionResult = MutationRegistry.endSession()
 
         // Merge discovered points and update touch counts
         for (point in sessionResult.discoveredPoints) {
@@ -280,28 +273,18 @@ class MutFlowSession internal constructor(
     }
 
     private fun <T> executeMutationRun(run: Int, block: () -> T): T {
-        if (discoveredPoints.isEmpty() || activeMutation == null) {
-            // No mutation points discovered or no mutation selected, just run normally
-            MutationRegistry.startSession(activeMutation = null)
-            val result = block()
-            MutationRegistry.endSession()
-            return result
+        val active = if (discoveredPoints.isEmpty() || activeMutation == null) {
+            null
+        } else {
+            ActiveMutation(
+                pointId = activeMutation!!.pointId,
+                variantIndex = activeMutation!!.variantIndex
+            )
         }
 
-        // Execute with the pre-selected mutation active
-        val active = ActiveMutation(
-            pointId = activeMutation!!.pointId,
-            variantIndex = activeMutation!!.variantIndex
-        )
-        MutationRegistry.startSession(activeMutation = active)
-
-        val result = try {
+        val (result, _) = MutationRegistry.withSession(activeMutation = active) {
             block()
-        } finally {
-            // Session will be ended below
         }
-
-        MutationRegistry.endSession()
         return result
     }
 

@@ -480,7 +480,8 @@ Benefits:
 - **Clean lifecycle**: create → runs → close
 - **State isolation**: Each test class has its own session
 - **No leaked state**: Explicit cleanup
-- **Single source of truth**: All state in MutFlow object
+- **Thread-safe routing**: `startRun` registers the calling thread to the session; parameterless `underTest {}` resolves the session by thread ID
+- **Synchronized mutation execution**: `MutationRegistry.withSession()` ensures only one `underTest {}` block executes at a time
 
 ### Test Framework Adapters
 
@@ -571,6 +572,45 @@ The compiler plugin is applied ONLY to test compilation, never production:
 - Runtime guards detect non-test context and fail fast
 - Build verification can scan production artifacts for mutation markers
 
+### Thread Safety and Parallel Test Execution
+
+`MutationRegistry` is a singleton with a single `currentSession` slot — only one mutation session can be active at a time. This is a fundamental constraint of the mutant schemata approach: compiler-injected `MutationRegistry.check()` calls have no session context, so they read from a global.
+
+**Why not ThreadLocal?** Using `ThreadLocal` for the session would break coroutines (suspend functions can resume on different dispatcher threads) and reactive frameworks (operators run on scheduler threads). We intentionally avoid `ThreadLocal` to keep these doors open for future support.
+
+**Current approach: synchronized `withSession`**
+
+`MutationRegistry.withSession()` wraps the entire session lifecycle in a `synchronized` block:
+
+```kotlin
+synchronized(lock) {
+    currentSession = Session(activeMutation)
+    try {
+        val result = block()  // production code executes, check() calls read currentSession
+        return result to buildSessionResult()
+    } finally {
+        currentSession = null
+    }
+}
+```
+
+This means `underTest {}` blocks from different test classes serialize at the `MutationRegistry` level. Between these blocks (test setup, assertions, Spring context initialization, non-mutation tests), everything runs freely in parallel.
+
+**Session routing via thread-to-session map**
+
+Each test class has its own `MutFlowSession`, but the parameterless `MutFlow.underTest {}` API needs to find the right session without a session ID parameter. Since JUnit runs `startRun`, test methods, and `endRun` on the same thread:
+
+- `MutFlow.startRun(sessionId)` registers `Thread.currentThread().id → sessionId`
+- `MutFlow.underTest {}` looks up the session by current thread ID
+- `MutFlow.endRun(sessionId)` deregisters the thread
+
+This is not a `ThreadLocal` — it's an explicit `ConcurrentHashMap<Long, String>` used only for test-thread routing. The coroutine concern doesn't apply here because `underTest()` is always called from the test thread, before entering the `withSession` synchronized block where production code (potentially using coroutines) executes.
+
+**Summary of parallel behavior:**
+- Non-mutation test classes: fully parallel, unaffected
+- Mutation test classes: `underTest {}` blocks serialize; everything else (setup, assertions) is parallel
+- Coroutines/reactive inside `underTest {}`: works correctly (lock is held for the entire block)
+
 ## Tradeoffs and Limitations
 
 ### Scope: Coverage vs Assertion Quality
@@ -616,7 +656,8 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 ### What's Built
 
 **mutflow-core:**
-- `MutationRegistry` with `check()`, `startSession()`, `endSession()` API
+- `MutationRegistry` with `check()`, `startSession()`, `endSession()`, `withSession()` API
+- `withSession()`: synchronized wrapper that ensures only one mutation session is active at a time
 - Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `@MutationTarget` annotation for scoping mutations
 - Occurrence-on-line tracking for disambiguating duplicate operators on the same source line
@@ -678,6 +719,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 **mutflow-runtime:**
 - `MutFlowSession`: Per-class state (discovered points, touch counts, tested mutations)
 - `MutFlow`: Session management + `underTest()` API (parameterless and explicit versions)
+- Thread-to-session routing: `startRun`/`endRun` register/deregister the calling thread for parameterless `underTest()` resolution
 - Selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
 - Shuffle modes: `PerRun`, `PerChange`
 - Touch count tracking during baseline

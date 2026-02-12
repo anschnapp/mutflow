@@ -7,11 +7,14 @@ package io.github.anschnapp.mutflow
  * The compiler plugin injects calls to [check] at each mutation point.
  * The runtime controls sessions via [startSession] and [endSession].
  *
- * Thread safety: Currently assumes single-threaded test execution per session.
+ * Thread safety: Use [withSession] to ensure mutual exclusion when multiple
+ * test classes may run in parallel. The lock is held for the duration of the
+ * block execution, so only one mutation session is active at a time.
  */
 object MutationRegistry {
 
     private var currentSession: Session? = null
+    private val lock = Any()
 
     /**
      * Called by compiler-injected code at each mutation point.
@@ -82,6 +85,37 @@ object MutationRegistry {
             mutationPointCount = session.discoveredPoints.size,
             discoveredPoints = session.discoveredPoints.toList()
         )
+    }
+
+    /**
+     * Executes [block] within a synchronized mutation session.
+     *
+     * Acquires a lock, starts a session, executes the block, ends the session,
+     * and releases the lock. This ensures only one mutation session is active at
+     * a time, even when multiple test classes run in parallel.
+     *
+     * @param activeMutation If set, which mutation to activate during this session
+     * @param block The code to execute within the session
+     * @return A pair of the block's result and the session result
+     */
+    fun <T> withSession(
+        activeMutation: ActiveMutation? = null,
+        block: () -> T
+    ): Pair<T, SessionResult> {
+        synchronized(lock) {
+            check(currentSession == null) { "Session already active" }
+            currentSession = Session(activeMutation)
+            try {
+                val result = block()
+                val session = currentSession!!
+                return result to SessionResult(
+                    mutationPointCount = session.discoveredPoints.size,
+                    discoveredPoints = session.discoveredPoints.toList()
+                )
+            } finally {
+                currentSession = null
+            }
+        }
     }
 
     /**

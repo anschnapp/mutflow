@@ -289,6 +289,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 - **Trap mechanism** — Pin specific mutations to run first while debugging test gaps
 - **Target filtering** — `includeTargets`/`excludeTargets` to scope mutations by class in integration tests
+- **Parallel test safe** — Mutation test classes can run alongside other tests in parallel; `underTest {}` blocks serialize automatically via a synchronized lock, without using `ThreadLocal` (keeping the door open for coroutine/reactive support)
 
 ## Planned Features
 

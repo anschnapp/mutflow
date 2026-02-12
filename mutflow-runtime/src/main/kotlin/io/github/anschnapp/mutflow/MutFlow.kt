@@ -1,6 +1,7 @@
 package io.github.anschnapp.mutflow
 
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
 /**
@@ -31,8 +32,10 @@ object MutFlow {
     // Active sessions, keyed by session ID
     private val sessions = mutableMapOf<String, MutFlowSession>()
 
-    // Currently active session (for parameterless underTest)
-    private var activeSessionId: String? = null
+    // Maps thread ID to session ID, set in startRun, cleared in endRun.
+    // Allows parameterless underTest() to find the right session when
+    // multiple test classes run in parallel on different threads.
+    private val threadToSession = ConcurrentHashMap<Long, String>()
 
     // ==================== Session Management (for JUnit extension) ====================
 
@@ -68,7 +71,6 @@ object MutFlow {
             excludeTargets = excludeTargets
         )
         sessions[id] = session
-        activeSessionId = id
         return id
     }
 
@@ -79,9 +81,6 @@ object MutFlow {
     fun closeSession(sessionId: String) {
         val session = sessions.remove(sessionId)
         session?.printSummary()
-        if (activeSessionId == sessionId) {
-            activeSessionId = null
-        }
     }
 
     /**
@@ -109,6 +108,7 @@ object MutFlow {
     fun startRun(sessionId: String, run: Int, mutation: Mutation? = null) {
         val session = sessions[sessionId]
             ?: error("Session not found: $sessionId")
+        threadToSession[Thread.currentThread().id] = sessionId
         session.startRun(run, mutation)
     }
 
@@ -118,6 +118,7 @@ object MutFlow {
      */
     fun endRun(sessionId: String) {
         sessions[sessionId]?.endRun()
+        threadToSession.remove(Thread.currentThread().id)
     }
 
     /**
@@ -146,11 +147,11 @@ object MutFlow {
      * @throws MutationsExhaustedException if all mutations have been tested
      */
     fun <T> underTest(block: () -> T): T {
-        val sessionId = activeSessionId
-            ?: error("No active MutFlow session. Use @MutFlowTest annotation or call underTest(run, selection, shuffle) directly.")
+        val sessionId = threadToSession[Thread.currentThread().id]
+            ?: error("No active MutFlow session on this thread. Use @MutFlowTest annotation or call underTest(run, selection, shuffle) directly.")
 
         val session = sessions[sessionId]
-            ?: error("Active session not found: $sessionId")
+            ?: error("Session not found: $sessionId")
 
         return session.underTest(block)
     }
@@ -202,15 +203,9 @@ object MutFlow {
     }
 
     private fun <T> legacyExecuteBaseline(block: () -> T): T {
-        MutationRegistry.startSession(activeMutation = null)
-
-        val result = try {
+        val (result, sessionResult) = MutationRegistry.withSession(activeMutation = null) {
             block()
-        } finally {
-            // Session will be ended below
         }
-
-        val sessionResult = MutationRegistry.endSession()
 
         for (point in sessionResult.discoveredPoints) {
             legacyDiscoveredPoints[point.pointId] = point.variantCount
@@ -227,9 +222,9 @@ object MutFlow {
         block: () -> T
     ): T {
         if (legacyDiscoveredPoints.isEmpty()) {
-            MutationRegistry.startSession(activeMutation = null)
-            val result = block()
-            MutationRegistry.endSession()
+            val (result, _) = MutationRegistry.withSession(activeMutation = null) {
+                block()
+            }
             return result
         }
 
@@ -238,16 +233,10 @@ object MutFlow {
 
         legacyTestedMutations.add(mutation)
 
-        val activeMutation = ActiveMutation(pointId = mutation.pointId, variantIndex = mutation.variantIndex)
-        MutationRegistry.startSession(activeMutation = activeMutation)
-
-        val result = try {
+        val active = ActiveMutation(pointId = mutation.pointId, variantIndex = mutation.variantIndex)
+        val (result, _) = MutationRegistry.withSession(activeMutation = active) {
             block()
-        } finally {
-            // Session will be ended below
         }
-
-        MutationRegistry.endSession()
         return result
     }
 
@@ -361,7 +350,7 @@ object MutFlow {
      */
     fun reset() {
         sessions.clear()
-        activeSessionId = null
+        threadToSession.clear()
 
         legacyDiscoveredPoints.clear()
         legacyTouchCounts.clear()
