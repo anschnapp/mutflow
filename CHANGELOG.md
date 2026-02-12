@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.0] - 2026-02-12
+### Added
+- Boolean logic swap mutation operator (`&&` <-> `||`)
+- Fine-grained locking for safe parallel execution of mutation tests
+
 ## [0.2.0] - 2026-02-10
 ### Added
 - Equality/inequality swap mutation operator (`==` <-> `!=`)
