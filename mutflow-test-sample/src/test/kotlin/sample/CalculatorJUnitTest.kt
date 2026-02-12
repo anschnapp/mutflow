@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
  *
  * Tests include boundary values to kill ConstantBoundary (+1/-1) mutations.
  */
-@MutFlowTest(maxRuns = 500, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
+@MutFlowTest(maxRuns = Integer.MAX_VALUE)
 class CalculatorJUnitTest {
 
     private val calculator = Calculator()
@@ -306,5 +306,112 @@ class CalculatorJUnitTest {
     fun `mixedSuppression returns false when a is negative`() {
         val result = MutFlow.underTest { calculator.mixedSuppression(-5, 5) }
         assertFalse(result, "mixedSuppression(-5, 5) should be false")
+    }
+
+    // ==================== bothPositive: a > 0 && b > 0 ====================
+    // Mutations: && → ||, plus operator/constant mutations on each > 0
+
+    @Test
+    fun `bothPositive returns true when both positive`() {
+        val result = MutFlow.underTest { calculator.bothPositive(5, 5) }
+        assertTrue(result, "bothPositive(5, 5) should be true")
+    }
+
+    @Test
+    fun `bothPositive returns false when first is negative`() {
+        // Kills: && → || (with || would return true because b > 0)
+        val result = MutFlow.underTest { calculator.bothPositive(-5, 5) }
+        assertFalse(result, "bothPositive(-5, 5) should be false")
+    }
+
+    @Test
+    fun `bothPositive returns false when second is negative`() {
+        // Kills: && → || (with || would return true because a > 0)
+        val result = MutFlow.underTest { calculator.bothPositive(5, -5) }
+        assertFalse(result, "bothPositive(5, -5) should be false")
+    }
+
+    @Test
+    fun `bothPositive returns false when both negative`() {
+        val result = MutFlow.underTest { calculator.bothPositive(-5, -5) }
+        assertFalse(result, "bothPositive(-5, -5) should be false")
+    }
+
+    @Test
+    fun `bothPositive boundary at zero for first`() {
+        // Kills boundary mutations: 0 → 1, 0 → -1 on first comparison
+        val result = MutFlow.underTest { calculator.bothPositive(0, 5) }
+        assertFalse(result, "bothPositive(0, 5) should be false")
+    }
+
+    @Test
+    fun `bothPositive boundary at one for first`() {
+        val result = MutFlow.underTest { calculator.bothPositive(1, 5) }
+        assertTrue(result, "bothPositive(1, 5) should be true")
+    }
+
+    @Test
+    fun `bothPositive boundary at zero for second`() {
+        val result = MutFlow.underTest { calculator.bothPositive(5, 0) }
+        assertFalse(result, "bothPositive(5, 0) should be false")
+    }
+
+    @Test
+    fun `bothPositive boundary at one for second`() {
+        val result = MutFlow.underTest { calculator.bothPositive(5, 1) }
+        assertTrue(result, "bothPositive(5, 1) should be true")
+    }
+
+    // ==================== eitherPositive: a > 0 || b > 0 ====================
+    // Mutations: || → &&, plus operator/constant mutations on each > 0
+
+    @Test
+    fun `eitherPositive returns true when both positive`() {
+        val result = MutFlow.underTest { calculator.eitherPositive(5, 5) }
+        assertTrue(result, "eitherPositive(5, 5) should be true")
+    }
+
+    @Test
+    fun `eitherPositive returns true when only first positive`() {
+        // Kills: || → && (with && would return false because b <= 0)
+        val result = MutFlow.underTest { calculator.eitherPositive(5, -5) }
+        assertTrue(result, "eitherPositive(5, -5) should be true")
+    }
+
+    @Test
+    fun `eitherPositive returns true when only second positive`() {
+        // Kills: || → && (with && would return false because a <= 0)
+        val result = MutFlow.underTest { calculator.eitherPositive(-5, 5) }
+        assertTrue(result, "eitherPositive(-5, 5) should be true")
+    }
+
+    @Test
+    fun `eitherPositive returns false when both negative`() {
+        val result = MutFlow.underTest { calculator.eitherPositive(-5, -5) }
+        assertFalse(result, "eitherPositive(-5, -5) should be false")
+    }
+
+    @Test
+    fun `eitherPositive boundary at zero for first`() {
+        val result = MutFlow.underTest { calculator.eitherPositive(0, -5) }
+        assertFalse(result, "eitherPositive(0, -5) should be false")
+    }
+
+    @Test
+    fun `eitherPositive boundary at one for first`() {
+        val result = MutFlow.underTest { calculator.eitherPositive(1, -5) }
+        assertTrue(result, "eitherPositive(1, -5) should be true")
+    }
+
+    @Test
+    fun `eitherPositive boundary at zero for second`() {
+        val result = MutFlow.underTest { calculator.eitherPositive(-5, 0) }
+        assertFalse(result, "eitherPositive(-5, 0) should be false")
+    }
+
+    @Test
+    fun `eitherPositive boundary at one for second`() {
+        val result = MutFlow.underTest { calculator.eitherPositive(-5, 1) }
+        assertTrue(result, "eitherPositive(-5, 1) should be true")
     }
 }

@@ -423,10 +423,11 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
 │                           │  Injects MutationRegistry.check()   │
-│                           │  Three operator interfaces:         │
+│                           │  Four operator interfaces:          │
 │                           │    MutationOperator (IrCall nodes)  │
 │                           │    ReturnMutationOperator (IrReturn)│
 │                           │    FunctionBodyMutationOperator     │
+│                           │    WhenMutationOperator (IrWhen)    │
 │                           │  RelationalComparisonOperator:      │
 │                           │    handles >, <, >=, <= operators   │
 │                           │  ConstantBoundaryOperator:          │
@@ -435,6 +436,8 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 │                           │    handles +, -, *, /, % operators  │
 │                           │  EqualitySwapOperator:              │
 │                           │    handles == ↔ != swaps            │
+│                           │  BooleanLogicOperator:              │
+│                           │    handles && ↔ || swaps            │
 │                           │  BooleanReturnOperator:             │
 │                           │    replaces bool returns with T/F   │
 │                           │  NullableReturnOperator:            │
@@ -620,10 +623,11 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 **mutflow-compiler-plugin:**
 - K2 compiler plugin with extensible mutation operator mechanism
-- Three operator interfaces for different IR node types:
+- Four operator interfaces for different IR node types:
   - `MutationOperator` — for `IrCall` nodes (comparison operators, etc.)
   - `ReturnMutationOperator` — for `IrReturn` nodes (return statement mutations)
   - `FunctionBodyMutationOperator` — for function declarations (body-level mutations)
+  - `WhenMutationOperator` — for `IrWhen` nodes (boolean logic operators)
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
   - Each operator produces 2 variants: boundary mutation + direction flip
 - `ConstantBoundaryOperator` mutates numeric constants in comparisons
@@ -651,6 +655,13 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - In K2 IR, `==` is a single EQEQ intrinsic; `!=` is `not(EQEQ(a, b))` — two calls both with EXCLEQ origin
   - Matches EQEQ calls with EQEQ origin for `==`, and `not()` calls with EXCLEQ origin for `!=`
   - Avoids double-matching the inner EQEQ of `!=` expressions (which would create spurious mutation points)
+- `BooleanLogicOperator` swaps boolean logic operators
+  - `&&` → `||` (1 variant: swaps branch results to short-circuit true)
+  - `||` → `&&` (1 variant: swaps branch results to short-circuit false)
+  - In K2 IR (2.3.0+), `&&` and `||` are lowered to `IrWhen` expressions with ANDAND/OROR origins
+  - `&&`: `when(ANDAND) { a -> b; else -> false }` — if first is true, evaluate second
+  - `||`: `when(OROR) { a -> true; else -> b }` — if first is true, short-circuit true
+  - Mutation swaps branch results: ANDAND replaces `b` with `true` and `false` with `b` (and vice versa for OROR)
 - `VoidFunctionBodyOperator` removes entire function bodies of Unit/void functions
   - Produces 1 variant: empty body (all side effects removed)
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
@@ -759,7 +770,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 ### Planned
 
 - Gradle plugin for easy setup
-- More mutation operators (boolean logic, negation removal)
+- More mutation operators (negation removal)
 - Smarter likelihood calculations (see below)
 - State invalidation hooks
 

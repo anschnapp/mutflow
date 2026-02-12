@@ -38,6 +38,7 @@ mutflow closes the gap between code coverage and assertion quality. Coverage tel
 Core mutation testing features are working:
 - **Relational comparisons** (`>`, `<`, `>=`, `<=`) with 2 variants each (boundary + flip)
 - **Equality swaps** (`==` ↔ `!=`) — detects missing equality/inequality assertions
+- **Boolean logic swaps** (`&&` ↔ `||`) — detects missing short-circuit logic assertions
 - **Arithmetic operators** (`+`, `-`, `*`, `/`, `%`) — simple swaps to detect wrong operations
 - **Constant boundary mutations** — numeric constants in comparisons are mutated by +1/-1
 - **Boolean return mutations** — boolean return values replaced with `true`/`false`
@@ -266,6 +267,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **K2 compiler plugin** — Transforms `@MutationTarget` classes with multiple mutation types
 - **All relational comparisons** — `>`, `<`, `>=`, `<=` with 2 variants each (boundary + flip)
 - **Equality swaps** — `==` ↔ `!=` (1 variant each)
+- **Boolean logic swaps** — `&&` ↔ `||` (1 variant each)
 - **Arithmetic operators** — `+` ↔ `-`, `*` ↔ `/`, `%` → `/` (with safe division to avoid div-by-zero)
 - **Constant boundary mutations** — Numeric constants in comparisons mutated by +1/-1 (e.g., `0 → 1`, `0 → -1`)
 - **Boolean return mutations** — Boolean return values replaced with `true`/`false` (explicit returns only)
@@ -274,7 +276,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **Type-agnostic** — Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 - **`@SuppressMutations`** — Skip mutations on specific classes or functions
 - **Comment-based line suppression** — `// mutflow:ignore` and `// mutflow:falsePositive` to skip individual lines (zero production overhead)
-- **Extensible architecture** — `MutationOperator` (for calls) and `ReturnMutationOperator` (for returns) interfaces for adding new mutation types
+- **Extensible architecture** — `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), and `WhenMutationOperator` (for boolean logic) interfaces for adding new mutation types
 - **Session-based architecture** — Clean lifecycle, no leaked global state
 - **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension
 - **Selection strategies** — `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
@@ -290,7 +292,7 @@ Free-form text after the keyword documents the reason for reviewers.
 
 ## Planned Features
 
-- Additional mutation operators (boolean logic, negation removal)
+- Additional mutation operators (negation removal)
 
 ## How Equality Swap Mutations Work
 

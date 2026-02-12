@@ -273,12 +273,13 @@ class CalculatorMutationTest {
         // - x >= min: 2 operator variants (>, <=)
         // - x <= max: 2 operator variants (<, >=)
         // - return: 2 variants (true, false)
-        // Total: 6 mutations (3 mutation points × 2 variants each)
+        // - &&: 1 variant (||)
+        // Total: 7 mutations (4 mutation points)
         val totalMutations = state.discoveredPoints.values.sum()
-        assertEquals(6, totalMutations, "isInRange should have 6 total mutations")
+        assertEquals(7, totalMutations, "isInRange should have 7 total mutations")
 
-        // Should have 3 mutation points (2 comparisons + 1 return)
-        assertEquals(3, state.discoveredPoints.size, "isInRange should have 3 mutation points")
+        // Should have 4 mutation points (2 comparisons + 1 return + 1 boolean logic)
+        assertEquals(4, state.discoveredPoints.size, "isInRange should have 4 mutation points")
     }
 
     @Test

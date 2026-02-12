@@ -35,7 +35,8 @@ class MutflowIrTransformer(
     private val pluginContext: IrPluginContext,
     private val callOperators: List<MutationOperator> = defaultCallOperators(),
     private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators(),
-    private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators()
+    private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators(),
+    private val whenOperators: List<WhenMutationOperator> = defaultWhenOperators()
 ) : IrElementTransformerVoid() {
 
     companion object {
@@ -69,6 +70,10 @@ class MutflowIrTransformer(
 
         fun defaultFunctionBodyOperators(): List<FunctionBodyMutationOperator> = listOf(
             VoidFunctionBodyOperator()
+        )
+
+        fun defaultWhenOperators(): List<WhenMutationOperator> = listOf(
+            BooleanLogicOperator()
         )
     }
 
@@ -213,6 +218,22 @@ class MutflowIrTransformer(
 
         val fn = currentFunction ?: return transformed
         return transformReturnWithOperators(transformed, fn, returnOperators)
+    }
+
+    override fun visitWhen(expression: IrWhen): IrExpression {
+        // First, transform children (bottom-up for nested expressions)
+        val transformed = super.visitWhen(expression) as IrWhen
+
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        val fn = currentFunction ?: return transformed
+        return transformWhenWithOperators(transformed, fn, whenOperators)
     }
 
     /**
@@ -445,6 +466,102 @@ class MutflowIrTransformer(
             returnTargetSymbol = original.returnTargetSymbol,
             value = newValue
         )
+    }
+
+    /**
+     * Recursively applies matching when operators to an IrWhen expression.
+     *
+     * Each matching operator wraps the when in a mutation check, with the
+     * else branch passing to the next operator.
+     */
+    private fun transformWhenWithOperators(
+        original: IrWhen,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<WhenMutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return original
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(original)) {
+            return transformWhenWithOperators(original, containingFunction, rest)
+        }
+
+        return transformWhenWithOperator(original, containingFunction, operator, rest)
+    }
+
+    /**
+     * Transforms a when expression using the given mutation operator.
+     *
+     * Generates a when expression with inline check() calls (no temporary variable):
+     * ```
+     * when {
+     *     MutationRegistry.check(...) == 0 -> <mutated when expr>
+     *     else -> <original when expr OR recursion to next operator>
+     * }
+     * ```
+     */
+    private fun transformWhenWithOperator(
+        original: IrWhen,
+        containingFunction: IrSimpleFunction,
+        operator: WhenMutationOperator,
+        remainingOperators: List<WhenMutationOperator>
+    ): IrExpression {
+        val checkFn = checkFunction ?: return original
+        val registryClass = mutationRegistryClass ?: return original
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+
+        val variants = operator.variants(original, context)
+        if (variants.isEmpty()) {
+            return transformWhenWithOperators(original, containingFunction, remainingOperators)
+        }
+
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = operator.originalDescription(original)
+        val variantOperators = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
+
+        debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
+
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
+        }
+
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = pluginContext.irBuiltIns.booleanType,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = transformWhenWithOperators(original, containingFunction, remainingOperators)
+            )
+        }
     }
 
     /**

@@ -117,4 +117,18 @@ class Calculator {
     // --- Equality swap operations for testing == ↔ != mutations ---
 
     fun isNotZero(x: Int): Boolean = x != 0
+
+    // --- Boolean logic operations for testing && ↔ || mutations ---
+
+    /**
+     * Logical AND for testing && → || mutation.
+     * Both conditions must be true.
+     */
+    fun bothPositive(a: Int, b: Int): Boolean = a > 0 && b > 0
+
+    /**
+     * Logical OR for testing || → && mutation.
+     * At least one condition must be true.
+     */
+    fun eitherPositive(a: Int, b: Int): Boolean = a > 0 || b > 0
 }
