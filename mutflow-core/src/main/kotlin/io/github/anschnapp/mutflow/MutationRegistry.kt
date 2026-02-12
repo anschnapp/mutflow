@@ -1,5 +1,8 @@
 package io.github.anschnapp.mutflow
 
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * Central registry for mutation point tracking and activation.
  *
@@ -13,6 +16,7 @@ package io.github.anschnapp.mutflow
  */
 object MutationRegistry {
 
+    @Volatile
     private var currentSession: Session? = null
     private val lock = Any()
 
@@ -37,9 +41,8 @@ object MutationRegistry {
     ): Int? {
         val session = currentSession ?: return null
 
-        // Register point if not seen in this session
-        if (pointId !in session.seenPointIds) {
-            session.seenPointIds.add(pointId)
+        // Register point if not seen in this session (atomic add for thread safety)
+        if (session.seenPointIds.add(pointId)) {
             session.discoveredPoints.add(
                 DiscoveredPoint(
                     pointId = pointId,
@@ -132,8 +135,8 @@ object MutationRegistry {
 
     private class Session(
         val activeMutation: ActiveMutation?,
-        val discoveredPoints: MutableList<DiscoveredPoint> = mutableListOf(),
-        val seenPointIds: MutableSet<String> = mutableSetOf()
+        val discoveredPoints: MutableList<DiscoveredPoint> = Collections.synchronizedList(mutableListOf()),
+        val seenPointIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     )
 }
 
