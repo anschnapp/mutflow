@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.0] - 2026-02-13
+### Added
+- Mutation timeout support to prevent infinite loops caused by condition mutations
+  - Configurable per-mutation timeout via `@MutFlowTest(timeout = ...)` and `MutFlow.configure(timeout = ...)`
+  - Timed-out mutations fail the test with a hint to deactivate the mutation on that line, preventing silent accumulation of long-running mutations
+
 ## [0.4.0] - 2026-02-13
 ### Added
 - Thread-safe mutation session to support concurrent test execution
