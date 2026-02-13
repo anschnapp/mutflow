@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0] - 2026-02-13
+### Added
+- Thread-safe mutation session to support concurrent test execution
+- Gradle setting to disable mutation injection while keeping test structure intact
+
 ## [0.3.0] - 2026-02-12
 ### Added
 - Boolean logic swap mutation operator (`&&` <-> `||`)
