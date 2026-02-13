@@ -399,6 +399,62 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 
 **Rationale:** Mutation testing evaluates the *entire test suite's* ability to catch mutations. Running it with a subset produces meaningless results — better to skip and provide a clear message.
 
+### 9. Timeout Detection for Infinite Loops
+
+Certain mutations can cause infinite loops — most commonly when flipping a relational operator in a loop condition (e.g., `<` → `>` in `while (i < n)`). Without protection, these mutations would hang the test run indefinitely.
+
+mutflow detects this at the compiler level by injecting `MutationRegistry.checkTimeout()` at the top of every loop body in `@MutationTarget` classes:
+
+```kotlin
+// Before compiler plugin
+while (i < n) {
+    process(i)
+    i++
+}
+
+// After compiler plugin (in addition to mutation point injection)
+while (i < n) {
+    MutationRegistry.checkTimeout()  // injected
+    process(i)
+    i++
+}
+```
+
+**How it works:**
+1. When a mutation run starts, `MutationRegistry.withSession()` computes a deadline: `System.nanoTime() + timeoutMs * 1_000_000`
+2. Each loop iteration calls `checkTimeout()`, which compares current time against the deadline
+3. If exceeded, throws `MutationTimedOutException` — the test **fails** with a message suggesting `// mutflow:ignore`
+4. The timed-out mutation is recorded as `MutationResult.TimedOut` and shown in the summary
+
+**Performance characteristics of `checkTimeout()`:**
+- **No active session** (production code): immediate `null` check return — effectively zero cost
+- **Baseline run** (no active mutation): `deadlineNanos == 0` check — fast return
+- **Mutation run**: one `System.nanoTime()` call per loop iteration (~20-30ns on modern JVMs)
+
+**Why compiler-injected checks instead of thread-based timeout?**
+A `Future.get(timeout)` approach can detect timeouts but cannot stop tight CPU-bound infinite loops — `Thread.interrupt()` only works if the loop checks interruption (most don't). The compiler-injected approach cleanly breaks even tight loops like `while(true) { counter++ }` from within.
+
+**Loop coverage:**
+All loop types in Kotlin compile to `IrWhileLoop` or `IrDoWhileLoop` in IR:
+
+| Kotlin source | IR node | Covered? |
+|---|---|---|
+| `while (...)` | `IrWhileLoop` | Yes |
+| `do { ... } while (...)` | `IrDoWhileLoop` | Yes |
+| `for (i in ...)` | `IrWhileLoop` (desugared) | Yes |
+| `forEach { }`, `map { }`, etc. | `IrCall` (stdlib function) | No — but loop control is in stdlib, not user code |
+
+Higher-order function "loops" like `forEach` can't cause infinite loops from mutations because the loop control (`hasNext()`, counter) lives in the stdlib, not in the mutated code.
+
+**Configuration:**
+```kotlin
+@MutFlowTest(timeoutMs = 60_000)  // default: 60 seconds, 0 to disable
+class CalculatorTest { ... }
+```
+
+**Design rationale — fail loudly, not silently:**
+When a timeout occurs, the test **fails** rather than silently marking the mutation as killed. This ensures the developer notices and takes action (adds `// mutflow:ignore` on the affected line). Silent handling would mask slow mutation runs that accumulate over time.
+
 ## Architecture
 
 ### Module Responsibilities
@@ -674,8 +730,9 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 ### What's Built
 
 **mutflow-core:**
-- `MutationRegistry` with `check()`, `startSession()`, `endSession()`, `withSession()` API
+- `MutationRegistry` with `check()`, `checkTimeout()`, `startSession()`, `endSession()`, `withSession()` API
 - `withSession()`: synchronized wrapper that ensures only one mutation session is active at a time
+- `checkTimeout()`: compiler-injected loop guard that throws `MutationTimedOutException` when deadline exceeded
 - Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `@MutationTarget` annotation for scoping mutations
 - Occurrence-on-line tracking for disambiguating duplicate operators on the same source line
@@ -733,6 +790,9 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Reads source files for `@MutationTarget` classes during IR transformation
   - Inline comments suppress mutations on the same line, standalone comments suppress the next line
   - Cached per file, defensive fallback with warning if source file is unreadable
+- Timeout detection: injects `MutationRegistry.checkTimeout()` at the top of every loop body
+  - Covers `IrWhileLoop` and `IrDoWhileLoop` (all Kotlin loop constructs including `for`)
+  - Prevents mutations that cause infinite loops from hanging the test run
 
 **mutflow-runtime:**
 - `MutFlowSession`: Per-class state (discovered points, touch counts, tested mutations)

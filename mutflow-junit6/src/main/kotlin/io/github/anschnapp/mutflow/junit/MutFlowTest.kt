@@ -51,6 +51,9 @@ import kotlin.reflect.KClass
  * @param excludeTargets Skip mutations from these @MutationTarget classes.
  *                       Empty (default) means no classes are excluded.
  *                       When both are specified, include narrows first, then exclude removes from that set.
+ * @param timeoutMs Maximum time in milliseconds for each mutation run before it is considered
+ *                  timed out (likely an infinite loop). Default is 60000 (60 seconds).
+ *                  Set to 0 to disable timeout detection.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
@@ -62,5 +65,6 @@ annotation class MutFlowTest(
     val shuffle: Shuffle = Shuffle.PerChange,
     val traps: Array<String> = [],
     val includeTargets: Array<KClass<*>> = [],
-    val excludeTargets: Array<KClass<*>> = []
+    val excludeTargets: Array<KClass<*>> = [],
+    val timeoutMs: Long = 60_000
 )

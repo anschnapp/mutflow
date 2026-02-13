@@ -144,7 +144,8 @@ CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 ║  Total mutations discovered:   4                              ║
 ║  Tested this run:              4                              ║
 ║  ├─ Killed:                    4  ✓                           ║
-║  └─ Survived:                  0  ✓                           ║
+║  ├─ Survived:                  0  ✓                           ║
+║  └─ Timed out:                 0  ✓                           ║
 ║  Remaining untested:           0                              ║
 ╠════════════════════════════════════════════════════════════════╣
 ║  DETAILS:                                                      ║
@@ -170,7 +171,8 @@ CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 @MutFlowTest(
     maxRuns = 5,                           // Baseline + up to 4 mutation runs
     selection = Selection.MostLikelyStable, // Prioritize under-tested mutations
-    shuffle = Shuffle.PerChange             // Stable across builds until code changes
+    shuffle = Shuffle.PerChange,           // Stable across builds until code changes
+    timeoutMs = 60_000                     // Max time per mutation run (default: 60s)
 )
 class CalculatorTest { ... }
 ```
@@ -214,6 +216,22 @@ class PaymentServiceTest { ... }
 - Empty (default) = no filtering, all discovered mutations are candidates
 
 All mutation points are still discovered during baseline (for accurate touch counts), but only filtered mutations are selected, counted in the summary, and considered for exhaustion.
+
+### Timeout Detection
+
+Mutations that flip loop conditions (e.g., `<` to `>`) can cause infinite loops. mutflow automatically detects this by injecting a timeout check at the top of every loop body in `@MutationTarget` classes.
+
+- **Default timeout**: 60 seconds per mutation run
+- **On timeout**: The test **fails** with a `MutationTimedOutException` suggesting to add `// mutflow:ignore` on the affected line
+- **Timed-out mutations** appear in the summary with a `⏱` marker
+
+```kotlin
+// Custom timeout (or 0 to disable)
+@MutFlowTest(timeoutMs = 30_000)
+class CalculatorTest { ... }
+```
+
+The timeout check is nearly free: a single `System.nanoTime()` comparison per loop iteration during mutation runs, and an instant null-check return during baseline or production execution.
 
 ### Traps (Pinning Mutations)
 
@@ -312,6 +330,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **Partial run detection** — Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 - **Trap mechanism** — Pin specific mutations to run first while debugging test gaps
 - **Target filtering** — `includeTargets`/`excludeTargets` to scope mutations by class in integration tests
+- **Timeout detection** — Mutations that cause infinite loops (e.g., flipping `<` in a loop condition) are automatically detected and reported. Compiler-injected `checkTimeout()` at the top of every loop body ensures even tight loops are caught. Test fails with actionable guidance to add `// mutflow:ignore`
 - **Parallel test safe** — Mutation test classes can run alongside other tests in parallel; `underTest {}` blocks serialize automatically via a synchronized lock, without using `ThreadLocal` (keeping the door open for coroutine/reactive support)
 
 ## How Equality Swap Mutations Work

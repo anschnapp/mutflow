@@ -21,6 +21,28 @@ object MutationRegistry {
     private val lock = Any()
 
     /**
+     * Called by compiler-injected code at the top of each loop body.
+     *
+     * Checks if the current mutation run has exceeded its timeout deadline.
+     * This prevents mutations that cause infinite loops (e.g., flipping < in a
+     * loop condition) from hanging the test run indefinitely.
+     *
+     * Fast path: returns immediately when no session is active or no deadline is set.
+     *
+     * @throws MutationTimedOutException if the deadline has been exceeded
+     */
+    fun checkTimeout() {
+        val session = currentSession ?: return
+        val deadline = session.deadlineNanos
+        if (deadline > 0 && System.nanoTime() > deadline) {
+            throw MutationTimedOutException(
+                "Mutation timed out. This mutation likely causes an infinite loop.\n" +
+                "Add a // mutflow:ignore comment on the affected line to skip it."
+            )
+        }
+    }
+
+    /**
      * Called by compiler-injected code at each mutation point.
      *
      * @param pointId Stable identifier for this mutation point (currently ClassName_N format, will be IR hash in Phase 2)
@@ -103,11 +125,15 @@ object MutationRegistry {
      */
     fun <T> withSession(
         activeMutation: ActiveMutation? = null,
+        timeoutMs: Long = 0,
         block: () -> T
     ): Pair<T, SessionResult> {
         synchronized(lock) {
             check(currentSession == null) { "Session already active" }
-            currentSession = Session(activeMutation)
+            val deadlineNanos = if (activeMutation != null && timeoutMs > 0) {
+                System.nanoTime() + timeoutMs * 1_000_000
+            } else 0L
+            currentSession = Session(activeMutation, deadlineNanos = deadlineNanos)
             try {
                 val result = block()
                 val session = currentSession!!
@@ -135,6 +161,7 @@ object MutationRegistry {
 
     private class Session(
         val activeMutation: ActiveMutation?,
+        val deadlineNanos: Long = 0,
         val discoveredPoints: MutableList<DiscoveredPoint> = Collections.synchronizedList(mutableListOf()),
         val seenPointIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     )
@@ -180,3 +207,9 @@ data class SessionResult(
     val mutationPointCount: Int,
     val discoveredPoints: List<DiscoveredPoint>
 )
+
+/**
+ * Thrown when a mutation run exceeds its timeout deadline.
+ * Indicates the mutation likely causes an infinite loop.
+ */
+class MutationTimedOutException(message: String) : RuntimeException(message)

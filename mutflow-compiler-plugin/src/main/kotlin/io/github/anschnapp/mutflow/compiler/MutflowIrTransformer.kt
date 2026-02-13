@@ -92,6 +92,13 @@ class MutflowIrTransformer(
         ).firstOrNull()
     }
 
+    private val checkTimeoutFunction: IrSimpleFunctionSymbol? by lazy {
+        val classId = ClassId.topLevel(mutationRegistryFqName)
+        pluginContext.referenceFunctions(
+            CallableId(classId, Name.identifier("checkTimeout"))
+        ).firstOrNull()
+    }
+
     // State tracking during transformation
     private var currentFile: IrFile? = null
     private var currentClass: IrClass? = null
@@ -234,6 +241,46 @@ class MutflowIrTransformer(
 
         val fn = currentFunction ?: return transformed
         return transformWhenWithOperators(transformed, fn, whenOperators)
+    }
+
+    override fun visitWhileLoop(loop: IrWhileLoop): IrExpression {
+        val result = super.visitWhileLoop(loop) as IrWhileLoop
+        if (!isInMutationTarget || isInSuppressedScope) return result
+        injectTimeoutCheck(result)
+        return result
+    }
+
+    override fun visitDoWhileLoop(loop: IrDoWhileLoop): IrExpression {
+        val result = super.visitDoWhileLoop(loop) as IrDoWhileLoop
+        if (!isInMutationTarget || isInSuppressedScope) return result
+        injectTimeoutCheck(result)
+        return result
+    }
+
+    /**
+     * Injects a MutationRegistry.checkTimeout() call at the top of a loop body.
+     * This prevents mutations that cause infinite loops from hanging the test run.
+     */
+    private fun injectTimeoutCheck(loop: IrLoop) {
+        val body = loop.body ?: return
+        val checkTimeoutFn = checkTimeoutFunction ?: return
+        val registryClass = mutationRegistryClass ?: return
+        val fn = currentFunction ?: return
+
+        val builder = DeclarationIrBuilder(pluginContext, fn.symbol)
+        val checkCall = builder.irCall(checkTimeoutFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+        }
+
+        loop.body = IrBlockImpl(
+            startOffset = body.startOffset,
+            endOffset = body.endOffset,
+            type = pluginContext.irBuiltIns.unitType,
+            origin = null
+        ).apply {
+            statements.add(checkCall)
+            statements.add(body)
+        }
     }
 
     /**

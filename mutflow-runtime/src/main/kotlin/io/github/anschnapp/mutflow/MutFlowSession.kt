@@ -16,7 +16,8 @@ class MutFlowSession internal constructor(
     private val expectedTestCount: Int = 0,
     private val traps: List<String> = emptyList(),
     private val includeTargets: List<String> = emptyList(),
-    private val excludeTargets: List<String> = emptyList()
+    private val excludeTargets: List<String> = emptyList(),
+    private val timeoutMs: Long = 60_000
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -147,6 +148,7 @@ class MutFlowSession internal constructor(
         currentRun = run
         activeMutation = mutation
         testFailedInCurrentRun = false
+        timedOutInCurrentRun = false
 
         if (run == 0 && hasTargetFilter()) {
             if (includeTargets.isNotEmpty()) {
@@ -186,6 +188,18 @@ class MutFlowSession internal constructor(
         testFailedInCurrentRun = true
     }
 
+    // Whether the current mutation run timed out
+    private var timedOutInCurrentRun: Boolean = false
+
+    /**
+     * Marks that the current mutation run timed out (likely infinite loop).
+     * Called by JUnit extension's exception handler when catching MutationTimedOutException.
+     */
+    fun markTestTimedOut() {
+        timedOutInCurrentRun = true
+        testFailedInCurrentRun = true
+    }
+
     /**
      * Records the result of the current mutation run.
      * Called at the end of each mutation run.
@@ -194,7 +208,9 @@ class MutFlowSession internal constructor(
         val mutation = activeMutation ?: return
         if (currentRun == null || currentRun == 0) return
 
-        if (testFailedInCurrentRun) {
+        if (timedOutInCurrentRun) {
+            mutationResults[mutation] = MutationResult.TimedOut
+        } else if (testFailedInCurrentRun) {
             mutationResults[mutation] = MutationResult.Killed(killedByTest ?: "unknown")
         } else {
             mutationResults[mutation] = MutationResult.Survived
@@ -282,7 +298,7 @@ class MutFlowSession internal constructor(
             )
         }
 
-        val (result, _) = MutationRegistry.withSession(activeMutation = active) {
+        val (result, _) = MutationRegistry.withSession(activeMutation = active, timeoutMs = timeoutMs) {
             block()
         }
         return result
@@ -452,6 +468,7 @@ class MutFlowSession internal constructor(
         val tested = mutationResults.size
         val killed = mutationResults.count { it.value is MutationResult.Killed }
         val survived = mutationResults.count { it.value is MutationResult.Survived }
+        val timedOut = mutationResults.count { it.value is MutationResult.TimedOut }
         val untested = totalMutations - tested
 
         return MutationTestingSummary(
@@ -459,6 +476,7 @@ class MutFlowSession internal constructor(
             testedThisRun = tested,
             killed = killed,
             survived = survived,
+            timedOut = timedOut,
             untested = untested,
             results = mutationResults.toMap()
         )
@@ -477,11 +495,13 @@ class MutFlowSession internal constructor(
         println("║  Total mutations discovered: ${summary.totalMutations.toString().padStart(3)}                              ║")
         println("║  Tested this run:            ${summary.testedThisRun.toString().padStart(3)}                              ║")
         println("║  ├─ Killed:                  ${summary.killed.toString().padStart(3)}  ✓                           ║")
-        println("║  └─ Survived:                ${summary.survived.toString().padStart(3)}  ${if (summary.survived > 0) "✗" else "✓"}                           ║")
+        println("║  ├─ Survived:                ${summary.survived.toString().padStart(3)}  ${if (summary.survived > 0) "✗" else "✓"}                           ║")
+        println("║  └─ Timed out:               ${summary.timedOut.toString().padStart(3)}  ${if (summary.timedOut > 0) "⏱" else "✓"}                           ║")
         println("║  Remaining untested:         ${summary.untested.toString().padStart(3)}                              ║")
         println("╠════════════════════════════════════════════════════════════════╣")
 
         val survivedMutations = mutableListOf<String>()
+        val timedOutMutations = mutableListOf<String>()
 
         if (summary.results.isNotEmpty()) {
             println("║  DETAILS:                                                      ║")
@@ -498,6 +518,11 @@ class MutFlowSession internal constructor(
                         println("║  ✗ ${mutationStr.padEnd(61)}║")
                         println("║      SURVIVED - no test caught this mutation!${" ".repeat(19)}║")
                     }
+                    is MutationResult.TimedOut -> {
+                        timedOutMutations.add(mutationStr)
+                        println("║  ⏱ ${mutationStr.padEnd(61)}║")
+                        println("║      TIMED OUT - likely causes an infinite loop${" ".repeat(15)}║")
+                    }
                 }
             }
         }
@@ -509,6 +534,11 @@ class MutFlowSession internal constructor(
             println("To trap all survived mutations, add to your test annotation:")
             val trapsArg = survivedMutations.joinToString(", ") { "\"$it\"" }
             println("traps = [$trapsArg]")
+        }
+
+        if (timedOutMutations.isNotEmpty()) {
+            println()
+            println("To skip timed-out mutations, add // mutflow:ignore on the affected lines.")
         }
         println()
     }
@@ -540,6 +570,7 @@ data class SessionState(
 sealed class MutationResult {
     data class Killed(val testName: String) : MutationResult()
     data object Survived : MutationResult()
+    data object TimedOut : MutationResult()
 }
 
 /**
@@ -550,6 +581,7 @@ data class MutationTestingSummary(
     val testedThisRun: Int,
     val killed: Int,
     val survived: Int,
+    val timedOut: Int,
     val untested: Int,
     val results: Map<Mutation, MutationResult>
 )

@@ -2,6 +2,7 @@ package io.github.anschnapp.mutflow.junit
 
 import io.github.anschnapp.mutflow.MutFlow
 import io.github.anschnapp.mutflow.MutantSurvivedException
+import io.github.anschnapp.mutflow.MutationTimedOutException
 import io.github.anschnapp.mutflow.Mutation
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback
@@ -55,7 +56,8 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             expectedTestCount = expectedTestCount,
             traps = annotation.traps.toList(),
             includeTargets = annotation.includeTargets.map { it.qualifiedName!! },
-            excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! }
+            excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
+            timeoutMs = annotation.timeoutMs
         )
 
         // Generate invocation contexts lazily
@@ -125,6 +127,12 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                     TestExecutionExceptionHandler { context, throwable ->
                         if (run == 0) {
                             // Baseline: let failures propagate normally
+                            throw throwable
+                        } else if (throwable is MutationTimedOutException) {
+                            // Timeout: mark as timed out and fail the test
+                            // so the user notices and can add // mutflow:ignore
+                            val session = MutFlow.getSession(sessionId)
+                            session?.markTestTimedOut()
                             throw throwable
                         } else {
                             // Mutation run: failure means mutation was killed (success!)

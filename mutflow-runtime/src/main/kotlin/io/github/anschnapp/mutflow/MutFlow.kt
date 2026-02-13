@@ -57,7 +57,8 @@ object MutFlow {
         expectedTestCount: Int = 0,
         traps: List<String> = emptyList(),
         includeTargets: List<String> = emptyList(),
-        excludeTargets: List<String> = emptyList()
+        excludeTargets: List<String> = emptyList(),
+        timeoutMs: Long = 60_000
     ): String {
         val id = UUID.randomUUID().toString()
         val session = MutFlowSession(
@@ -68,7 +69,8 @@ object MutFlow {
             expectedTestCount = expectedTestCount,
             traps = traps,
             includeTargets = includeTargets,
-            excludeTargets = excludeTargets
+            excludeTargets = excludeTargets,
+            timeoutMs = timeoutMs
         )
         sessions[id] = session
         return id
