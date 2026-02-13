@@ -3,6 +3,7 @@ package io.github.anschnapp.mutflow.gradle
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.tasks.SourceSet
@@ -11,6 +12,10 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinCompilation
 import org.jetbrains.kotlin.gradle.plugin.KotlinCompilerPluginSupportPlugin
 import org.jetbrains.kotlin.gradle.plugin.SubpluginArtifact
 import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
+
+abstract class MutflowExtension {
+    abstract val enabled: Property<Boolean>
+}
 
 /**
  * Gradle plugin for mutflow mutation testing.
@@ -39,10 +44,34 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
 
     override fun apply(target: Project) {
         debug("apply() called for project: ${target.name}")
+
+        val extension = target.extensions.create("mutflow", MutflowExtension::class.java)
+        extension.enabled.convention(
+            target.providers.gradleProperty("mutflow.enabled")
+                .map { it.toBoolean() }
+                .orElse(true)
+        )
+
         target.plugins.withId("org.jetbrains.kotlin.jvm") {
             debug("  kotlin.jvm plugin detected, configuring...")
-            configureSourceSets(target)
-            addDependencies(target)
+            target.afterEvaluate {
+                if (extension.enabled.get()) {
+                    debug("  mutflow is enabled, configuring source sets and dependencies")
+                    configureSourceSets(target)
+                    addDependencies(target)
+                } else {
+                    debug("  mutflow is disabled, skipping configuration")
+                    // Add annotations and test dependencies so code still compiles
+                    target.dependencies.add(
+                        "implementation",
+                        "$GROUP_ID:mutflow-annotations:$MUTFLOW_VERSION"
+                    )
+                    target.dependencies.add(
+                        "testImplementation",
+                        "$GROUP_ID:mutflow-junit6:$MUTFLOW_VERSION"
+                    )
+                }
+            }
             debug("  configuration complete")
         }
     }
@@ -145,9 +174,12 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
     }
 
     override fun isApplicable(kotlinCompilation: KotlinCompilation<*>): Boolean {
+        val project = kotlinCompilation.target.project
+        val extension = project.extensions.findByType(MutflowExtension::class.java)
+        val enabled = extension?.enabled?.get() ?: true
         val compilationName = kotlinCompilation.name
-        val isApplicable = compilationName == MUTATED_MAIN
-        debug("isApplicable(compilation='$compilationName') -> $isApplicable")
+        val isApplicable = enabled && compilationName == MUTATED_MAIN
+        debug("isApplicable(compilation='$compilationName', enabled=$enabled) -> $isApplicable")
         return isApplicable
     }
 

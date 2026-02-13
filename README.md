@@ -65,6 +65,29 @@ Once available, the plugin automatically:
 
 **Important:** The plugin uses a dual-compilation approach — your production JAR remains clean (no mutation code), while tests run against mutated code.
 
+### Disabling Mutation Testing
+
+You can completely disable mutation testing without removing the plugin. When disabled, no compiler plugin is registered and no extra compilation happens — zero overhead.
+
+```kotlin
+// In build.gradle.kts
+mutflow {
+    enabled = false
+}
+```
+
+Or via command line:
+```bash
+./gradlew test -Pmutflow.enabled=false
+```
+
+Or in `gradle.properties`:
+```properties
+mutflow.enabled=false
+```
+
+When disabled, your code still compiles normally (`@MutationTarget` and `@MutFlowTest` annotations are still available), but tests run without any mutations — the mutation summary will show 0 mutations discovered.
+
 ## Quick Start
 
 ```kotlin

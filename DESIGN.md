@@ -561,6 +561,24 @@ This keeps framework-specific code minimal (~100 lines) and enables easy porting
 
 ## Technical Decisions
 
+### Disabling Mutation Testing
+
+The Gradle plugin exposes a `mutflow` extension with an `enabled` property (default: `true`). When set to `false`:
+
+1. **No `mutatedMain` source set** is created — no extra compilation step
+2. **No compiler plugin** is registered (`isApplicable` returns `false`)
+3. **Only `mutflow-annotations` and `mutflow-junit6`** are added as dependencies, so `@MutationTarget` and `@MutFlowTest` still compile
+4. **Tests run normally** but discover 0 mutations (no `MutationRegistry.check()` calls exist in the code)
+
+The property supports three configuration methods with the following precedence:
+- **DSL** (`mutflow { enabled = false }`) — highest, set explicitly in build script
+- **Gradle property** (`-Pmutflow.enabled=false` or `gradle.properties`) — used as convention (default) if DSL value is not set
+
+This is useful for:
+- CI pipelines where mutation testing only runs on specific builds (e.g., nightly, not on every push)
+- Local development when fast iteration is needed
+- Temporarily disabling without removing the plugin from the build
+
 ### Kotlin K2 Only
 - K1 is deprecated; K2 is the future
 - Maintaining both is too much overhead for an experimental project
