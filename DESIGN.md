@@ -812,7 +812,6 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 ### Planned
 
 - Gradle plugin for easy setup
-- More mutation operators (negation removal)
 - Smarter likelihood calculations (see below)
 - State invalidation hooks
 

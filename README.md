@@ -291,10 +291,6 @@ Free-form text after the keyword documents the reason for reviewers.
 - **Target filtering** — `includeTargets`/`excludeTargets` to scope mutations by class in integration tests
 - **Parallel test safe** — Mutation test classes can run alongside other tests in parallel; `underTest {}` blocks serialize automatically via a synchronized lock, without using `ThreadLocal` (keeping the door open for coroutine/reactive support)
 
-## Planned Features
-
-- Additional mutation operators (negation removal)
-
 ## How Equality Swap Mutations Work
 
 Equality swap mutations verify that your tests distinguish between `==` and `!=` conditions.
