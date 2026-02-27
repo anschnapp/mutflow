@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.0] - 2026-02-27
+### Changed
+- All mutation points are now tested by default (`maxRuns` defaults to all instead of 5)
+- Removed `selection` and `shuffle` parameters from `@MutFlowTest` — simpler API, less configuration needed
+
 ## [0.5.0] - 2026-02-13
 ### Added
 - Mutation timeout support to prevent infinite loops caused by condition mutations
