@@ -1,8 +1,6 @@
 package sample
 
 import io.github.anschnapp.mutflow.MutFlow
-import io.github.anschnapp.mutflow.Selection
-import io.github.anschnapp.mutflow.Shuffle
 import io.github.anschnapp.mutflow.junit.MutFlowTest
 import org.junit.jupiter.api.Test
 import kotlin.test.assertFalse
@@ -18,8 +16,6 @@ import kotlin.test.assertTrue
  */
 @MutFlowTest(
     maxRuns = 2,
-    selection = Selection.MostLikelyStable,
-    shuffle = Shuffle.PerChange,
     // This trap won't match any mutation (wrong line number)
     traps = ["(Calculator.kt:999) > → >="]
 )

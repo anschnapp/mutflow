@@ -1,8 +1,6 @@
 package sample
 
 import io.github.anschnapp.mutflow.MutFlow
-import io.github.anschnapp.mutflow.Selection
-import io.github.anschnapp.mutflow.Shuffle
 import io.github.anschnapp.mutflow.junit.MutFlowTest
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -19,7 +17,7 @@ import kotlin.test.assertTrue
  *
  * Tests include boundary values to kill ConstantBoundary (+1/-1) mutations.
  */
-@MutFlowTest(maxRuns = Integer.MAX_VALUE)
+@MutFlowTest
 class CalculatorJUnitTest {
 
     private val calculator = Calculator()

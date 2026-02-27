@@ -18,8 +18,7 @@ mutflow brings mutation testing to Kotlin with minimal overhead. Instead of the 
 
 1. **Compiles once** — All mutation variants are injected at compile time as conditional branches
 2. **Discovers dynamically** — Mutation points are found during baseline test execution
-3. **Selects intelligently** — Prioritizes under-tested mutations based on touch counts
-4. **Progresses over builds** — Different mutations are tested across builds, like continuous fuzzing
+3. **Runs all mutations** — Every discovered mutation is tested by default, no configuration needed
 
 ## Why?
 
@@ -167,34 +166,12 @@ CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 
 ## Configuration
 
+By default, `@MutFlowTest` runs all discovered mutations — no configuration needed. For large codebases where running all mutations is too slow, you can limit the number of runs:
+
 ```kotlin
-@MutFlowTest(
-    maxRuns = 5,                           // Baseline + up to 4 mutation runs
-    selection = Selection.MostLikelyStable, // Prioritize under-tested mutations
-    shuffle = Shuffle.PerChange,           // Stable across builds until code changes
-    timeoutMs = 60_000                     // Max time per mutation run (default: 60s)
-)
+@MutFlowTest(maxRuns = 20)  // Baseline + up to 19 mutation runs
 class CalculatorTest { ... }
 ```
-
-### Selection Strategies
-
-| Selection | Behavior |
-|-----------|----------|
-| `PureRandom` | Uniform random selection among untested mutations |
-| `MostLikelyRandom` | Random but weighted toward mutations touched by fewer tests |
-| `MostLikelyStable` | Deterministically pick the mutation touched by fewest tests |
-
-### Shuffle Modes
-
-| Shuffle | Behavior |
-|---------|----------|
-| `PerRun` | New random seed each JVM/CI run — exploratory |
-| `PerChange` | Seed based on discovered points — stable until code changes |
-
-**Typical workflow:**
-- Development: `MostLikelyRandom` + `PerRun` to explore high-risk mutations
-- Merge requests: `MostLikelyStable` + `PerChange` for reproducible results
 
 ### Target Filtering (Integration Tests)
 
@@ -320,9 +297,7 @@ Free-form text after the keyword documents the reason for reviewers.
 - **Extensible architecture** — `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), and `WhenMutationOperator` (for boolean logic) interfaces for adding new mutation types
 - **Session-based architecture** — Clean lifecycle, no leaked global state
 - **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension
-- **Selection strategies** — `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
-- **Shuffle modes** — `PerRun` (exploratory) and `PerChange` (stable)
-- **Touch count tracking** — Prioritizes under-tested mutation points
+- **Runs all mutations by default** — Zero-config: `@MutFlowTest` tests every discovered mutation
 - **Mutation result tracking** — Killed mutations show as PASSED (exception swallowed), survivors fail the build
 - **Summary reporting** — Visual summary at end of test class showing killed/survived mutations
 - **Readable mutation names** — Source location and operator descriptions (e.g., `(Calculator.kt:7) > → >=`, `(Calculator.kt:7) 0 → 1`). When the same operator appears multiple times on one line, an occurrence suffix disambiguates (e.g., `> → >= #2`)
@@ -426,7 +401,7 @@ assertEquals("Alice", user?.name)  // Catches null mutation
 
 ## Manual API
 
-For testing or custom integrations, you can use the explicit API:
+For advanced use cases or custom integrations, you can use the explicit API with selection and shuffle parameters:
 
 ```kotlin
 // Baseline
@@ -439,6 +414,8 @@ MutFlow.underTest(run = 1, Selection.MostLikelyStable, Shuffle.PerChange) {
     calculator.isPositive(5)
 }
 ```
+
+Selection strategies (`PureRandom`, `MostLikelyRandom`, `MostLikelyStable`) and shuffle modes (`PerRun`, `PerChange`) control how mutations are prioritized. These are internal implementation details — the `@MutFlowTest` annotation uses sensible defaults automatically.
 
 ## Documentation
 

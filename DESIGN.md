@@ -169,7 +169,9 @@ This means:
 - Mutations touched by fewer tests are identified as higher risk
 - Precise feedback: when a mutant survives, you know exactly which one
 
-### 3. Selection and Shuffle Modes
+### 3. Selection and Shuffle Modes (Internal)
+
+These are internal implementation details used by the mutation selection engine. The `@MutFlowTest` annotation uses `MostLikelyStable` + `PerChange` by default and runs all mutations. These parameters are only exposed through the manual `MutFlow.underTest(run, selection, shuffle)` API.
 
 Mutation selection is controlled by two orthogonal parameters:
 
@@ -817,7 +819,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 ```kotlin
 // Simple: use @MutFlowTest annotation
-@MutFlowTest(maxRuns = 4, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange)
+@MutFlowTest  // runs all mutations by default
 class CalculatorTest {
     @Test
     fun testIsPositive() {

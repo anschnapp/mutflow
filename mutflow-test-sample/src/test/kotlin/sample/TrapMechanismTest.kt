@@ -1,8 +1,6 @@
 package sample
 
 import io.github.anschnapp.mutflow.MutFlow
-import io.github.anschnapp.mutflow.Selection
-import io.github.anschnapp.mutflow.Shuffle
 import io.github.anschnapp.mutflow.junit.MutFlowTest
 import org.junit.jupiter.api.Test
 import kotlin.test.assertFalse
@@ -16,8 +14,6 @@ import kotlin.test.assertTrue
  */
 @MutFlowTest(
     maxRuns = 3,
-    selection = Selection.MostLikelyStable,
-    shuffle = Shuffle.PerChange,
     // Trap the constant boundary mutation - it will run first
     traps = ["(Calculator.kt:8) 0 → -1"]
 )

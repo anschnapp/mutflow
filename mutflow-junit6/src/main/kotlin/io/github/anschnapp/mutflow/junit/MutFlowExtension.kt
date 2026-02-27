@@ -4,6 +4,8 @@ import io.github.anschnapp.mutflow.MutFlow
 import io.github.anschnapp.mutflow.MutantSurvivedException
 import io.github.anschnapp.mutflow.MutationTimedOutException
 import io.github.anschnapp.mutflow.Mutation
+import io.github.anschnapp.mutflow.Selection
+import io.github.anschnapp.mutflow.Shuffle
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback
 import org.junit.jupiter.api.extension.BeforeClassTemplateInvocationCallback
@@ -50,8 +52,8 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
 
         // Create session for this test class
         val sessionId = MutFlow.createSession(
-            selection = annotation.selection,
-            shuffle = annotation.shuffle,
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
             maxRuns = maxRuns,
             expectedTestCount = expectedTestCount,
             traps = annotation.traps.toList(),
