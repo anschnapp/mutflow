@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.svg" alt="mutflow" width="400">
+  <img src="https://github.com/anschnapp/mutflow/blob/master/logo.png" alt="mutflow">
 </p>
 
 <p align="center">
