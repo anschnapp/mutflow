@@ -93,7 +93,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
         return object : ClassTemplateInvocationContext {
             override fun getDisplayName(invocationIndex: Int): String {
                 return when {
-                    run == 0 -> "Baseline"
+                    run == 0 -> "Test run (no mutations)"
                     mutation != null -> {
                         val session = MutFlow.getSession(sessionId)
                         val displayName = session?.getDisplayName(mutation)
@@ -128,7 +128,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                     // Exception handler: during mutation runs, catch failures (= mutation killed)
                     TestExecutionExceptionHandler { context, throwable ->
                         if (run == 0) {
-                            // Baseline: let failures propagate normally
+                            // Baseline: mark failure and let it propagate normally
+                            val session = MutFlow.getSession(sessionId)
+                            session?.markBaselineFailure()
                             throw throwable
                         } else if (throwable is MutationTimedOutException) {
                             // Timeout: mark as timed out and fail the test

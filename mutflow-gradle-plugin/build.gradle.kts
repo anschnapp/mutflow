@@ -81,7 +81,7 @@ mavenPublishing {
         developers {
             developer {
                 id.set("anschnapp")
-                name.set("anschnapp")
+                name.set("Andreas Schnapp")
                 url.set("https://github.com/anschnapp")
             }
         }

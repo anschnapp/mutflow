@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0] - Unreleased
+### Fixed
+- Mutation runs are now skipped when baseline tests fail — previously, failing tests were incorrectly counted as "mutation killed", making all mutations appear green
+
 ## [0.8.0] - 2026-03-03
 ### Changed
 - Boolean inversion operator simplified — always adds `!` instead of two cases (remove/add). The "remove negation" case is implicit: `!(!expr)` = `expr`

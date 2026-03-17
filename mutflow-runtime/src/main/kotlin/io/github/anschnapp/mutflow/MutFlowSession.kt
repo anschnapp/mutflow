@@ -50,6 +50,10 @@ class MutFlowSession internal constructor(
     // Tracks whether any test failed in the current run
     private var testFailedInCurrentRun: Boolean = false
 
+    // Tracks whether any test failed during baseline (run 0)
+    // If true, mutation runs are skipped — no point testing mutations when the implementation itself is broken
+    private var baselineHadFailures: Boolean = false
+
     // Results of mutation testing: mutation -> result
     private val mutationResults = mutableMapOf<Mutation, MutationResult>()
 
@@ -87,6 +91,11 @@ class MutFlowSession internal constructor(
 
         if (isPartialRun()) {
             println("[mutflow] Partial test run detected (${executedTestIds.size}/$expectedTestCount tests) - skipping mutation testing")
+            return null
+        }
+
+        if (baselineHadFailures) {
+            println("[mutflow] Baseline tests failed - skipping mutation testing (fix your tests first)")
             return null
         }
 
@@ -173,6 +182,14 @@ class MutFlowSession internal constructor(
 
     // Name of the first test that killed the current mutation
     private var killedByTest: String? = null
+
+    /**
+     * Marks that a test failed during the baseline run.
+     * When baseline has failures, mutation runs are skipped entirely.
+     */
+    fun markBaselineFailure() {
+        baselineHadFailures = true
+    }
 
     /**
      * Marks that a test failed in the current run (mutation killed).

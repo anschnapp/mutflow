@@ -843,10 +843,10 @@ class CalculatorTest {
 
 **Example output:**
 ```
-CalculatorTest > Baseline > isPositive returns true for positive numbers() PASSED
-CalculatorTest > Baseline > isPositive returns true at boundary() PASSED
-CalculatorTest > Baseline > isPositive returns false for negative numbers() PASSED
-CalculatorTest > Baseline > isPositive returns false for zero() PASSED
+CalculatorTest > Test run (no mutations) > isPositive returns true for positive numbers() PASSED
+CalculatorTest > Test run (no mutations) > isPositive returns true at boundary() PASSED
+CalculatorTest > Test run (no mutations) > isPositive returns false for negative numbers() PASSED
+CalculatorTest > Test run (no mutations) > isPositive returns false for zero() PASSED
 
 CalculatorTest > Mutation: (Calculator.kt:7) > → >= > ... PASSED
 CalculatorTest > Mutation: (Calculator.kt:7) > → < > ... PASSED
