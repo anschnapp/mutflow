@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-03-17
 ### Fixed
 - Mutation runs are now skipped when baseline tests fail — previously, failing tests were incorrectly counted as "mutation killed", making all mutations appear green
 
