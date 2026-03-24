@@ -548,6 +548,21 @@ MutFlow.underTest(run = 1, Selection.MostLikelyStable, Shuffle.PerChange) {
 
 Selection strategies (`PureRandom`, `MostLikelyRandom`, `MostLikelyStable`) and shuffle modes (`PerRun`, `PerChange`) control how mutations are prioritized. These are internal implementation details — the `@MutFlowTest` annotation uses sensible defaults automatically.
 
+## Troubleshooting
+
+### Code coverage (JaCoCo/Kover) reports 0% when mutflow is enabled
+
+mutflow compiles your sources twice — once normally (`main`) and once with mutations injected (`mutatedMain`). During tests, the mutated classes are loaded instead of the original ones. Since coverage tools instrument the `main` classes, they see no execution.
+
+**Solution:** Run coverage and mutation testing as separate steps:
+
+```bash
+./gradlew test -Pmutflow.enabled=false   # coverage run
+./gradlew test                            # mutation testing run
+```
+
+See [Disabling Mutation Testing](#disabling-mutation-testing) for all configuration options.
+
 ## Documentation
 
 See [DESIGN.md](DESIGN.md) for the full design document, architecture details, and implementation plan.
