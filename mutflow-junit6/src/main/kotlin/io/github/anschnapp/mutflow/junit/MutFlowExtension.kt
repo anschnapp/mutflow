@@ -45,6 +45,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             .orElseThrow { IllegalStateException("@MutFlowTest annotation not found") }
 
         val maxRuns = annotation.maxRuns
+        val skipMutations = annotation.skipCauseNotAllCasesCovered
 
         // Count test methods for partial run detection
         val testClass = context.requiredTestClass
@@ -67,6 +68,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
         return generateSequence(0 to null as Mutation?) { (run, _) ->
             val nextRun = run + 1
             when {
+                skipMutations -> null // Skip mutation runs, only baseline
                 nextRun >= maxRuns -> null // Stop at maxRuns
                 nextRun == 1 -> {
                     // After baseline, select first mutation

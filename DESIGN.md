@@ -381,7 +381,20 @@ class PaymentServiceTest { ... }
 
 **Why class-level filtering?** Point IDs encode the fully qualified class name (e.g., `com.example.Calculator_0`), so class-based matching is natural. The annotation uses `KClass<*>` references, which are type-safe and refactoring-friendly.
 
-### 8. Partial Run Detection
+### 8. Skipping Mutation Testing
+
+When writing tests incrementally, you may not have all test cases ready yet. Running mutation testing in this state produces noise — surviving mutants for code you simply haven't tested yet. The `skipCauseNotAllCasesCovered` flag lets you skip mutation runs entirely while keeping the `@MutFlowTest` annotation in place:
+
+```kotlin
+@MutFlowTest(skipCauseNotAllCasesCovered = true)
+class CalculatorTest { ... }
+```
+
+**How it works:** When the flag is `true`, the extension only provides the baseline invocation context (run 0). All tests execute normally, but no mutation runs are generated. The session is still created and closed cleanly.
+
+**Why a boolean flag instead of removing `@MutFlowTest`?** Removing the annotation loses the signal that mutation testing is intended for this class. The flag serves as a visible reminder — the developer sees `skipCauseNotAllCasesCovered = true` and knows they need to come back and finish coverage. The deliberately verbose name reinforces that this is a temporary state, not a permanent opt-out.
+
+### 9. Partial Run Detection
 
 When running a single test method from an IDE (e.g., IntelliJ's "Run Test" on one method), mutation testing is automatically skipped. This prevents false positives — mutations that would be killed by *other* tests in the class would incorrectly appear as survivors.
 
@@ -401,7 +414,7 @@ The baseline still runs normally (tests execute, mutations are discovered), but 
 
 **Rationale:** Mutation testing evaluates the *entire test suite's* ability to catch mutations. Running it with a subset produces meaningless results — better to skip and provide a clear message.
 
-### 9. Timeout Detection for Infinite Loops
+### 10. Timeout Detection for Infinite Loops
 
 Certain mutations can cause infinite loops — most commonly when flipping a relational operator in a loop condition (e.g., `<` → `>` in `while (i < n)`). Without protection, these mutations would hang the test run indefinitely.
 

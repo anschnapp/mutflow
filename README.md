@@ -242,6 +242,22 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 [mutflow]     (Calculator.kt:8) > → >=
 ```
 
+### Skipping Mutation Testing
+
+When you're still writing test cases and don't have full coverage yet, you can skip mutation testing entirely while keeping the test structure in place:
+
+```kotlin
+@MutFlowTest(skipCauseNotAllCasesCovered = true)
+class CalculatorTest { ... }
+```
+
+With this flag, only the baseline run executes — your tests run normally without any mutation runs. Once you've written all your test cases, remove the flag (or set it to `false`) and mutflow will start testing mutations again.
+
+This is useful when you want to:
+- Work on test coverage incrementally without mutation failures blocking you
+- Keep your `@MutFlowTest` annotation in place as a reminder that mutation testing is intended
+- Separate "make tests pass" from "kill all mutants" as distinct workflow phases
+
 ### Suppressing Mutations
 
 mutflow provides three levels of suppression granularity:

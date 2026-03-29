@@ -48,6 +48,9 @@ import kotlin.reflect.KClass
  * @param timeoutMs Maximum time in milliseconds for each mutation run before it is considered
  *                  timed out (likely an infinite loop). Default is 60000 (60 seconds).
  *                  Set to 0 to disable timeout detection.
+ * @param skipCauseNotAllCasesCovered When true, skips mutation testing and only runs the
+ *                  baseline (regular tests). Use this while you are still writing test cases
+ *                  and are not yet ready for mutation testing. Default is false.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
@@ -58,5 +61,6 @@ annotation class MutFlowTest(
     val traps: Array<String> = [],
     val includeTargets: Array<KClass<*>> = [],
     val excludeTargets: Array<KClass<*>> = [],
-    val timeoutMs: Long = 60_000
+    val timeoutMs: Long = 60_000,
+    val skipCauseNotAllCasesCovered: Boolean = false
 )
