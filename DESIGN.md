@@ -282,20 +282,41 @@ Traps are a **temporary debugging aid**:
 - Easy to update if code moves (the warning shows available mutations)
 - Unambiguous even when the same operator appears multiple times on one line
 
-### 6. Scoped Mutations via Annotations
+### 6. Scoped Mutations via Annotations and Gradle Config
 
-The compiler plugin only injects mutations into annotated classes:
+The compiler plugin injects mutations into classes that are either annotated with `@MutationTarget` or matched by target patterns configured in the Gradle plugin:
 
 ```kotlin
+// Option 1: Annotation on production code
 @MutationTarget
 class Calculator {
     // mutations injected here
 }
 
-class Logger {
-    // no mutations - not under test
+// Option 2: Gradle config (no annotation needed on production code)
+// build.gradle.kts
+mutflow {
+    targets = listOf(
+        "com.example.Calculator",       // exact class
+        "com.example.service.*",        // all classes in a package
+        "com.example.service.**",       // package + all subpackages
+        "com.example.*Service"          // glob pattern
+    )
 }
 ```
+
+Both mechanisms can be combined freely — a class is mutated if it matches either `@MutationTarget` or a Gradle target pattern. If both match the same class, it is simply mutated once (no duplication).
+
+**Why two mechanisms?**
+- `@MutationTarget` is convenient for small projects and makes mutation scope visible in the code
+- Gradle config addresses a common concern: annotating production code with test-related annotations from an external library feels invasive (see [GitHub issue #2](https://github.com/anschnapp/mutflow/issues/2)). The Gradle config keeps all mutation testing configuration in the test/build layer
+
+**Pattern matching:** Target patterns support glob-style matching:
+- `.` matches literal dots in package/class names
+- `*` matches a single name segment (does not cross dots)
+- `**` matches any number of segments (crosses dots)
+
+Patterns are compiled to regexes once at plugin initialization and matched against each class's fully qualified name during IR transformation.
 
 This limits bytecode bloat and keeps mutations relevant.
 
@@ -480,6 +501,7 @@ When a timeout occurs, the test **fails** rather than silently marking the mutat
 │                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
+│                           │  and Gradle-configured target classes│
 │                           │  Injects MutationRegistry.check()   │
 │                           │  Four operator interfaces:          │
 │                           │    MutationOperator (IrCall nodes)  │
@@ -743,6 +765,8 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 **mutflow-compiler-plugin:**
 - K2 compiler plugin with extensible mutation operator mechanism
+- `MutflowCommandLineProcessor` receives target patterns from Gradle plugin via `SubpluginOption`
+- Target pattern matching: glob-style patterns (`*`, `**`) compiled to regex for FQN matching
 - Four operator interfaces for different IR node types:
   - `MutationOperator` — for `IrCall` nodes (comparison operators, etc.)
   - `ReturnMutationOperator` — for `IrReturn` nodes (return statement mutations)

@@ -66,6 +66,30 @@ Once available, the plugin automatically:
 
 **Important:** The plugin uses a dual-compilation approach — your production JAR remains clean (no mutation code), while tests run against mutated code.
 
+### Specifying Mutation Targets
+
+There are two ways to tell mutflow which classes to mutate — use either or both:
+
+**Option 1: `@MutationTarget` annotation** (on production code)
+```kotlin
+@MutationTarget
+class Calculator { ... }
+```
+
+**Option 2: Gradle configuration** (no annotations on production code)
+```kotlin
+mutflow {
+    targets = listOf(
+        "com.example.Calculator",       // exact class
+        "com.example.service.*",        // all classes in a package
+        "com.example.service.**",       // package + all subpackages
+        "com.example.*Service"          // glob pattern
+    )
+}
+```
+
+Both can be combined freely. If a class matches either mechanism, it will be mutated. The Gradle config is useful when you prefer not to annotate production code with test-related annotations.
+
 ### Disabling Mutation Testing
 
 You can completely disable mutation testing without removing the plugin. When disabled, no compiler plugin is registered and no extra compilation happens — zero overhead.
@@ -92,11 +116,14 @@ When disabled, your code still compiles normally (`@MutationTarget` and `@MutFlo
 ## Quick Start
 
 ```kotlin
-// Mark code under test
+// Mark code under test (Option 1: annotation)
 @MutationTarget
 class Calculator {
     fun isPositive(x: Int) = x > 0
 }
+
+// Or use Gradle config instead (Option 2: no annotation needed)
+// mutflow { targets = listOf("com.example.Calculator") }
 
 // Test with mutation testing - simple!
 @MutFlowTest
@@ -244,7 +271,7 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 
 ### Suppressing Mutations
 
-mutflow provides three levels of suppression granularity:
+Suppression works regardless of how the class was targeted (annotation or Gradle config). mutflow provides three levels of suppression granularity:
 
 **Class level** — skip all mutations in a class:
 ```kotlin
@@ -319,7 +346,7 @@ Selection strategies (`PureRandom`, `MostLikelyRandom`, `MostLikelyStable`) and 
 
 **Core**
 - **JUnit 6 integration** — `@MutFlowTest` annotation for automatic multi-run orchestration
-- **K2 compiler plugin** — Transforms `@MutationTarget` classes with multiple mutation types
+- **K2 compiler plugin** — Transforms `@MutationTarget` classes (or Gradle-configured target patterns) with multiple mutation types
 - **Parameterless API** — Simple `MutFlow.underTest { }` when using JUnit extension
 - **Runs all mutations by default** — Zero-config: `@MutFlowTest` tests every discovered mutation
 

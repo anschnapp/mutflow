@@ -3,6 +3,7 @@ package io.github.anschnapp.mutflow.gradle
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.file.SourceDirectorySet
@@ -15,6 +16,7 @@ import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
 
 abstract class MutflowExtension {
     abstract val enabled: Property<Boolean>
+    abstract val targets: ListProperty<String>
 }
 
 /**
@@ -51,6 +53,7 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
                 .map { it.toBoolean() }
                 .orElse(true)
         )
+        extension.targets.convention(emptyList())
 
         target.plugins.withId("org.jetbrains.kotlin.jvm") {
             debug("  kotlin.jvm plugin detected, configuring...")
@@ -187,6 +190,14 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         kotlinCompilation: KotlinCompilation<*>
     ): Provider<List<SubpluginOption>> {
         debug("applyToCompilation(compilation='${kotlinCompilation.name}')")
-        return kotlinCompilation.target.project.provider { emptyList() }
+        val project = kotlinCompilation.target.project
+        val extension = project.extensions.findByType(MutflowExtension::class.java)
+        return project.provider {
+            val options = mutableListOf<SubpluginOption>()
+            extension?.targets?.get()?.forEach { target ->
+                options.add(SubpluginOption("target", target))
+            }
+            options
+        }
     }
 }

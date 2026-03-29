@@ -12,7 +12,9 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
  * 1. Finds classes annotated with @MutationTarget
  * 2. Transforms comparison operators into mutation-aware branches
  */
-class MutflowIrGenerationExtension : IrGenerationExtension {
+class MutflowIrGenerationExtension(
+    private val targetPatterns: List<String> = emptyList()
+) : IrGenerationExtension {
 
     companion object {
         private const val DEBUG = false
@@ -30,7 +32,7 @@ class MutflowIrGenerationExtension : IrGenerationExtension {
         debug("generate() called!")
         debug("  module: ${moduleFragment.name}")
         debug("  files: ${moduleFragment.files.map { it.fileEntry.name }}")
-        val transformer = MutflowIrTransformer(pluginContext)
+        val transformer = MutflowIrTransformer(pluginContext, targetPatterns = targetPatterns)
         moduleFragment.transform(transformer, null)
         debug("  transformation complete")
     }

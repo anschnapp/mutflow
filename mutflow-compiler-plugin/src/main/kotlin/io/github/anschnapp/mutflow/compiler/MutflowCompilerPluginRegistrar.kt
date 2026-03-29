@@ -36,7 +36,9 @@ class MutflowCompilerPluginRegistrar : CompilerPluginRegistrar() {
     override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
         debug("registerExtensions() called!")
         debug("  configuration: $configuration")
-        IrGenerationExtension.registerExtension(MutflowIrGenerationExtension())
+        val targetPatterns = configuration.get(MUTFLOW_TARGET_PATTERNS_KEY) ?: emptyList()
+        debug("  target patterns: $targetPatterns")
+        IrGenerationExtension.registerExtension(MutflowIrGenerationExtension(targetPatterns))
         debug("  IrGenerationExtension registered")
     }
 }
