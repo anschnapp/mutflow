@@ -1,5 +1,6 @@
 package io.github.anschnapp.mutflow.junit
 
+import io.github.anschnapp.mutflow.VerificationMode
 import org.junit.jupiter.api.ClassTemplate
 import org.junit.jupiter.api.extension.ExtendWith
 import kotlin.reflect.KClass
@@ -48,6 +49,11 @@ import kotlin.reflect.KClass
  * @param timeoutMs Maximum time in milliseconds for each mutation run before it is considered
  *                  timed out (likely an infinite loop). Default is 60000 (60 seconds).
  *                  Set to 0 to disable timeout detection.
+ * @param verificationMode Controls how surviving mutations are handled.
+ *                         STRICT (default): survivors cause test failure.
+ *                         LENIENT: survivors are reported but don't fail.
+ *                         DISABLED: mutation runs are skipped entirely.
+ *                         Can be overridden globally via the MUTFLOW_VERIFICATION_MODE environment variable.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
@@ -58,5 +64,6 @@ annotation class MutFlowTest(
     val traps: Array<String> = [],
     val includeTargets: Array<KClass<*>> = [],
     val excludeTargets: Array<KClass<*>> = [],
-    val timeoutMs: Long = 60_000
+    val timeoutMs: Long = 60_000,
+    val verificationMode: VerificationMode = VerificationMode.STRICT
 )

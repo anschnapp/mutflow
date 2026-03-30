@@ -23,7 +23,8 @@ class MutFlowSession internal constructor(
     private val traps: List<String> = emptyList(),
     private val includeTargets: List<String> = emptyList(),
     private val excludeTargets: List<String> = emptyList(),
-    private val timeoutMs: Long = 60_000
+    private val timeoutMs: Long = 60_000,
+    private val verificationMode: VerificationMode = VerificationMode.STRICT
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -253,6 +254,11 @@ class MutFlowSession internal constructor(
      * Returns the currently active mutation, if any.
      */
     fun getActiveMutation(): Mutation? = activeMutation
+
+    /**
+     * Returns the verification mode for this session.
+     */
+    fun getVerificationMode(): VerificationMode = verificationMode
 
     /**
      * Ends the current run.

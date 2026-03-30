@@ -7,6 +7,7 @@ import io.github.anschnapp.mutflow.Mutation
 import io.github.anschnapp.mutflow.Selection
 import io.github.anschnapp.mutflow.SessionId
 import io.github.anschnapp.mutflow.Shuffle
+import io.github.anschnapp.mutflow.VerificationMode
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback
 import org.junit.jupiter.api.extension.BeforeClassTemplateInvocationCallback
@@ -47,6 +48,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
 
         val maxRuns = annotation.maxRuns
 
+        // Resolve effective verification mode: env var overrides annotation
+        val effectiveMode = resolveVerificationMode(annotation.verificationMode)
+
         // Count test methods for partial run detection
         val testClass = context.requiredTestClass
         val expectedTestCount = countTestMethods(testClass)
@@ -60,8 +64,22 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             traps = annotation.traps.toList(),
             includeTargets = annotation.includeTargets.map { it.qualifiedName!! },
             excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
-            timeoutMs = annotation.timeoutMs
+            timeoutMs = annotation.timeoutMs,
+            verificationMode = effectiveMode
         )
+
+        // DISABLED mode: only run baseline, skip all mutation runs
+        if (effectiveMode == VerificationMode.DISABLED) {
+            println("[mutflow] Verification mode: DISABLED - skipping mutation runs")
+            return generateSequence(0 to null as Mutation?) { null }
+                .map { (run, mutation) -> createInvocationContext(sessionId, run, mutation) }
+                .asStream()
+                .onClose { MutFlow.closeSession(sessionId) }
+        }
+
+        if (effectiveMode == VerificationMode.LENIENT) {
+            println("[mutflow] Verification mode: LENIENT - surviving mutations will not cause test failure")
+        }
 
         // Generate invocation contexts lazily
         // Each context is created AFTER the previous run completes
@@ -154,8 +172,12 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             if (session.didMutationSurvive()) {
                                 val survivedMutation = session.getActiveMutation()!!
                                 val displayName = session.getDisplayName(survivedMutation)
-                                MutFlow.endRun(sessionId)
-                                throw MutantSurvivedException(survivedMutation, displayName)
+                                if (session.getVerificationMode() == VerificationMode.STRICT) {
+                                    MutFlow.endRun(sessionId)
+                                    throw MutantSurvivedException(survivedMutation, displayName)
+                                } else {
+                                    println("[mutflow] Mutation survived (lenient): $displayName")
+                                }
                             }
                         }
                         MutFlow.endRun(sessionId)
@@ -179,6 +201,20 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
     private fun countTestMethods(testClass: Class<*>): Int {
         return testClass.methods.count { method ->
             method.isAnnotationPresent(Test::class.java)
+        }
+    }
+
+    /**
+     * Resolves the effective verification mode.
+     * The MUTFLOW_VERIFICATION_MODE environment variable takes precedence over the annotation value.
+     */
+    private fun resolveVerificationMode(annotationMode: VerificationMode): VerificationMode {
+        val envValue = System.getenv("MUTFLOW_VERIFICATION_MODE") ?: return annotationMode
+        return try {
+            VerificationMode.valueOf(envValue.uppercase())
+        } catch (e: IllegalArgumentException) {
+            println("[mutflow] WARNING: Invalid MUTFLOW_VERIFICATION_MODE value: '$envValue'. Valid values: ${VerificationMode.entries.joinToString()}. Falling back to annotation value: $annotationMode")
+            annotationMode
         }
     }
 }
