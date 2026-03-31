@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ClassTemplateInvocationContextProvider
 import org.junit.jupiter.api.extension.Extension
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler
+import java.time.Duration
 import java.util.stream.Stream
 import kotlin.streams.asStream
 
@@ -60,7 +61,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             traps = annotation.traps.toList(),
             includeTargets = annotation.includeTargets.map { it.qualifiedName!! },
             excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
-            timeoutMs = annotation.timeoutMs
+            timeout = Duration.ofMillis(annotation.timeoutMs)
         )
 
         // Generate invocation contexts lazily

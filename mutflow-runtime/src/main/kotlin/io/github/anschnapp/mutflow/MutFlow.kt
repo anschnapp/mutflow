@@ -1,5 +1,6 @@
 package io.github.anschnapp.mutflow
 
+import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
@@ -58,7 +59,7 @@ object MutFlow {
         traps: List<String> = emptyList(),
         includeTargets: List<String> = emptyList(),
         excludeTargets: List<String> = emptyList(),
-        timeoutMs: Long = 60_000
+        timeout: Duration = Duration.ofMinutes(1)
     ): SessionId {
         val id = SessionId(UUID.randomUUID())
         val session = MutFlowSession(
@@ -70,7 +71,7 @@ object MutFlow {
             traps = traps,
             includeTargets = includeTargets,
             excludeTargets = excludeTargets,
-            timeoutMs = timeoutMs
+            timeout = timeout
         )
         sessions[id] = session
         return id

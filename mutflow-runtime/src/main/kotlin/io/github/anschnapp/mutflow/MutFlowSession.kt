@@ -1,5 +1,6 @@
 package io.github.anschnapp.mutflow
 
+import java.time.Duration
 import java.util.UUID
 import kotlin.random.Random
 
@@ -23,7 +24,7 @@ class MutFlowSession internal constructor(
     private val traps: List<String> = emptyList(),
     private val includeTargets: List<String> = emptyList(),
     private val excludeTargets: List<String> = emptyList(),
-    private val timeoutMs: Long = 60_000
+    private val timeout: Duration = Duration.ofMinutes(1)
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -321,7 +322,7 @@ class MutFlowSession internal constructor(
             )
         }
 
-        val (result, _) = MutationRegistry.withSession(activeMutation = active, timeoutMs = timeoutMs) {
+        val (result, _) = MutationRegistry.withSession(activeMutation = active, timeout = timeout) {
             block()
         }
         return result
