@@ -269,6 +269,42 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 [mutflow]     (Calculator.kt:8) > → >=
 ```
 
+### Verification Mode
+
+By default, mutflow uses **strict** verification: surviving mutations fail the build. You can change this behavior per test class or globally.
+
+```kotlin
+@MutFlowTest(verificationMode = VerificationMode.STRICT)   // default — survivors fail the build
+@MutFlowTest(verificationMode = VerificationMode.LENIENT)  // survivors are reported but don't fail
+@MutFlowTest(verificationMode = VerificationMode.DISABLED) // mutation runs are skipped entirely
+```
+
+**When to use each mode:**
+- `STRICT` — Default. Use for CI pipelines where mutation coverage must be maintained.
+- `LENIENT` — Use when building up test coverage incrementally. Mutations still run and are reported in the summary, but survivors don't break the build. This lets you focus on writing regular tests first and address surviving mutations later.
+- `DISABLED` — Use when you only want fast feedback from regular tests. Only the baseline runs — no mutations are tested at all.
+
+**Environment variable override:**
+
+The `MUTFLOW_VERIFICATION_MODE` environment variable overrides the annotation value for all test classes. This enables phased CI pipelines:
+
+```bash
+# Phase 1: Fast feedback — only regular tests
+MUTFLOW_VERIFICATION_MODE=DISABLED ./gradlew test
+
+# Phase 2: Full mutation testing
+./gradlew test
+```
+
+Or for a gradual adoption workflow:
+
+```bash
+# Run mutation tests but don't block the build yet
+MUTFLOW_VERIFICATION_MODE=LENIENT ./gradlew test
+```
+
+The environment variable accepts `STRICT`, `LENIENT`, or `DISABLED` (case-insensitive). Invalid values produce a warning and fall back to the annotation value.
+
 ### Suppressing Mutations
 
 Suppression works regardless of how the class was targeted (annotation or Gradle config). mutflow provides three levels of suppression granularity:
@@ -357,6 +393,7 @@ Selection strategies (`PureRandom`, `MostLikelyRandom`, `MostLikelyStable`) and 
 - **Mutation result tracking** - Killed mutations show as PASSED (exception swallowed), survivors fail the build
 
 **Control**
+- **Verification mode** - `STRICT` (default, survivors fail), `LENIENT` (survivors reported only), `DISABLED` (skip mutations). Configurable per annotation or globally via `MUTFLOW_VERIFICATION_MODE` env var
 - **`@SuppressMutations`** - Skip mutations on specific classes or functions
 - **Comment-based line suppression** - `// mutflow:ignore` and `// mutflow:falsePositive` to skip individual lines (zero production overhead)
 - **Target filtering** - `includeTargets`/`excludeTargets` to scope mutations by class in integration tests

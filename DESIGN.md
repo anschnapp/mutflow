@@ -478,6 +478,55 @@ class CalculatorTest { ... }
 **Design rationale - fail loudly, not silently:**
 When a timeout occurs, the test **fails** rather than silently marking the mutation as killed. This ensures the developer notices and takes action (adds `// mutflow:ignore` on the affected line). Silent handling would mask slow mutation runs that accumulate over time.
 
+### 10. Verification Mode
+
+Controls how surviving mutations are handled. Three modes are available:
+
+```kotlin
+enum class VerificationMode {
+    STRICT,    // survivors cause test failure (default)
+    LENIENT,   // survivors are reported but don't fail
+    DISABLED   // mutation runs are skipped entirely
+}
+```
+
+**Per-annotation configuration:**
+```kotlin
+@MutFlowTest(verificationMode = VerificationMode.LENIENT)
+class CalculatorTest { ... }
+```
+
+**Environment variable override:**
+
+The `MUTFLOW_VERIFICATION_MODE` environment variable takes precedence over the annotation value. This enables phased CI pipelines without changing code:
+
+```bash
+MUTFLOW_VERIFICATION_MODE=DISABLED ./gradlew test   # fast: regular tests only
+MUTFLOW_VERIFICATION_MODE=LENIENT ./gradlew test     # report mutations, don't fail
+./gradlew test                                        # full strict mutation testing
+```
+
+**Resolution order:**
+1. Check `MUTFLOW_VERIFICATION_MODE` environment variable
+2. If set and valid (`STRICT`, `LENIENT`, `DISABLED`, case-insensitive): use it
+3. If set but invalid: print warning, fall back to annotation value
+4. If not set: use annotation value (default: `STRICT`)
+
+**How each mode affects the test lifecycle:**
+
+| Phase | STRICT | LENIENT | DISABLED |
+|-------|--------|---------|----------|
+| Baseline (Run 0) | Runs normally | Runs normally | Runs normally |
+| Mutation runs | All mutations tested | All mutations tested | Skipped entirely |
+| Surviving mutation | `MutantSurvivedException` thrown — test fails | Printed as warning, test passes | N/A |
+| Summary | Full report | Full report | No mutation data |
+
+**Design rationale:**
+
+The default is `STRICT` because mutflow's value proposition is catching test gaps — silently ignoring survivors would undermine that. However, real-world adoption is incremental: teams adding mutflow to an existing codebase need a way to see mutation results without blocking their build. `LENIENT` serves this purpose. `DISABLED` provides a zero-overhead escape hatch for performance-sensitive workflows (equivalent to `mutflow.enabled=false` at the Gradle level but controllable per-run without rebuilding).
+
+The environment variable override is intentional: it allows the same test code to behave differently in different pipeline stages. A team can run `DISABLED` in their fast-feedback loop, `LENIENT` in nightly builds, and `STRICT` in release pipelines — all without touching the test annotations.
+
 ## Architecture
 
 ### Module Responsibilities
@@ -839,12 +888,14 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Touch count tracking during baseline
 - Target filtering: `includeTargets`/`excludeTargets` for scoping mutations by class
 - `MutationsExhaustedException` when all mutations tested
+- `VerificationMode` enum: `STRICT`, `LENIENT`, `DISABLED`
 
 **mutflow-junit6:**
 - `@MutFlowTest` meta-annotation combining `@ClassTemplate` + `@ExtendWith`
 - `MutFlowExtension` implementing `ClassTemplateInvocationContextProvider`
 - Session lifecycle management (create, startRun, endRun, close)
 - Mutation selection at context creation for accurate display names
+- Verification mode resolution: annotation parameter with `MUTFLOW_VERIFICATION_MODE` env var override
 
 **mutflow-test-sample:**
 - Integration tests demonstrating both APIs
