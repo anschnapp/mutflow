@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.0] - 2026-04-01
+
+mutflow's first stable release. The public API (`@MutFlowTest`, `MutFlow.underTest {}`, `@MutationTarget`, Gradle DSL) is now considered stable.
+
+### Added
+- Gradle-based mutation targets -- define which classes to mutate via `mutflow { targets = listOf(...) }` in your build script, without annotating production code. Supports exact class names, package wildcards (`*`), recursive wildcards (`**`), and glob patterns. Can be combined freely with `@MutationTarget`. (#2)
+- Verification modes -- control how surviving mutations are handled with `@MutFlowTest(verificationMode = ...)`: `STRICT` (default, survivors fail the build), `LENIENT` (survivors reported but don't fail), `DISABLED` (mutation runs skipped entirely). Can be overridden globally via `MUTFLOW_VERIFICATION_MODE` environment variable for phased CI pipelines. (#3)
+- Typed `SessionId` for improved internal session identification (#6)
+- Troubleshooting section in README (JaCoCo/Kover compatibility)
+
+### Contributors
+Thanks to @rusio for the feedback that led to Gradle-based mutation targets and verification modes, and for the typed SessionId contribution.
+
 ## [0.9.0] - 2026-03-17
 ### Fixed
 - Mutation runs are now skipped when baseline tests fail - previously, failing tests were incorrectly counted as "mutation killed", making all mutations appear green

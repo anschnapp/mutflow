@@ -10,7 +10,7 @@
   <a href="https://central.sonatype.com/artifact/io.github.anschnapp.mutflow/mutflow-gradle-plugin"><img src="https://img.shields.io/maven-central/v/io.github.anschnapp.mutflow/mutflow-gradle-plugin" alt="Maven Central"></a>
 </p>
 
-> **Early Stage:** mutflow is young and still evolving. Its dual-compilation approach is built to keep production builds clean - mutations only exist in test compilation. The project hasn't seen broad adoption yet, so bug reports and feedback are very welcome!
+> mutflow uses a dual-compilation approach to keep production builds clean - mutations only exist in test compilation. The project is actively maintained and evolving. Bug reports and feedback are welcome!
 
 ## Contents
 
