@@ -647,5 +647,19 @@ mutflow compiles your sources twice - once normally (`main`) and once with mutat
 
 See [Disabling Mutation Testing](#disabling-mutation-testing) for all configuration options.
 
+### JOOQ code generation fails with mutflow
+
+If you use [JOOQ](https://www.jooq.org/) with Gradle code generation (`jooq-codegen`), mutflow's additional compilation task (`compileMutatedMainKotlin`) may fail because it doesn't depend on the `jooqCodegen` task.
+
+**Solution:** Use `tasks.withType` to ensure all Kotlin compilation tasks depend on JOOQ code generation:
+
+```kotlin
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+    dependsOn("jooqCodegen")
+}
+```
+
+> **Note:** Using `tasks.withType<KotlinCompile>` instead of `tasks.named("compileKotlin")` is important — the latter only targets standard production compilation, while `withType` matches all Kotlin compilation tasks including mutflow's.
+
 ---
 Co-developed with an AI assistant.
