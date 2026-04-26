@@ -1,5 +1,7 @@
 package io.github.anschnapp.mutflow
 
+import java.time.Duration
+import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
@@ -33,8 +35,7 @@ object MutationRegistry {
      */
     fun checkTimeout() {
         val session = currentSession ?: return
-        val deadline = session.deadlineNanos
-        if (deadline > 0 && System.nanoTime() > deadline) {
+        if (session.isExpired()) {
             throw MutationTimedOutException(
                 "Mutation timed out. This mutation likely causes an infinite loop.\n" +
                 "Add a // mutflow:ignore comment on the affected line to skip it."
@@ -125,15 +126,15 @@ object MutationRegistry {
      */
     fun <T> withSession(
         activeMutation: ActiveMutation? = null,
-        timeoutMs: Long = 0,
+        timeout: Duration? = null,
         block: () -> T
     ): Pair<T, SessionResult> {
         synchronized(lock) {
             check(currentSession == null) { "Session already active" }
-            val deadlineNanos = if (activeMutation != null && timeoutMs > 0) {
-                System.nanoTime() + timeoutMs * 1_000_000
-            } else 0L
-            currentSession = Session(activeMutation, deadlineNanos = deadlineNanos)
+            val deadline = if (activeMutation != null && timeout != null) {
+                Instant.now() + timeout
+            } else null
+            currentSession = Session(activeMutation, deadline = deadline)
             try {
                 val result = block()
                 val session = currentSession!!
@@ -161,10 +162,13 @@ object MutationRegistry {
 
     private class Session(
         val activeMutation: ActiveMutation?,
-        val deadlineNanos: Long = 0,
+        val deadline: Instant? = null,
         val discoveredPoints: MutableList<DiscoveredPoint> = Collections.synchronizedList(mutableListOf()),
         val seenPointIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    )
+    ) {
+        fun isExpired(): Boolean = deadline != null && Instant.now() > deadline
+    }
+
 }
 
 /**
