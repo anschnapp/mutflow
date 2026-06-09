@@ -979,6 +979,7 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 - Gradle plugin for easy setup
 - Smarter likelihood calculations (see below)
 - State invalidation hooks
+- Kotlin/Native support - see [DESIGN-KOTLIN-NATIVE.md](DESIGN-KOTLIN-NATIVE.md) (proposal, in progress)
 
 #### Smarter Likelihood Calculations
 
