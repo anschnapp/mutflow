@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.3] - 2026-07-04
+### Fixed
+- Equality swap operator no longer mutates null comparisons. Kotlin's null-safety operators (`?:`, `?.`) desugar to a synthesized `x == null` check, which previously produced confusing `== -> !=` mutations on code with no visible equality operator (and, for safe-calls, an always-crashing mutant). Explicit `x == null` / `x != null` are skipped too, since inverting a null check is typically an equivalent mutant with little signal.
+
 ## [1.0.0] - 2026-04-01
 
 mutflow's first stable release. The public API (`@MutFlowTest`, `MutFlow.underTest {}`, `@MutationTarget`, Gradle DSL) is now considered stable.

@@ -848,6 +848,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - In K2 IR, `==` is a single EQEQ intrinsic; `!=` is `not(EQEQ(a, b))` - two calls both with EXCLEQ origin
   - Matches EQEQ calls with EQEQ origin for `==`, and `not()` calls with EXCLEQ origin for `!=`
   - Avoids double-matching the inner EQEQ of `!=` expressions (which would create spurious mutation points)
+  - Skips null comparisons (either operand is the `null` literal). Kotlin's null-safety operators (`?:`, `?.`) desugar to a synthesized `x == null` check in IR; mutating it would be a misleading `== → !=` on code with no visible equality operator, and for safe-calls an always-crash mutant. Explicit `x == null` / `x != null` are also skipped since inverting a null check is usually an equivalent mutant or a downstream NPE (`a!!` never matched - it lowers via a `checkNotNull` intrinsic, not EQEQ)
 - `BooleanInversionOperator` adds negation to boolean expressions
   - `expr` → `!expr` (1 variant: wraps in `Boolean.not()`)
   - Matches boolean-returning `IrCall` nodes with null or `GET_PROPERTY` origin (function calls and property accesses)
