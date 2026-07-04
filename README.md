@@ -54,10 +54,26 @@ Add the mutflow Gradle plugin to your `build.gradle.kts`:
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "2.3.0"
+    kotlin("jvm") version "2.4.0"
     id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 ```
+
+### Kotlin Version Compatibility
+
+mutflow tracks the newest Kotlin release and updates frequently. Because compiler
+plugins are tightly coupled to the compiler's internal APIs, each mutflow release
+requires the Kotlin version it was built against - it will not work with older
+Kotlin versions in your project. If you are on an older Kotlin, use the matching
+older mutflow release:
+
+| mutflow | Kotlin |
+|---------|--------|
+| 1.1.0+ | 2.4.x |
+| up to 1.0.3 | 2.2.x - 2.3.x |
+
+A mismatch typically fails with an obscure compiler error (e.g. `NoClassDefFoundError`
+during compilation) - if you see that, check your Kotlin version first.
 
 Once available, the plugin automatically:
 - Adds `mutflow-core` to your implementation dependencies (for `@MutationTarget` annotation)

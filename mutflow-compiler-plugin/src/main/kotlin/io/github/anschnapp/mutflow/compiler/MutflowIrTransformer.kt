@@ -473,11 +473,11 @@ class MutflowIrTransformer(
             call.arguments[6] = builder.irInt(occurrenceOnLine)
         }
 
-        // Generate when expression with inline check() calls - no temporary variable
+        // Generate when expression with inline check() calls - no temporary variable.
         return IrWhenImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
-            type = pluginContext.irBuiltIns.booleanType,
+            type = original.type,
             origin = null
         ).apply {
             variants.forEachIndexed { index, variant ->
