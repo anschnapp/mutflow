@@ -1,6 +1,6 @@
 plugins {
     kotlin("jvm") apply false
-    id("com.vanniktech.maven.publish") version "0.36.0" apply false
+    id("com.vanniktech.maven.publish") version "0.37.0" apply false
     id("com.github.ben-manes.versions") version "0.54.0"
 }
 
