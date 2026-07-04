@@ -147,4 +147,11 @@ class Calculator {
     fun passThroughBool(flag: Boolean): Boolean {
         return flag
     }
+
+    // --- Double arithmetic (regression: mutation when-wrapper must keep the
+    // expression's type; a Boolean-typed wrapper truncated fractional Doubles) ---
+
+    fun applyRate(amount: Double, rate: Double): Double {
+        return amount * rate
+    }
 }
