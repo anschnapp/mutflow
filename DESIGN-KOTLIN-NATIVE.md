@@ -1,6 +1,9 @@
 # mutflow on Kotlin/Native - Design Proposal
 
-> **Status: PROPOSAL / IN PROGRESS - nothing described here is implemented or shipped.**
+> **Status: PROPOSAL / IN PROGRESS - nothing described here is shipped.**
+>
+> **Phase 0 (spike) passed on 2026-07-04**: the existing compiler plugin works
+> unmodified on the Kotlin/Native backend. See [Phase 0 Spike Results](#phase-0-spike-results).
 >
 > This document describes how mutflow will support Kotlin/Native targets. It is a delta
 > document: it only covers what differs from the main [DESIGN.md](DESIGN.md). Everything
@@ -36,8 +39,8 @@ The compiler plugin layer is backend-agnostic and carries over unchanged:
   the same way.)
 - All mutation operators match on FIR2IR output (EQEQ origins, ANDAND/OROR `IrWhen`
   structures, intrinsic comparison calls) and should behave identically under the
-  Native backend. **This is the riskiest assumption and is gated by a spike (see
-  Phased Plan).**
+  Native backend. **This was the riskiest assumption; the Phase 0 spike confirmed it
+  (see Phase 0 Spike Results below).**
 - Target scoping (`@MutationTarget`, Gradle target patterns), `@SuppressMutations`,
   comment-based line suppression, and timeout check injection are compile-time and
   backend-neutral.
@@ -202,17 +205,84 @@ This is acceptable because:
 
 JVM stays the flagship interactive experience; Native is the platform reach.
 
+## Phase 0 Spike Results
+
+> Executed 2026-07-04 on the `kotlin-native` branch. The spike project lives in
+> `spike/` (a standalone Gradle build, not included in the root build, same pattern
+> as `example/`). It is throwaway code and will not be merged; only the findings
+> below are the deliverable.
+
+**Verdict: PASSED. The existing `mutflow-compiler-plugin` (built against Kotlin
+2.4.0) transforms a Kotlin/Native `linuxX64` compilation completely unmodified.**
+
+Setup that was validated:
+
+- **Plugin wiring without the Gradle plugin**: the plugin jar (from mavenLocal) is
+  passed to the native compiler via `-Xplugin=<jar>` in `freeCompilerArgs` on
+  `KotlinNativeCompile` tasks. The `CompilerPluginRegistrar` / ServiceLoader
+  mechanism works identically to the JVM. No plugin options were needed
+  (annotation-based targeting).
+- **Stubbed registry by FQN substitution**: the plugin resolves
+  `io.github.anschnapp.mutflow.MutationRegistry` and `@MutationTarget` purely by
+  fully qualified name (`pluginContext.referenceClass`) and never links against
+  mutflow-core classes. A hand-written native klib with matching FQNs and
+  signatures (reading `MUTFLOW_ACTIVE_MUTATION` via `platform.posix.getenv`) fully
+  satisfies the injected call sites. This de-risks Phase 2: any KMP `mutflow-core`
+  that preserves FQNs and signatures will be picked up without compiler plugin
+  changes.
+
+Observed behavior, all identical to the JVM path:
+
+- `x > 0` in a `@MutationTarget` class produced the same 3 mutation points as on
+  JVM: relational (`>` with variants `>=,<`), constant boundary (`0` with variants
+  `1,-1`), and boolean return (variants `true,false`). Point IDs, source locations,
+  and variant metadata came through unchanged.
+- **No backend crashes.** The lowering-conflict class of problems seen on JVM in
+  multi-plugin setups (ConstEvaluationLowering, FunctionReferenceLowering) did not
+  appear under the Native backend's lowering pipeline.
+- **Env-var activation and exit-code kill detection work**: baseline run (no env
+  var) discovered points and passed; each of the 6 variants, activated via
+  `MUTFLOW_ACTIVE_MUTATION=<pointId>:<variantIndex>`, was killed by the test suite
+  (nonzero exit code of `test.kexe`), and in each case the *expected* boundary test
+  was the one that failed. This validates the process-per-mutation orchestration
+  model end to end at small scale.
+
+Findings to carry into later phases:
+
+- **Mutations land in the main klib.** The spike applies the plugin to the main
+  compilation; there is no Native equivalent of the JVM dual-build (`mutatedMain`)
+  yet. Deciding whether/how to keep mutations out of production binaries (e.g.,
+  only instrument test-linked compilations, or accept instrumented klibs for test
+  builds only) is a Phase 3 Gradle plugin concern.
+- The spike bypasses `MutFlow.underTest {}` entirely (whole process = one session).
+  The `underTest {}` semantics question from Open Questions remains for Phase 2.
+- First native build downloads the Kotlin/Native toolchain to `~/.konan`
+  (one-time, several minutes); subsequent compile+link cycles for the tiny spike
+  were seconds, consistent with the compile-once economics this design relies on.
+
 ## Phased Plan
 
 Each phase keeps the JVM path green and releasable.
 
-1. **Phase 0 - Spike (gate for everything else):** on a branch, apply the existing
-   compiler plugin to a Native test compilation with a stubbed registry (hardcoded
-   `check()` reading an env var). Answers the riskiest question: does the IR
-   transformation survive the Native backend? If this fails badly, stop here cheaply.
-2. **Phase 1 - KMP conversion:** `mutflow-core`/`mutflow-runtime`/`mutflow-annotations`
-   become multiplatform modules. Pure structural refactor, JVM behavior identical,
-   verified against the full regression harness. Released on its own as a canary.
+1. **Phase 0 - Spike (gate for everything else): DONE, passed (see above).** On a
+   branch, apply the existing compiler plugin to a Native test compilation with a
+   stubbed registry (hardcoded `check()` reading an env var). Answers the riskiest
+   question: does the IR transformation survive the Native backend? If this fails
+   badly, stop here cheaply.
+2. **Phase 1 - KMP conversion: DONE on the `kotlin-native` branch (2026-07-04),
+   canary release pending.** `mutflow-core`/`mutflow-runtime`/`mutflow-annotations`
+   are multiplatform modules with a `jvm()` target only (native targets follow in
+   Phase 2). All logic lives in `commonMain`; the JVM-specific primitives
+   (`synchronized`, `ConcurrentHashMap`, `System.nanoTime`/`currentTimeMillis`,
+   `UUID`, thread IDs) sit behind `internal expect fun` helpers whose JVM actuals
+   are the pre-KMP code verbatim (`Platform.jvm.kt` / `MutFlowPlatform.jvm.kt`).
+   Only deliberate API change: `SessionId` wraps a `String` (still a UUID string
+   on JVM) instead of `java.util.UUID`, so the type can live in common code.
+   Verified: full test suite, `example/` project, and the Spring Boot monorepo
+   produce identical results with KMP artifacts vs master artifacts (the monorepo
+   comparison ran on Kotlin 2.4.0; its usual 2.2.21 setup fails with *both*
+   artifact sets since the Kotlin 2.4.0 bump - a pre-existing compatibility
+   issue independent of this conversion).
 3. **Phase 2 - Native runtime:** native targets for core/runtime, discovery and result
    file serialization, env-var activation.
 4. **Phase 3 - Gradle orchestration:** the process-per-mutation task, exit-code

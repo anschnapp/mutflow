@@ -1,7 +1,8 @@
 package io.github.anschnapp.mutflow
 
-import java.util.Collections
-import java.util.concurrent.ConcurrentHashMap
+// kotlin.concurrent.Volatile is the multiplatform replacement for kotlin.jvm.Volatile.
+// On the JVM target it compiles to the exact same JVM `volatile` field modifier.
+import kotlin.concurrent.Volatile
 
 /**
  * Central registry for mutation point tracking and activation.
@@ -18,7 +19,6 @@ object MutationRegistry {
 
     @Volatile
     private var currentSession: Session? = null
-    private val lock = Any()
 
     /**
      * Called by compiler-injected code at the top of each loop body.
@@ -34,7 +34,7 @@ object MutationRegistry {
     fun checkTimeout() {
         val session = currentSession ?: return
         val deadline = session.deadlineNanos
-        if (deadline > 0 && System.nanoTime() > deadline) {
+        if (deadline > 0 && nanoTime() > deadline) {
             throw MutationTimedOutException(
                 "Mutation timed out. This mutation likely causes an infinite loop.\n" +
                 "Add a // mutflow:ignore comment on the affected line to skip it."
@@ -137,10 +137,14 @@ object MutationRegistry {
         onSessionEnd: (SessionResult) -> Unit = {},
         block: () -> T
     ): Pair<T, SessionResult> {
-        synchronized(lock) {
+        // withRegistryLock is a regular (non-inline) function on some targets, so a
+        // non-local `return` out of the lambda is not allowed. The lambda's last
+        // expression is the return value instead - same behavior as the previous
+        // `synchronized(lock) { ... return ... }` block.
+        return withRegistryLock {
             check(currentSession == null) { "Session already active" }
             val deadlineNanos = if (activeMutation != null && timeoutMs > 0) {
-                System.nanoTime() + timeoutMs * 1_000_000
+                nanoTime() + timeoutMs * 1_000_000
             } else 0L
             val session = Session(activeMutation, deadlineNanos = deadlineNanos)
             currentSession = session
@@ -174,8 +178,8 @@ object MutationRegistry {
     private class Session(
         val activeMutation: ActiveMutation?,
         val deadlineNanos: Long = 0,
-        val discoveredPoints: MutableList<DiscoveredPoint> = Collections.synchronizedList(mutableListOf()),
-        val seenPointIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+        val discoveredPoints: MutableList<DiscoveredPoint> = threadSafeMutableListOf(),
+        val seenPointIds: MutableSet<String> = threadSafeMutableSetOf()
     )
 }
 

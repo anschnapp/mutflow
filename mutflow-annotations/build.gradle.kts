@@ -1,10 +1,24 @@
 plugins {
-    kotlin("jvm")
+    // Switched from kotlin("jvm") to kotlin("multiplatform") for the Native effort.
+    // Phase 1 ships the JVM target only; native targets are added in Phase 2.
+    // For JVM consumers nothing changes: the published root artifact carries Gradle
+    // module metadata that transparently redirects them to the -jvm variant.
+    kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
 
-dependencies {
-    testImplementation(kotlin("test"))
+kotlin {
+    jvm()
+
+    // Both annotations are pure Kotlin and live entirely in commonMain,
+    // so there are no jvmMain sources and no dependencies here.
+}
+
+// The multiplatform plugin creates per-target test tasks (jvmTest) plus an
+// `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.
+// This alias keeps `./gradlew test` working across the whole build.
+tasks.register("test") {
+    dependsOn("jvmTest")
 }
 
 mavenPublishing {

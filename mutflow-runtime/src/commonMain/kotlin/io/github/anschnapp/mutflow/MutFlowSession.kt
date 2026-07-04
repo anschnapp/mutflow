@@ -1,12 +1,15 @@
 package io.github.anschnapp.mutflow
 
-import java.util.UUID
 import kotlin.random.Random
 
 /**
  * Identifier for [MutFlowSession] instances.
+ *
+ * Holds a plain string instead of java.util.UUID so the type can live in
+ * common code; on the JVM the value is still a random UUID string
+ * (see Platform.jvm.kt).
  */
-data class SessionId(val value: UUID)
+data class SessionId(val value: String)
 
 /**
  * Holds all mutation testing state for a single test class execution.
@@ -450,7 +453,7 @@ class MutFlowSession internal constructor(
 
     private fun getOrCreateSessionSeed(): Long {
         if (sessionSeed == null) {
-            sessionSeed = System.currentTimeMillis() xor System.nanoTime()
+            sessionSeed = generateSeed()
             println("[mutflow] Session $id - Generated seed: $sessionSeed")
         }
         return sessionSeed!!

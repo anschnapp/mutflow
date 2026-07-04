@@ -1,7 +1,5 @@
 package io.github.anschnapp.mutflow
 
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
 /**
@@ -35,7 +33,7 @@ object MutFlow {
     // Maps thread ID to session ID, set in startRun, cleared in endRun.
     // Allows parameterless underTest() to find the right session when
     // multiple test classes run in parallel on different threads.
-    private val threadToSession = ConcurrentHashMap<Long, SessionId>()
+    private val threadToSession = threadSafeMutableMapOf<Long, SessionId>()
 
     // ==================== Session Management (for JUnit extension) ====================
 
@@ -61,7 +59,7 @@ object MutFlow {
         timeoutMs: Long = 60_000,
         verificationMode: VerificationMode = VerificationMode.STRICT
     ): SessionId {
-        val id = SessionId(UUID.randomUUID())
+        val id = SessionId(randomSessionIdValue())
         val session = MutFlowSession(
             id = id,
             selection = selection,
@@ -112,7 +110,7 @@ object MutFlow {
     fun startRun(sessionId: SessionId, run: Int, mutation: Mutation? = null) {
         val session = sessions[sessionId]
             ?: error("Session not found: $sessionId")
-        threadToSession[Thread.currentThread().id] = sessionId
+        threadToSession[currentThreadId()] = sessionId
         session.startRun(run, mutation)
     }
 
@@ -122,7 +120,7 @@ object MutFlow {
      */
     fun endRun(sessionId: SessionId) {
         sessions[sessionId]?.endRun()
-        threadToSession.remove(Thread.currentThread().id)
+        threadToSession.remove(currentThreadId())
     }
 
     /**
@@ -151,7 +149,7 @@ object MutFlow {
      * @throws MutationsExhaustedException if all mutations have been tested
      */
     fun <T> underTest(block: () -> T): T {
-        val sessionId = threadToSession[Thread.currentThread().id]
+        val sessionId = threadToSession[currentThreadId()]
             ?: error("No active MutFlow session on this thread. Use @MutFlowTest annotation or call underTest(run, selection, shuffle) directly.")
 
         val session = sessions[sessionId]
@@ -333,7 +331,7 @@ object MutFlow {
 
     private fun legacyGetOrCreateGlobalSeed(): Long {
         if (legacyGlobalSeed == null) {
-            legacyGlobalSeed = System.currentTimeMillis() xor System.nanoTime()
+            legacyGlobalSeed = generateSeed()
             println("[mutflow] Generated seed: $legacyGlobalSeed")
         }
         return legacyGlobalSeed!!

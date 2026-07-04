@@ -1,11 +1,34 @@
 plugins {
-    kotlin("jvm")
+    // Switched from kotlin("jvm") to kotlin("multiplatform") for the Native effort.
+    // Phase 1 ships the JVM target only; native targets are added in Phase 2.
+    kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
 
-dependencies {
-    api(project(":mutflow-core"))
-    testImplementation(kotlin("test"))
+kotlin {
+    jvm()
+
+    sourceSets {
+        // Session/selection/shuffle logic is pure Kotlin and lives in commonMain;
+        // JVM-specific primitives (UUID, thread IDs, ConcurrentHashMap, system
+        // clocks) sit behind expect/actual functions - see Platform.kt / Platform.jvm.kt.
+        commonMain.dependencies {
+            api(project(":mutflow-core"))
+        }
+        // Tests stay JVM-only for now: they use backtick-with-spaces test names,
+        // which Kotlin/Native does not support, so they cannot move to commonTest
+        // as-is when native targets arrive in Phase 2.
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+        }
+    }
+}
+
+// The multiplatform plugin creates per-target test tasks (jvmTest) plus an
+// `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.
+// This alias keeps `./gradlew test` working across the whole build.
+tasks.register("test") {
+    dependsOn("jvmTest")
 }
 
 mavenPublishing {
