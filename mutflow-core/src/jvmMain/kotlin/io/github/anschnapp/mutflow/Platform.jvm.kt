@@ -20,3 +20,13 @@ internal actual fun <E> threadSafeMutableListOf(): MutableList<E> =
 
 internal actual fun <E> threadSafeMutableSetOf(): MutableSet<E> =
     ConcurrentHashMap.newKeySet()
+
+// The two actuals below exist to satisfy the expect declarations for the JVM
+// target; the JVM orchestration path (JUnit extension) does not use them.
+// Only the Native path reads env vars and writes discovery/result files.
+
+internal actual fun getEnvVar(name: String): String? = System.getenv(name)
+
+internal actual fun writeTextFile(path: String, content: String) {
+    java.io.File(path).writeText(content)
+}

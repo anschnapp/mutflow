@@ -149,6 +149,11 @@ object MutFlow {
      * @throws MutationsExhaustedException if all mutations have been tested
      */
     fun <T> underTest(block: () -> T): T {
+        // Native orchestration path: one process = one run, driven by env
+        // vars (see ProcessRun.kt). currentProcessRun() is hardwired to null
+        // on the JVM, so everything below is untouched there.
+        currentProcessRun()?.let { return it.underTest(block) }
+
         val sessionId = threadToSession[currentThreadId()]
             ?: error("No active MutFlow session on this thread. Use @MutFlowTest annotation or call underTest(run, selection, shuffle) directly.")
 

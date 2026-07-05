@@ -64,27 +64,17 @@ dependencyResolutionManagement {
 }
 
 // ----------------------------------------------------------------------------
-// TEACHING NOTE: the two subprojects
+// TEACHING NOTE: the single subproject
 // ----------------------------------------------------------------------------
-// :stub-registry - a tiny Kotlin/Native library (klib) that provides fake
-//                  stand-ins for io.github.anschnapp.mutflow.MutationRegistry
-//                  and @MutationTarget. The compiler plugin resolves these
-//                  purely BY FULLY QUALIFIED NAME (see MutflowIrTransformer:
-//                  FqName("io.github.anschnapp.mutflow.MutationRegistry")),
-//                  so any native-compiled class with the right FQN and
-//                  signatures satisfies it. This is the "stubbed registry"
-//                  from Phase 0 of DESIGN-KOTLIN-NATIVE.md.
+// :app - the code under test: one @MutationTarget class, one kotlin-test
+//        suite using MutFlow.underTest {}, and the build logic that forces
+//        the mutflow compiler plugin onto the Kotlin/Native compilation.
 //
-// :app           - the code under test: one @MutationTarget class, one
-//                  kotlin-test suite, and the build logic that forces the
-//                  existing (unmodified!) mutflow compiler plugin onto the
-//                  Kotlin/Native compilation.
-//
-// Why two projects instead of one? On the JVM path, MutationRegistry always
-// comes from a separate artifact (mutflow-core) on the compile classpath.
-// Mirroring that here (stub as a separate klib dependency) keeps the spike
-// faithful and avoids betting on whether `pluginContext.referenceClass` can
-// resolve symbols from the module currently being compiled.
+// Phase 0 had a second subproject here, :stub-registry, a hand-written fake
+// MutationRegistry klib that proved the compiler plugin resolves the registry
+// purely by fully qualified name. Phase 2 made the REAL mutflow-core/runtime
+// multiplatform, so the app now consumes the genuine artifacts from
+// mavenLocal and the stub is gone (see git history of the kotlin-native
+// branch if you want to dig it up).
 // ----------------------------------------------------------------------------
-include(":stub-registry")
 include(":app")

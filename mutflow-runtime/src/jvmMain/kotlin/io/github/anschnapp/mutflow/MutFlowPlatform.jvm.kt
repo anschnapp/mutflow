@@ -13,3 +13,8 @@ internal actual fun currentThreadId(): Long = Thread.currentThread().id
 internal actual fun <K, V> threadSafeMutableMapOf(): MutableMap<K, V> = ConcurrentHashMap()
 
 internal actual fun generateSeed(): Long = System.currentTimeMillis() xor System.nanoTime()
+
+// Hardwired null: on the JVM the JUnit extension owns the run loop, and the
+// Native orchestration env vars (MUTFLOW_DISCOVERY_FILE etc.) must not change
+// JVM behavior. See the expect declaration for details.
+internal actual fun currentProcessRun(): ProcessRun? = null

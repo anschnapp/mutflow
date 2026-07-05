@@ -10,6 +10,15 @@ plugins {
 kotlin {
     jvm()
 
+    // Phase 2 native targets. linuxX64 is fully buildable and testable on the
+    // Linux dev machine; mingwX64 (Windows) cross-compiles from Linux, which
+    // gives compile-time proof without a Windows host (running its tests would
+    // need one). Apple targets are deliberately absent: a macOS host is
+    // required even to produce their klibs, so they follow once a Mac/CI
+    // is available - adding them is just more one-liners here.
+    linuxX64()
+    mingwX64()
+
     // Both annotations are pure Kotlin and live entirely in commonMain,
     // so there are no jvmMain sources and no dependencies here.
 }

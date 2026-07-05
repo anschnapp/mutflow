@@ -8,16 +8,29 @@ plugins {
 kotlin {
     jvm()
 
+    // Phase 2 native targets - must match mutflow-core's target set exactly:
+    // a KMP library can only depend on another KMP library if the consumer's
+    // targets are a subset of the producer's. See mutflow-core's build file
+    // for why this exact pair (linux verified, mingw compile-proven).
+    linuxX64()
+    mingwX64()
+
     sourceSets {
         // Session/selection/shuffle logic is pure Kotlin and lives in commonMain;
         // JVM-specific primitives (UUID, thread IDs, ConcurrentHashMap, system
-        // clocks) sit behind expect/actual functions - see Platform.kt / Platform.jvm.kt.
+        // clocks) sit behind expect/actual functions - see MutFlowPlatform.kt /
+        // MutFlowPlatform.jvm.kt.
         commonMain.dependencies {
             api(project(":mutflow-core"))
         }
-        // Tests stay JVM-only for now: they use backtick-with-spaces test names,
-        // which Kotlin/Native does not support, so they cannot move to commonTest
-        // as-is when native targets arrive in Phase 2.
+        // Phase 2: ProcessRun tests are pure common code (fake writers, no file
+        // IO) and live in commonTest with plain function names, so they run on
+        // every target. The pre-existing MutFlow tests stay in jvmTest: they
+        // use backtick-with-spaces test names, which Kotlin/Native does not
+        // support.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
         jvmTest.dependencies {
             implementation(kotlin("test"))
         }

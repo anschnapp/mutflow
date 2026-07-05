@@ -9,8 +9,9 @@ import io.github.anschnapp.mutflow.MutationTarget
  *  - RelationalComparisonOperator: 2 variants (>= boundary, < flip)
  *  - ConstantBoundaryOperator on the 0: 2 variants (1, -1)
  *
- * If the spike works, running the test binary WITHOUT env var prints these
- * discoveries via the stub registry, and running it WITH e.g.
+ * Phase 2: running the test binary with MUTFLOW_DISCOVERY_FILE=<path> makes
+ * the real native mutflow-core collect these points (plus touch counts) into
+ * the file, and running it with e.g.
  * MUTFLOW_ACTIVE_MUTATION=spike.Calculator_0:0 makes isPositive(0) return
  * true (mutated to x >= 0) and the test suite fail - which is the "mutation
  * killed" signal on the native path (exit-code inversion happens later, in

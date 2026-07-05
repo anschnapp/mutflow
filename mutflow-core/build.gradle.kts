@@ -8,6 +8,23 @@ plugins {
 kotlin {
     jvm()
 
+    // Phase 2 native targets. linuxX64 is fully buildable and testable on the
+    // Linux dev machine; mingwX64 (Windows) cross-compiles from Linux, which
+    // gives compile-time proof without a Windows host (running its tests would
+    // need one). Apple targets are deliberately absent: a macOS host is
+    // required even to produce their klibs, so they follow once a Mac/CI is
+    // available - adding them is just more one-liners here.
+    //
+    // The Kotlin Gradle plugin's default hierarchy template automatically
+    // creates shared nativeMain/nativeTest source sets above these targets,
+    // which is where the posix-based actuals in src/nativeMain live. The
+    // compiler "commonizes" platform.posix across the declared targets, so
+    // nativeMain only sees POSIX API that exists on BOTH linux and mingw -
+    // a compile error there means a Windows portability problem was caught
+    // early.
+    linuxX64()
+    mingwX64()
+
     sourceSets {
         // Registry logic lives in commonMain; the few JVM-specific primitives
         // (synchronized, ConcurrentHashMap, System.nanoTime) sit behind
@@ -15,9 +32,14 @@ kotlin {
         commonMain.dependencies {
             api(project(":mutflow-annotations"))
         }
-        // Tests stay JVM-only for now: they use backtick-with-spaces test names,
-        // which Kotlin/Native does not support, so they cannot move to commonTest
-        // as-is when native targets arrive in Phase 2.
+        // Phase 2: tests that are pure common code (JSON serialization) live in
+        // commonTest with plain function names, so they run on every target
+        // (jvmTest, linuxX64Test, ...). The pre-existing registry tests stay in
+        // jvmTest: they use backtick-with-spaces test names, which
+        // Kotlin/Native does not support.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
         jvmTest.dependencies {
             implementation(kotlin("test"))
         }

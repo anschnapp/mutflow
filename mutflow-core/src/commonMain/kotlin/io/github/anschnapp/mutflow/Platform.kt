@@ -36,3 +36,20 @@ internal expect fun <E> threadSafeMutableListOf(): MutableList<E>
  * exactly once per element under concurrency).
  */
 internal expect fun <E> threadSafeMutableSetOf(): MutableSet<E>
+
+/**
+ * Reads an environment variable, or null if unset.
+ *
+ * Used by the Native orchestration path (MUTFLOW_ACTIVE_MUTATION etc.).
+ * JVM: System.getenv. Native: platform.posix.getenv.
+ */
+internal expect fun getEnvVar(name: String): String?
+
+/**
+ * Writes [content] to the file at [path], replacing any existing content.
+ *
+ * Used by the Native path to persist discovery/result files
+ * (see MutflowFiles.kt). The parent directory must already exist -
+ * the Gradle orchestrator creates it before launching the test binary.
+ */
+internal expect fun writeTextFile(path: String, content: String)

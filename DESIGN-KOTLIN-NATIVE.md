@@ -5,6 +5,11 @@
 > **Phase 0 (spike) passed on 2026-07-04**: the existing compiler plugin works
 > unmodified on the Kotlin/Native backend. See [Phase 0 Spike Results](#phase-0-spike-results).
 >
+> **Phase 2 (native runtime) done on 2026-07-05**: mutflow-annotations/core/runtime
+> build as native klibs (linuxX64 + mingwX64), `MutFlow.underTest {}` works in
+> commonTest, and the env-var/file contract below is implemented and verified
+> end-to-end against the real artifacts. See [Phase 2 Results](#phase-2-results).
+>
 > This document describes how mutflow will support Kotlin/Native targets. It is a delta
 > document: it only covers what differs from the main [DESIGN.md](DESIGN.md). Everything
 > not mentioned here (mutation operators, discovery model, selection strategies, traps,
@@ -70,17 +75,21 @@ plugin, and the process boundary becomes the run boundary:
 A `mutflowNativeTest`-style task orchestrates:
 
 ```
-1. Baseline:   exec test binary with MUTFLOW_MODE=discovery
-               -> binary runs all tests, registry collects points + touch counts
-               -> on exit, registry serializes to build/mutflow/discovery.json
+1. Baseline:   exec test binary with MUTFLOW_DISCOVERY_FILE=build/mutflow/discovery.json
+               -> binary runs all tests; every underTest block runs in a discovery
+                  session collecting points + touch counts
+               -> the file is rewritten after each underTest block (idempotent
+                  overwrite: no shutdown hook needed - Native has no reliable JVM-style
+                  shutdown hook - and a crash mid-suite still leaves a valid file)
 
 2. Selection:  Gradle task reads discovery.json and runs mutation selection
                (same mutflow-runtime code, executed in the Gradle JVM process)
 
 3. Loop:       for each selected mutation:
                exec test binary with MUTFLOW_ACTIVE_MUTATION=<pointId>:<variantIndex>
-               -> binary activates that one mutation at startup, runs all tests once,
-                  writes a result file (which test failed, if any), exits
+               (optionally MUTFLOW_RESULT_FILE=<path>, MUTFLOW_TIMEOUT_MS=<n>)
+               -> binary activates that one mutation inside every underTest block,
+                  runs all tests once, writes a small result file, exits
 
 4. Verdict:    exit code inversion at the Gradle level:
                - binary exits nonzero -> a test failed -> mutation KILLED (good)
@@ -119,13 +128,33 @@ This is a simplification, not a workaround.
   principle ("never report survivors from a partial suite") still applies; the Native
   mechanism is open (likely: compare executed test count between baseline and mutation
   runs, or detect test filtering flags passed to the binary).
-- **`underTest {}` resolution**: with one mutation per process there is no run counter
-  and no session to look up. The parameterless API likely reads process-global state
-  initialized from the env var at startup. Semantics to be confirmed in the spike.
 - **Traps and configuration**: `@MutFlowTest(traps = [...])` is a JUnit annotation.
   On the Native path, traps, run limits, and target filtering need a home in the
   Gradle DSL (e.g., `mutflow { traps = listOf(...) }`) and/or an `expect` annotation
   that actualizes to the JUnit machinery on JVM and to metadata on Native.
+
+### `underTest {}` resolution (resolved in Phase 2)
+
+`mutflow-runtime` gained an internal `ProcessRun` model: one instance per process,
+resolved lazily from the environment on the first `underTest {}` call. The
+parameterless `MutFlow.underTest {}` consults `currentProcessRun()` first - an
+expect/actual that is hardwired to `null` on the JVM (so the JUnit session machinery
+and JVM behavior are untouched, and the orchestration env vars are deliberately
+ignored there) and never null on Native:
+
+- **Inactive** (no MUTFLOW_* vars): `underTest` is a transparent pass-through, so
+  plain un-orchestrated `:linuxX64Test` runs behave as if mutflow were absent.
+- **Discovery** (`MUTFLOW_DISCOVERY_FILE`): each `underTest` block runs in its own
+  registry session (same as the JVM baseline - that is what makes touch counts mean
+  "number of underTest blocks that hit the point"), accumulates into process-global
+  state, and rewrites the discovery file.
+- **Mutation** (`MUTFLOW_ACTIVE_MUTATION`): each `underTest` block runs a session
+  with the mutation active and the `MUTFLOW_TIMEOUT_MS` deadline armed; a killing
+  assertion propagates out and fails the binary (the kill signal). If
+  `MUTFLOW_RESULT_FILE` is set, a result JSON is (re)written after every block with
+  two flags the exit code cannot express: `touched` (was the mutated point reached
+  at all - distinguishes "survived" from "mutation never executed") and `timedOut`
+  (deadline hit, likely an infinite loop; reported as TIMED_OUT instead of KILLED).
 
 ## Test Authoring in commonTest
 
@@ -175,7 +204,9 @@ inherits the platform's own boundaries and covers everything inside them.
 
 | Target | Status |
 |---|---|
-| `linuxX64`, `macosX64`, `macosArm64`, `mingwX64` | Planned: straightforward (exec binary on build host) |
+| `linuxX64` | **Done (Phase 2)**: runtime klibs build; unit tests and the end-to-end verification run on the Linux dev machine |
+| `mingwX64` | **Declared (Phase 2)**: klib cross-compiles from Linux, which proves the commonized posix API usage compiles for Windows; an actual test run needs a Windows host (CI, pre-release) |
+| `macosX64`, `macosArm64` | Planned: same model; a macOS host is required even to produce the klibs, so these wait for a Mac/CI (adding them is a build-file one-liner per module) |
 | Apple simulators (`iosSimulatorArm64`, `iosX64`, `watchosSimulatorArm64`, ...) | Planned: same model; env vars need the `SIMCTL_CHILD_` prefix to reach the simulated process |
 | iOS/watchOS/tvOS device targets, Android Native | Out of scope: no standard Gradle test execution exists for these |
 | JS / Wasm (Node or browser) | Not part of this work. Node could reuse the pattern later; browser lacks env vars and file IO and needs a different design |
@@ -260,6 +291,46 @@ Findings to carry into later phases:
   (one-time, several minutes); subsequent compile+link cycles for the tiny spike
   were seconds, consistent with the compile-once economics this design relies on.
 
+## Phase 2 Results
+
+> Executed 2026-07-05 on the `kotlin-native` branch, on top of the Phase 1 KMP
+> conversion.
+
+**Verdict: the real mutflow runtime works on Kotlin/Native.** The Phase 0 stub
+registry is gone; the reworked `spike/` consumes the genuine
+`mutflow-annotations`/`mutflow-core`/`mutflow-runtime` klibs from mavenLocal and the
+unmodified compiler plugin, and tests use the multiplatform `MutFlow.underTest {}`
+exactly as sketched in "Test Authoring in commonTest".
+
+What was built:
+
+- **Native targets** `linuxX64` + `mingwX64` on the three runtime-side modules. All
+  native actuals live in a shared `nativeMain` source set (commonized
+  `platform.posix` for getenv/file IO); they are drastically simpler than the JVM
+  ones because the per-process model has no concurrency (plain collections, no lock).
+- **Env-var contract** (the process interface Phase 3's Gradle task will drive):
+  `MUTFLOW_DISCOVERY_FILE`, `MUTFLOW_ACTIVE_MUTATION=<pointId>:<variantIndex>`,
+  `MUTFLOW_RESULT_FILE` (optional), `MUTFLOW_TIMEOUT_MS` (optional, default 60000).
+  No vars set = inactive pass-through. On the JVM these vars are deliberately
+  ignored (`currentProcessRun()` is hardwired null there); JVM behavior verified
+  unchanged via the full test suite and the `example/` project.
+- **File serialization** in `mutflow-core` (`MutflowFiles`): hand-rolled,
+  dependency-free JSON with a `formatVersion` field for plugin/runtime version-skew
+  detection. Discovery file: points with variant metadata + touch counts, in
+  discovery order. Result file: `touched` + `timedOut` flags per mutation run.
+  Builders are pure string functions, unit-tested in commonTest on all targets.
+
+End-to-end verification against the reworked spike (linuxX64):
+
+- Plain `test.kexe` run without env vars: green (inactive mode).
+- Discovery run: same 3 mutation points as Phase 0 and as the JVM path (relational
+  `>`, constant `0`, boolean return), each with touchCount 4 (all 4 tests hit them).
+- All 6 variants activated via env var: each killed (nonzero exit) by exactly the
+  expected boundary test, result file `touched:true`.
+- Bogus mutation id: exit 0 (survives, correctly) with `touched:false` - the signal
+  that lets the orchestrator flag "mutation never executed" instead of a plain
+  survivor.
+
 ## Phased Plan
 
 Each phase keeps the JVM path green and releasable.
@@ -283,16 +354,16 @@ Each phase keeps the JVM path green and releasable.
    comparison ran on Kotlin 2.4.0; its usual 2.2.21 setup fails with *both*
    artifact sets since the Kotlin 2.4.0 bump - a pre-existing compatibility
    issue independent of this conversion).
-3. **Phase 2 - Native runtime:** native targets for core/runtime, discovery and result
-   file serialization, env-var activation.
+3. **Phase 2 - Native runtime: DONE on the `kotlin-native` branch (2026-07-05),
+   see Phase 2 Results below.** Native targets for annotations/core/runtime,
+   discovery and result file serialization, env-var activation, `underTest {}`
+   via the ProcessRun model.
 4. **Phase 3 - Gradle orchestration:** the process-per-mutation task, exit-code
    inversion, summary reporting, plus a KMP example project (the Native sibling of
    `example/`). Usable end-to-end is the shipping gate.
 
 ## Open Questions
 
-- Exact discovery/result file format (JSON schema, versioning between plugin and runtime).
-- `underTest {}` semantics in the per-process model (see above).
 - Where traps and class-level configuration live on the Native path (Gradle DSL vs
   expect/actual annotation).
 - Partial run detection mechanism without JUnit introspection.

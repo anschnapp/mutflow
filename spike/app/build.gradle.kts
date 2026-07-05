@@ -28,8 +28,9 @@ val mutflowCompilerPlugin: Configuration by configurations.creating {
     // isTransitive=false: we want ONLY the plugin jar itself on the compiler
     // plugin classpath. Its declared dependency on mutflow-core is not needed
     // at plugin runtime (verified: the plugin references core types by FqName
-    // strings only, never imports them) - and mutflow-core is a JVM jar that
-    // has no business near a native compilation anyway.
+    // strings only, never imports them) - the compiled mutflow-core klib
+    // reaches the compilation as a normal library dependency instead (see the
+    // commonMain dependencies below).
     isTransitive = false
 }
 
@@ -42,8 +43,8 @@ dependencies {
 }
 
 kotlin {
-    // TEACHING NOTE: unlike a bare library target (see :stub-registry), a
-    // target with test sources automatically gets a TEST BINARY. For linuxX64
+    // TEACHING NOTE: a target with test sources automatically gets a TEST
+    // BINARY. For linuxX64
     // this creates, among others:
     //   compileTestKotlinLinuxX64  -> test klib
     //   linkDebugTestLinuxX64      -> links build/bin/linuxX64/debugTest/test.kexe
@@ -56,18 +57,31 @@ kotlin {
         // TEACHING NOTE: `commonMain.dependencies { }` is the KMP equivalent
         // of the top-level `dependencies { }` block in a JVM build. Deps
         // declared on commonMain flow down to every target.
+        //
+        // Phase 2 change: the Phase-0 stub-registry is gone. These are the
+        // REAL multiplatform mutflow artifacts from mavenLocal (publish them
+        // first: `./gradlew publishToMavenLocal` in the repo root). Gradle
+        // module metadata automatically picks each artifact's linuxX64 klib
+        // variant. The split mirrors what the Gradle plugin does on the JVM:
+        // production code sees core (+ annotations via api), only test code
+        // sees the runtime.
         commonMain.dependencies {
-            // Brings the stub MutationRegistry + @MutationTarget klib onto the
-            // compile classpath, so (a) our source can use @MutationTarget and
-            // (b) the compiler plugin's referenceClass(...) lookup finds
-            // io.github.anschnapp.mutflow.MutationRegistry to inject calls to.
-            implementation(project(":stub-registry"))
+            // @MutationTarget for our source, and the MutationRegistry that
+            // the compiler plugin's referenceClass(...) lookup finds to
+            // inject check() calls against (annotations come transitively:
+            // core exposes them via `api`).
+            implementation("io.github.anschnapp.mutflow:mutflow-core:0.1.0-SNAPSHOT")
         }
         commonTest.dependencies {
             // kotlin("test") is multiplatform: on native targets it maps to
             // the built-in kotlin-test framework (which generates the test
             // main() of the .kexe), no JUnit involved.
             implementation(kotlin("test"))
+            // MutFlow.underTest {} - same multiplatform API the JVM tests
+            // use. On native it delegates to the ProcessRun model driven by
+            // the MUTFLOW_* env vars (Inactive mode when none are set, so
+            // plain `:app:linuxX64Test` runs stay green).
+            implementation("io.github.anschnapp.mutflow:mutflow-runtime:0.1.0-SNAPSHOT")
         }
     }
 }
