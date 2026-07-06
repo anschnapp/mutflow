@@ -2,6 +2,8 @@ package io.github.anschnapp.mutflow
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 // Lives in commonTest so it runs on every target (jvmTest, linuxX64Test, ...).
 // Note the plain camelCase test names: Kotlin/Native does not support the
@@ -65,6 +67,78 @@ class MutflowFilesTest {
                 "\"variantIndex\":1,\"touched\":true,\"timedOut\":false}\n",
             json
         )
+    }
+
+    @Test
+    fun discoveryJsonRoundTripsThroughParser() {
+        val second = point.copy(
+            pointId = "sample.Calculator_1",
+            sourceLocation = "weird \"name\"\\path.kt:7",
+            variantOperators = listOf("<=", "==", "!=")
+        )
+        val touchCounts = mapOf("sample.Calculator_0" to 3, "sample.Calculator_1" to 1)
+        val json = MutflowFiles.buildDiscoveryJson(listOf(point, second), touchCounts)
+
+        val parsed = MutflowFiles.parseDiscoveryJson(json)
+
+        assertEquals(listOf(point, second), parsed.points)
+        assertEquals(touchCounts, parsed.touchCounts)
+    }
+
+    @Test
+    fun emptyDiscoveryJsonRoundTripsThroughParser() {
+        val parsed = MutflowFiles.parseDiscoveryJson(
+            MutflowFiles.buildDiscoveryJson(emptyList(), emptyMap())
+        )
+        assertEquals(emptyList(), parsed.points)
+        assertEquals(emptyMap(), parsed.touchCounts)
+    }
+
+    @Test
+    fun resultJsonRoundTripsThroughParser() {
+        val json = MutflowFiles.buildResultJson(
+            pointId = "sample.Calculator_0",
+            variantIndex = 1,
+            touched = true,
+            timedOut = false
+        )
+        val parsed = MutflowFiles.parseResultJson(json)
+        assertEquals(
+            ResultFileContent(
+                pointId = "sample.Calculator_0",
+                variantIndex = 1,
+                touched = true,
+                timedOut = false
+            ),
+            parsed
+        )
+    }
+
+    @Test
+    fun parserRejectsUnknownFormatVersion() {
+        val json = "{\"formatVersion\":99,\"points\":[]}"
+        val e = assertFailsWith<MutflowFileFormatException> {
+            MutflowFiles.parseDiscoveryJson(json)
+        }
+        assertTrue("formatVersion 99" in e.message!!)
+    }
+
+    @Test
+    fun parserRejectsMalformedJson() {
+        assertFailsWith<MutflowFileFormatException> {
+            MutflowFiles.parseDiscoveryJson("{\"formatVersion\":1,\"points\":[")
+        }
+        assertFailsWith<MutflowFileFormatException> {
+            MutflowFiles.parseResultJson("not json at all")
+        }
+    }
+
+    @Test
+    fun parserRejectsMissingFields() {
+        val e = assertFailsWith<MutflowFileFormatException> {
+            MutflowFiles.parseResultJson("{\"formatVersion\":1,\"pointId\":\"a\",\"variantIndex\":0,\"touched\":true}")
+        }
+        assertTrue("timedOut" in e.message!!)
     }
 
     @Test

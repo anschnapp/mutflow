@@ -1,5 +1,10 @@
 # mutflow Kotlin/Native spike (Phase 0 harness, upgraded for Phase 2)
 
+> **Phase 3 note:** the Gradle plugin now does all of this wiring itself -
+> see `../example-native/` for the maintained end-to-end example. This spike
+> remains as the low-level harness that drives the raw env-var/file contract
+> by hand, without the Gradle plugin.
+
 Throwaway project, originally built to answer the Phase 0 gating question from
 [DESIGN-KOTLIN-NATIVE.md](../DESIGN-KOTLIN-NATIVE.md):
 

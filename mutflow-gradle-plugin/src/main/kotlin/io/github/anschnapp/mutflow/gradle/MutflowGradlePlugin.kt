@@ -17,6 +17,29 @@ import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
 abstract class MutflowExtension {
     abstract val enabled: Property<Boolean>
     abstract val targets: ListProperty<String>
+
+    // ---- Native orchestration settings (Kotlin Multiplatform projects) ----
+    // The JVM path configures these per test class via @MutFlowTest; on
+    // Native there is no annotation processing at test time, so the Gradle
+    // DSL is where this configuration lives (see DESIGN-KOTLIN-NATIVE.md).
+
+    /**
+     * Maximum number of mutation runs per native target. The baseline
+     * discovery run always happens. Default: unlimited (test every
+     * discovered mutation).
+     */
+    abstract val nativeMaxMutationRuns: Property<Int>
+
+    /** Per-underTest-block mutation deadline in milliseconds (infinite loop protection). */
+    abstract val nativeTimeoutMs: Property<Long>
+
+    /**
+     * STRICT (default): surviving mutations fail the build.
+     * LENIENT: survivors are reported but do not fail.
+     * DISABLED: only the baseline run happens.
+     * The MUTFLOW_VERIFICATION_MODE environment variable overrides this.
+     */
+    abstract val nativeVerificationMode: Property<String>
 }
 
 /**
@@ -54,6 +77,14 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
                 .orElse(true)
         )
         extension.targets.convention(emptyList())
+        extension.nativeMaxMutationRuns.convention(Int.MAX_VALUE)
+        extension.nativeTimeoutMs.convention(60_000L)
+        extension.nativeVerificationMode.convention("STRICT")
+
+        target.plugins.withId("org.jetbrains.kotlin.multiplatform") {
+            debug("  kotlin.multiplatform plugin detected, configuring native mutation testing...")
+            MutflowKmpSupport.configure(target, extension)
+        }
 
         target.plugins.withId("org.jetbrains.kotlin.jvm") {
             debug("  kotlin.jvm plugin detected, configuring...")

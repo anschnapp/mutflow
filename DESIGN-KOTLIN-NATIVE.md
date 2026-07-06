@@ -10,6 +10,12 @@
 > commonTest, and the env-var/file contract below is implemented and verified
 > end-to-end against the real artifacts. See [Phase 2 Results](#phase-2-results).
 >
+> **Phase 3 (Gradle orchestration) done on 2026-07-05**: the Gradle plugin wires
+> Kotlin Multiplatform projects fully automatically - per-target instrumented
+> compilations (production binaries stay clean), the `mutflow<Target>Test`
+> orchestration tasks, and the `example-native/` KMP example project verified
+> end-to-end. See [Phase 3 Results](#phase-3-results).
+>
 > This document describes how mutflow will support Kotlin/Native targets. It is a delta
 > document: it only covers what differs from the main [DESIGN.md](DESIGN.md). Everything
 > not mentioned here (mutation operators, discovery model, selection strategies, traps,
@@ -122,16 +128,18 @@ class does not exist when each process has exactly one active mutation:
 
 This is a simplification, not a workaround.
 
-### What needs a new design (open)
+### What needs a new design (open, updated after Phase 3)
 
-- **Partial run detection**: the JVM mechanism counts `@Test` methods via JUnit. The
-  principle ("never report survivors from a partial suite") still applies; the Native
-  mechanism is open (likely: compare executed test count between baseline and mutation
-  runs, or detect test filtering flags passed to the binary).
-- **Traps and configuration**: `@MutFlowTest(traps = [...])` is a JUnit annotation.
-  On the Native path, traps, run limits, and target filtering need a home in the
-  Gradle DSL (e.g., `mutflow { traps = listOf(...) }`) and/or an `expect` annotation
-  that actualizes to the JUnit machinery on JVM and to metadata on Native.
+- **Partial run detection**: largely defused on the Native path - the orchestrator
+  always executes the full test binary without any filtering, so a mutation run
+  cannot see fewer tests than the baseline unless the user drives the binary by
+  hand (outside mutflow's responsibility). Revisit only if the orchestrator ever
+  learns to pass test filters through.
+- **Traps**: `@MutFlowTest(traps = [...])` is a JUnit annotation. Run limits,
+  timeout and verification mode found their Gradle DSL home in Phase 3
+  (`nativeMaxMutationRuns`, `nativeTimeoutMs`, `nativeVerificationMode`); traps and
+  target filtering are still open (likely `mutflow { nativeTraps = listOf(...) }`,
+  matching by the display names the summary prints).
 
 ### `underTest {}` resolution (resolved in Phase 2)
 
@@ -331,6 +339,68 @@ End-to-end verification against the reworked spike (linuxX64):
   that lets the orchestrator flag "mutation never executed" instead of a plain
   survivor.
 
+## Phase 3 Results
+
+> Executed 2026-07-05 on the `kotlin-native` branch, on top of Phase 1 + 2.
+
+**Verdict: mutation testing on Kotlin/Native is usable end-to-end.** A KMP
+project applies the mutflow Gradle plugin exactly like a JVM project applies
+it today, and `./gradlew mutflowLinuxX64Test` runs the whole loop. The new
+`example-native/` project is the living proof (and the shipping-gate
+verification): 6/6 mutations killed, each by the expected boundary test,
+with survivor/LENIENT/STRICT behavior verified by temporarily weakening a
+test.
+
+What was built:
+
+- **Clean-production compilation model** (the resolution of the Phase 0
+  finding "mutations land in the main klib"): per native target the Gradle
+  plugin creates a `mutatedMain` compilation (same sources as main, compiler
+  plugin applied - `isApplicable` matches the compilation name, same constant
+  as the JVM source set) and a `mutatedTest` compilation associated with it,
+  linked into a dedicated `mutated` test binary. The regular main compilation,
+  all production binaries and the plain `<target>Test` task never see any
+  instrumentation (verified by symbol-searching the klibs). This is the
+  native equivalent of the JVM `mutatedMain` source set trick.
+  - The mutated source set depends on the target's default source set, which
+    KGP flags with a warning (`KotlinSourceSetDependsOnDefaultCompilationSourceSet`);
+    consumers suppress exactly that id via `kotlin.suppressGradlePluginWarnings`
+    in gradle.properties (see `example-native/gradle.properties`). The edge is
+    deliberate: it is the only wiring that transitively follows whatever
+    source set hierarchy a project uses, and the hierarchy is not observable
+    at plugin configuration time (KGP applies the default hierarchy template
+    in a lifecycle stage after `afterEvaluate`).
+- **Orchestration task** `mutflow<Target>Test` (plus a `mutflowNativeTest`
+  umbrella): baseline discovery run, parse `discovery.json`, then one process
+  per mutation with the Phase 2 env-var contract, exit-code inversion,
+  killed-by extraction from the GTest-style test runner output, hard process
+  timeout as a safety net above the in-process deadline, JVM-identical
+  summary box, and a build failure listing survivors in STRICT mode.
+  Registered only for targets runnable on the build host (mingwX64 on Linux
+  still cross-compiles the mutated binary as compile proof, matching how
+  KGP's own `mingwX64Test` behaves). Mutation testing stays opt-in: `check`
+  runs only the plain tests.
+- **File parsers in core** (`MutflowFiles.parseDiscoveryJson`/`parseResultJson`):
+  hand-rolled reader next to the hand-rolled writer, round-trip tested in
+  commonTest on all targets, with a formatVersion check that turns
+  plugin/runtime version skew into a clear error. The Gradle plugin depends
+  on core's JVM variant for them.
+- **Gradle DSL** for the configuration that lives in `@MutFlowTest` on the
+  JVM: `nativeMaxMutationRuns` (default unlimited; the run order is the
+  MostLikelyStable strategy with identical tie-breakers, so a cap tests the
+  most-likely-to-survive mutations first), `nativeTimeoutMs`,
+  `nativeVerificationMode` (STRICT/LENIENT/DISABLED, overridable via the
+  MUTFLOW_VERIFICATION_MODE environment variable like on the JVM).
+- Result-file nuance surfaced in reporting: a survivor with `touched:false`
+  is reported as "the mutated code was never executed" instead of a plain
+  survivor.
+
+Still open after Phase 3 (tracked in Open Questions): traps on the native
+path, the random selection strategies (only the deterministic
+MostLikelyStable order is implemented; PureRandom/MostLikelyRandom need the
+seed plumbing moved into a shared pure selector first), and a
+machine-readable report file.
+
 ## Phased Plan
 
 Each phase keeps the JVM path green and releasable.
@@ -358,16 +428,27 @@ Each phase keeps the JVM path green and releasable.
    see Phase 2 Results below.** Native targets for annotations/core/runtime,
    discovery and result file serialization, env-var activation, `underTest {}`
    via the ProcessRun model.
-4. **Phase 3 - Gradle orchestration:** the process-per-mutation task, exit-code
-   inversion, summary reporting, plus a KMP example project (the Native sibling of
-   `example/`). Usable end-to-end is the shipping gate.
+4. **Phase 3 - Gradle orchestration: DONE on the `kotlin-native` branch
+   (2026-07-05), see Phase 3 Results above.** Process-per-mutation task,
+   exit-code inversion, summary reporting, clean-production compilation model,
+   and the `example-native/` KMP example project verified end-to-end (the
+   shipping gate).
 
 ## Open Questions
 
-- Where traps and class-level configuration live on the Native path (Gradle DSL vs
-  expect/actual annotation).
-- Partial run detection mechanism without JUnit introspection.
-- How `MutationsExhaustedException` maps to the Gradle loop (likely: the task simply
-  stops when selection returns null; no exception needed).
+- Where traps and target filtering live on the Native path (run limits, timeout
+  and verification mode landed in the Gradle DSL in Phase 3; traps are still open).
+- Random selection strategies (PureRandom, MostLikelyRandom) on the Native path:
+  the orchestrator currently implements only the deterministic MostLikelyStable
+  order. Doing this without duplicating semantics means extracting the seeded
+  selection out of MutFlowSession into a shared pure selector - a JVM-touching
+  refactor that deserves its own careful change.
 - Whether the summary should also be written as a machine-readable report file
   (useful for CI annotations; not needed on the JVM path today).
+- The timeout path (in-process deadline + orchestrator hard kill) is implemented
+  but not yet exercised by a real infinite-loop mutation end-to-end.
+
+Resolved along the way: `MutationsExhaustedException` needs no Native mapping
+(the Gradle loop simply ends when the plan is exhausted), and partial run
+detection is a non-issue while the orchestrator always runs the unfiltered
+binary (see "What needs a new design").
