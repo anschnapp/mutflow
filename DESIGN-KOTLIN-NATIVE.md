@@ -445,10 +445,40 @@ Each phase keeps the JVM path green and releasable.
   refactor that deserves its own careful change.
 - Whether the summary should also be written as a machine-readable report file
   (useful for CI annotations; not needed on the JVM path today).
-- The timeout path (in-process deadline + orchestrator hard kill) is implemented
-  but not yet exercised by a real infinite-loop mutation end-to-end.
 
 Resolved along the way: `MutationsExhaustedException` needs no Native mapping
 (the Gradle loop simply ends when the plan is exhausted), and partial run
 detection is a non-issue while the orchestrator always runs the unfiltered
 binary (see "What needs a new design").
+
+## Timeout Path Verification (post-Phase 3)
+
+> Executed 2026-07-06 on the `kotlin-native` branch.
+
+Both timeout layers were exercised end-to-end against `example-native/`, using
+a `sumUpTo(n)` loop where the `<= → >=` mutation spins forever for `sumUpTo(0)`:
+
+- **In-process deadline** (`MUTFLOW_TIMEOUT_MS`, set via `nativeTimeoutMs`):
+  the injected `checkTimeout()` guard broke the loop after the deadline, the
+  test failed with `MutationTimedOutException`, the result file carried
+  `timedOut: true`, and the orchestrator reported the mutation as TIMED OUT.
+- **Hard process kill** (safety net): with the in-process deadline disabled
+  (`nativeTimeoutMs = 0`), the orchestrator killed the spinning binary after
+  the hard timeout (`baseline*5 + 2*timeoutMs + 30s`), classified the null
+  exit code as TIMED_OUT, and continued the mutation loop normally.
+
+One behavior gap was found and fixed during verification: the orchestrator
+originally failed the build only on survivors, letting timed-out mutations
+pass silently. On the JVM, `MutationTimedOutException` is rethrown regardless
+of verification mode (the documented fail-loudly design), so the native
+orchestrator now does the same: timed-out mutations fail the build in STRICT
+and LENIENT (the decision logic is `NativeOrchestration.buildFailureMessage`,
+unit-tested). The failure message names the mutations and points at the
+remedy, `// mutflow:ignore` on the affected line - which was also verified
+end-to-end on the native backend (the suppressed loop produces no mutation
+points; comment-based suppression is compile-time and backend-neutral).
+
+Incidental finding, not native-specific: compound assignments (`sum += i`,
+`i += 1`) are never mutated on any backend - `ArithmeticOperator` matches the
+`PLUS`/`MINUS`/... origins but not `PLUSEQ`/`MINUSEQ`/... A possible future
+operator improvement, tracked outside this document.

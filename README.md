@@ -23,6 +23,7 @@
 - [Verifying Production Artifacts](#verifying-production-artifacts)
 - [Mutation Operators](#mutation-operators)
 - [Features](#features)
+- [Kotlin/Native Support (Experimental)](#kotlinnative-support-experimental)
 - [How Mutations Work](#how-mutations-work)
 - [Design Decisions](#design-decisions)
 - [Troubleshooting](#troubleshooting)
@@ -467,6 +468,113 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 **Extensibility**
 - **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), `FunctionBodyMutationOperator` (for function bodies), and `ThrowMutationOperator` (for throw statements) interfaces for adding new mutation types
+
+## Kotlin/Native Support (Experimental)
+
+mutflow also runs on Kotlin/Native targets in Multiplatform projects. To our
+knowledge it is the first mutation testing tool for Kotlin/Native: traditional
+tools mutate JVM bytecode, which does not exist on Native, and recompiling per
+mutant is impractical with native compile times. mutflow's compile-once
+approach sidesteps both problems.
+
+### Setup
+
+Apply the same plugin in a KMP project:
+
+```kotlin
+plugins {
+    kotlin("multiplatform") version "2.4.0"
+    id("io.github.anschnapp.mutflow") version "<latest-version>"
+}
+
+kotlin {
+    linuxX64()
+    // ... other targets
+}
+```
+
+Add one line to `gradle.properties` (the instrumented test compilation shares
+sources with the main compilation, which KGP warns about; this suppresses only
+that specific diagnostic):
+
+```properties
+kotlin.suppressGradlePluginWarnings=KotlinSourceSetDependsOnDefaultCompilationSourceSet
+```
+
+### Writing tests
+
+Tests are plain kotlin-test in `commonTest` with the same `underTest` API - no
+JUnit, no annotation:
+
+```kotlin
+class CalculatorTest {
+    @Test
+    fun positiveNumber() {
+        val result = MutFlow.underTest { calculator.isPositive(5) }
+        assertTrue(result)
+    }
+}
+```
+
+### Running
+
+Mutation testing is a dedicated, opt-in task per target (plain `test`/`check`
+runs are untouched):
+
+```bash
+./gradlew mutflowLinuxX64Test   # one target
+./gradlew mutflowNativeTest     # all native targets runnable on this host
+```
+
+The task runs the test binary once for discovery, then once per mutation, and
+prints the same summary as the JVM path. A failing test suite during a
+mutation run means the mutation was killed; survivors fail the build.
+
+### Configuration
+
+The `@MutFlowTest` annotation parameters live in the Gradle DSL on the Native
+path:
+
+```kotlin
+mutflow {
+    nativeMaxMutationRuns = 20        // default: unlimited (all mutations)
+    nativeTimeoutMs = 60_000L         // infinite-loop protection deadline
+    nativeVerificationMode = "STRICT" // STRICT | LENIENT | DISABLED
+}
+```
+
+`MUTFLOW_VERIFICATION_MODE` overrides the mode per run, like on the JVM.
+`@MutationTarget`, Gradle target patterns, `@SuppressMutations` and the
+comment-based suppression (`// mutflow:ignore`, `// mutflow:falsePositive`)
+work unchanged - they are compile-time and backend-neutral. Timed-out
+mutations (infinite loops) fail the build with the affected line, same
+fail-loudly rule as the JVM.
+
+### How it works
+
+The compiler plugin is backend-agnostic and runs unchanged. What differs is
+orchestration: kotlin-test on Native has no extension mechanism, so the run
+loop lives in the Gradle task - one process per mutation, activated via an
+environment variable, with the exit code deciding killed vs. survived.
+Production klibs and binaries stay clean: instrumentation only exists in a
+dedicated second test compilation. See
+[DESIGN-KOTLIN-NATIVE.md](DESIGN-KOTLIN-NATIVE.md) for the full architecture
+and [example-native/](example-native/) for a working project.
+
+### Current limitations
+
+- **Targets**: `linuxX64` and `mingwX64` for now. mingwX64 cross-compiles
+  from Linux but has not yet been exercised on a Windows host. macOS and
+  Apple simulator targets are planned (each target's mutation tests run on a
+  matching build host, as with all of KMP).
+- **JVM targets inside a KMP project are not wired yet** - only the native
+  targets get mutation testing there. Plain JVM projects are unaffected.
+- **No traps and no random selection strategies on Native yet**; mutations
+  run in the deterministic most-likely-to-survive order (fewest-touched
+  first), so `nativeMaxMutationRuns` caps runs where they matter most.
+- **No IDE test-tree integration**: results arrive as Gradle output plus the
+  summary. Recommended workflow in KMP projects: develop against the JVM
+  target for interactive feedback, run native mutation verification in CI.
 
 ## How Mutations Work
 

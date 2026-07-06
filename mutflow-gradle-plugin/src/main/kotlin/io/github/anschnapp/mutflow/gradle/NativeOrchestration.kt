@@ -116,6 +116,38 @@ internal object NativeOrchestration {
     private val FAILED_LINE = Regex("""\[\s*FAILED\s*]\s+(\S+)""")
 
     /**
+     * Decides whether the finished mutation loop fails the build, mirroring
+     * the JVM path: survivors fail only in STRICT mode, while timed-out
+     * mutations fail in every mode (the JVM extension rethrows
+     * MutationTimedOutException regardless of verification mode, so the
+     * developer must act - usually by adding // mutflow:ignore).
+     *
+     * @return the failure message, or null if the build should pass
+     */
+    fun buildFailureMessage(
+        results: List<Pair<PlannedMutation, RunVerdict>>,
+        verificationMode: String
+    ): String? {
+        val sections = mutableListOf<String>()
+
+        val survivors = results.filter { it.second is RunVerdict.Survived }
+        if (survivors.isNotEmpty() && verificationMode == "STRICT") {
+            sections += "mutflow: ${survivors.size} mutation(s) survived:\n" +
+                survivors.joinToString("\n") { "  - ${it.first.displayName}" } +
+                "\nAdd tests that catch them, or run with verification mode LENIENT."
+        }
+
+        val timedOut = results.filter { it.second is RunVerdict.TimedOut }
+        if (timedOut.isNotEmpty()) {
+            sections += "mutflow: ${timedOut.size} mutation(s) timed out (likely infinite loops):\n" +
+                timedOut.joinToString("\n") { "  - ${it.first.displayName}" } +
+                "\nAdd // mutflow:ignore on the affected lines to skip them."
+        }
+
+        return if (sections.isEmpty()) null else sections.joinToString("\n")
+    }
+
+    /**
      * Renders the summary box. Deliberately the same layout as the JVM
      * path's MutFlowSession.printSummary, so mutation reports look the same
      * no matter which path produced them.

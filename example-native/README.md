@@ -25,6 +25,13 @@ cd .. && ./gradlew publishToMavenLocal && cd example-native
 Expected output of step 3: 6 mutations discovered from `Calculator.isPositive`,
 all 6 killed, each by the matching boundary test.
 
+`Calculator.sumUpTo` additionally demonstrates the infinite-loop protection:
+mutating its loop condition makes the loop spin forever, which the injected
+timeout guard breaks after `nativeTimeoutMs`. Timed-out mutations fail the
+build (same fail-loudly rule as the JVM path); the line carries the documented
+remedy, a `// mutflow:ignore` comment, so the example stays green. Remove that
+comment to see the timeout in action.
+
 ## How it differs from the JVM path
 
 The Gradle plugin creates a second, instrumented compilation per native

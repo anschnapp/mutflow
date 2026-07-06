@@ -149,6 +149,60 @@ class NativeOrchestrationTest {
         assertNull(NativeOrchestration.parseFirstFailedTest("[       OK ] spike.CalculatorTest.testIsPositive"))
     }
 
+    // ---- buildFailureMessage ----
+
+    private fun plannedMutations(count: Int): List<PlannedMutation> =
+        NativeOrchestration.planMutations(
+            DiscoveryFileContent(
+                points = listOf(point("sample.A_0", variantCount = count)),
+                touchCounts = emptyMap()
+            ),
+            Int.MAX_VALUE
+        )
+
+    @Test
+    fun allKilledPassesInEveryMode() {
+        val plan = plannedMutations(2)
+        val results = plan.map { it to (RunVerdict.Killed("t") as RunVerdict) }
+        assertNull(NativeOrchestration.buildFailureMessage(results, "STRICT"))
+        assertNull(NativeOrchestration.buildFailureMessage(results, "LENIENT"))
+    }
+
+    @Test
+    fun survivorsFailOnlyInStrictMode() {
+        val plan = plannedMutations(2)
+        val results = listOf<Pair<PlannedMutation, RunVerdict>>(
+            plan[0] to RunVerdict.Killed("t"),
+            plan[1] to RunVerdict.Survived(touched = true)
+        )
+        val message = NativeOrchestration.buildFailureMessage(results, "STRICT")
+        assertTrue(message != null && "1 mutation(s) survived" in message)
+        assertTrue("(Calculator.kt:5) > → <" in message!!)
+        assertNull(NativeOrchestration.buildFailureMessage(results, "LENIENT"))
+    }
+
+    @Test
+    fun timeoutsFailInEveryModeLikeTheJvmPath() {
+        val plan = plannedMutations(1)
+        val results = listOf<Pair<PlannedMutation, RunVerdict>>(plan[0] to RunVerdict.TimedOut)
+        for (mode in listOf("STRICT", "LENIENT")) {
+            val message = NativeOrchestration.buildFailureMessage(results, mode)
+            assertTrue(message != null && "1 mutation(s) timed out" in message)
+            assertTrue("mutflow:ignore" in message!!)
+        }
+    }
+
+    @Test
+    fun survivorAndTimeoutSectionsCombine() {
+        val plan = plannedMutations(2)
+        val results = listOf<Pair<PlannedMutation, RunVerdict>>(
+            plan[0] to RunVerdict.Survived(touched = true),
+            plan[1] to RunVerdict.TimedOut
+        )
+        val message = NativeOrchestration.buildFailureMessage(results, "STRICT")
+        assertTrue(message != null && "survived" in message && "timed out" in message)
+    }
+
     // ---- renderSummary ----
 
     @Test

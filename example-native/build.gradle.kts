@@ -28,4 +28,10 @@ kotlin {
     }
 }
 
+mutflow {
+    // Short deadline so a mutation that causes an infinite loop (see
+    // Calculator.sumUpTo) is broken quickly; the default is 60s.
+    nativeTimeoutMs = 3_000L
+}
+
 

@@ -145,13 +145,8 @@ abstract class MutflowNativeTest : DefaultTask() {
             .lines()
             .forEach { logger.lifecycle(it) }
 
-        val survivors = results.filter { it.second is RunVerdict.Survived }
-        if (survivors.isNotEmpty() && mode == "STRICT") {
-            val names = survivors.joinToString("\n") { "  - ${it.first.displayName}" }
-            throw GradleException(
-                "mutflow: ${survivors.size} mutation(s) survived:\n$names\n" +
-                    "Add tests that catch them, or run with verification mode LENIENT."
-            )
+        NativeOrchestration.buildFailureMessage(results, mode)?.let { message ->
+            throw GradleException(message)
         }
     }
 
