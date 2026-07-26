@@ -20,6 +20,7 @@
 - [Setup](#setup)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [Verifying Production Artifacts](#verifying-production-artifacts)
 - [Mutation Operators](#mutation-operators)
 - [Features](#features)
 - [How Mutations Work](#how-mutations-work)
@@ -379,6 +380,46 @@ MutFlow.underTest(run = 1, Selection.MostLikelyStable, Shuffle.PerChange) {
 ```
 
 Selection strategies (`PureRandom`, `MostLikelyRandom`, `MostLikelyStable`) and shuffle modes (`PerRun`, `PerChange`) control how mutations are prioritized. The `@MutFlowTest` annotation uses sensible defaults automatically - these parameters are only needed for custom integrations.
+
+## Verifying Production Artifacts
+
+The Gradle plugin compiles mutations into a separate `mutatedMain` source set, so your production JAR never contains them. If you want a hard guarantee in your release pipeline (for example right before `docker build`), use the shipped check script:
+
+```bash
+scripts/mutflow-verify-jar.sh build/libs/my-app.jar
+```
+
+It scans every class in the archive, including nested archives such as Spring Boot's `BOOT-INF/lib/*.jar` and shadow JARs, and fails if a class references the mutflow runtime registry (`MutationRegistry`), which is what an injected mutation switch looks like in bytecode.
+
+What is fine in a production artifact:
+
+- the `mutflow-annotations` classes (`@MutationTarget`, `@SuppressMutations`) - `BINARY` retention markers with no runtime behavior
+- your own classes annotated with `@MutationTarget`
+
+What fails the check:
+
+- any class carrying injected mutation switches
+- bundled mutflow core/runtime classes (pass `--allow-bundled-runtime` to permit them)
+
+Exit codes: `0` clean, `1` findings, `2` usage error or missing `unzip`.
+
+Typical CI usage:
+
+```bash
+./gradlew build
+scripts/mutflow-verify-jar.sh build/libs/*.jar || exit 1
+docker build -t my-app .
+```
+
+Example failure output:
+
+```
+MUTATION  build/libs/my-app.jar!/BOOT-INF/classes/com/example/PricingService.class
+FAILED: found 1 class(es) containing mutflow mutations.
+The artifact was built with the mutflow compiler plugin applied to production code.
+```
+
+The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test-mutflow-verify-jar.sh`, which runs on every pull request: it publishes mutflow to mavenLocal, builds a small consumer project with the real Gradle plugin, and asserts that the production JAR passes while the `mutatedMain` compilation of the very same sources is rejected.
 
 ## Mutation Operators
 
