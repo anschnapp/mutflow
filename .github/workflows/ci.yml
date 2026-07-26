@@ -23,3 +23,8 @@ jobs:
 
       - name: Build and test
         run: ./gradlew build
+
+      # Builds a consumer project with the real plugin and checks both sides of the
+      # dual compilation: the production jar must be clean, the mutated one rejected.
+      - name: Test production jar check script
+        run: scripts/test-mutflow-verify-jar.sh
