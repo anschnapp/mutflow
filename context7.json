@@ -1,0 +1,48 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "mutflow",
+  "description": "Mutation testing for Kotlin via a K2 compiler plugin. Mutations are injected at compile time into a test-only compilation, so they run inside your normal test suite and production JARs stay clean.",
+  "branch": "master",
+  "folders": [
+    "docs",
+    "example",
+    "mutflow-annotations",
+    "mutflow-core",
+    "mutflow-runtime",
+    "mutflow-junit6",
+    "mutflow-gradle-plugin"
+  ],
+  "excludeFolders": [
+    "**/build",
+    "mutflow-compiler-plugin",
+    "mutflow-test-sample",
+    "spike",
+    "scripts",
+    "gradle",
+    ".github",
+    ".claude",
+    ".idea"
+  ],
+  "excludeFiles": [
+    "CLAUDE.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+  ],
+  "rules": [
+    "Start from the mutflow Agent Guide (docs/agent-guide.md): a task-oriented reference with a copy-pasteable snippet per task - setup, targets, mutation tests, CI phases, timeouts, traps, suppression and common mistakes.",
+    "Apply the Gradle plugin `id(\"io.github.anschnapp.mutflow\")`. It adds the mutflow-core and mutflow-junit6 dependencies automatically - never declare them by hand.",
+    "Match the mutflow release to the project's Kotlin version: mutflow 1.1.0+ needs Kotlin 2.4.x, mutflow up to 1.0.3 needs Kotlin 2.2.x-2.3.x. A mismatch fails with an obscure compiler error.",
+    "Choose what gets mutated with the `@MutationTarget` annotation on the class, or with `mutflow { targets = listOf(\"com.example.service.**\") }` in build.gradle.kts. Both can be combined.",
+    "Write mutation tests as normal JUnit 6 tests annotated with `@MutFlowTest`, and wrap the exercised code in `MutFlow.underTest { }`. Mutations are inactive outside that block.",
+    "Mutation testing runs inside the normal `./gradlew test` run - there is no separate mutation task. Never add one.",
+    "For phased CI, set the `MUTFLOW_VERIFICATION_MODE` env var to DISABLED (fast feedback), LENIENT (report survivors only) or STRICT (default, survivors fail the build).",
+    "Green mutation runs are expected: a killed mutation swallows the assertion error and reports PASSED. Read the printed summary and the build status, not the individual test results.",
+    "A surviving mutation means a missing assertion. Fix the test instead of suppressing it; `@SuppressMutations` and `// mutflow:ignore` are for equivalent mutants and code not worth testing.",
+    "Set `mutflow { enabled = false }` or `-Pmutflow.enabled=false` to disable mutation testing with zero build overhead. Use this for JaCoCo/Kover runs, which report 0% while mutations are active.",
+    "Do not add manual guards to strip mutations from release builds. Mutations only ever land in the separate `mutatedMain` compilation, so production JARs are clean by construction."
+  ],
+  "previousVersions": [
+    { "tag": "v1.0.4" },
+    { "tag": "v1.0.3" }
+  ]
+}
