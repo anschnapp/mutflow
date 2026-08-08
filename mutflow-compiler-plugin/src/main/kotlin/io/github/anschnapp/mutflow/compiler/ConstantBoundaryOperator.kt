@@ -24,6 +24,14 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class ConstantBoundaryOperator : MutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "CONSTANT_BOUNDARY",
+        name = "ConstantBoundary",
+        description = "Numeric constant ±1 boundary in comparisons",
+        group = MutatorGroup.CONSTANT,
+        status = MutatorStatus.STABLE
+    )
+
     companion object {
         private val COMPARISON_ORIGINS = setOf(
             IrStatementOrigin.GT,

@@ -2,6 +2,7 @@ package io.github.anschnapp.mutflow.compiler
 
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
+import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
@@ -36,6 +37,14 @@ import org.jetbrains.kotlin.name.Name
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class ArithmeticOperator : MutationOperator {
+
+    override val descriptor = MutatorDescriptor(
+        id = "ARITHMETIC_SWAP",
+        name = "ArithmeticSwap",
+        description = "Swap +↔-, *↔/ (safe division), %→/",
+        group = MutatorGroup.ARITHMETIC,
+        status = MutatorStatus.STABLE
+    )
 
     companion object {
         private val SUPPORTED_ORIGINS = setOf(
@@ -89,9 +98,21 @@ class ArithmeticOperator : MutationOperator {
         fun findFunction(name: String): IrSimpleFunctionSymbol? {
             if (name == originalFunctionName) return originalSymbol // same function
             val callableId = CallableId(declaringClassId, Name.identifier(name))
-            // For primitives, just get the first function - the type checker
-            // already resolved the correct overload for the original call
-            return context.pluginContext.referenceFunctions(callableId).firstOrNull()
+            // For primitives, pick the overload whose parameter type matches the
+            // original call's second parameter type. `referenceFunctions(...).firstOrNull()`
+            // is not reliable here: e.g. `Int.minus` has overloads for Byte/Short/Int/
+            // Long/Float/Double, and the first one may be `minus(other: Byte)`, which
+            // produces a ClassCastException on Native. Match the actual operand type.
+            val originalParamType = originalSymbol.owner.parameters.getOrNull(1)?.type
+            return if (originalParamType != null) {
+                context.pluginContext.referenceFunctions(callableId)
+                    .firstOrNull { fn ->
+                        fn.owner.parameters.getOrNull(1)?.type == originalParamType
+                    }
+                    ?: context.pluginContext.referenceFunctions(callableId).firstOrNull()
+            } else {
+                context.pluginContext.referenceFunctions(callableId).firstOrNull()
+            }
         }
 
         val plusFn = findFunction("plus")
@@ -150,10 +171,18 @@ class ArithmeticOperator : MutationOperator {
                 )
             }
             IrStatementOrigin.PERC -> {
-                // % → /
+                // % → / and % → *
                 listOfNotNull(
                     divFn?.let { fn ->
                         MutationOperator.Variant("/") {
+                            context.builder.irCall(fn).also {
+                                it.arguments[0] = left.deepCopyWithSymbols()
+                                it.arguments[1] = right.deepCopyWithSymbols()
+                            }
+                        }
+                    },
+                    timesFn?.let { fn ->
+                        MutationOperator.Variant("*") {
                             context.builder.irCall(fn).also {
                                 it.arguments[0] = left.deepCopyWithSymbols()
                                 it.arguments[1] = right.deepCopyWithSymbols()

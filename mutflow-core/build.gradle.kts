@@ -1,11 +1,27 @@
 plugins {
-    kotlin("jvm")
+    kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
 
-dependencies {
-    api(project(":mutflow-annotations"))
-    testImplementation(kotlin("test"))
+@OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
+kotlin {
+    jvm()
+    js {
+        nodejs()
+    }
+    wasmJs {
+        nodejs()
+    }
+    linuxX64()
+
+    sourceSets {
+        commonMain.dependencies {
+            api(project(":mutflow-annotations"))
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+    }
 }
 
 mavenPublishing {

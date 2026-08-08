@@ -34,6 +34,14 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class EqualitySwapOperator : MutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "EQUALITY_SWAP",
+        name = "EqualitySwap",
+        description = "Swap == ↔ != (skips null comparisons)",
+        group = MutatorGroup.RELATIONAL,
+        status = MutatorStatus.STABLE
+    )
+
     override fun matches(call: IrCall): Boolean {
         return when {
             // == : EQEQ intrinsic with EQEQ origin (but not a null comparison)

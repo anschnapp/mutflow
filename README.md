@@ -26,6 +26,7 @@
 - [How Mutations Work](#how-mutations-work)
 - [Design Decisions](#design-decisions)
 - [Troubleshooting](#troubleshooting)
+- [Migration to Multiplatform](docs/migration-notes.md)
 
 ## What is this?
 
@@ -129,6 +130,56 @@ mutflow.enabled=false
 ```
 
 When disabled, your code still compiles normally (`@MutationTarget` and `@MutFlowTest` annotations are still available), but tests run without any mutations - the mutation summary will show 0 mutations discovered.
+
+### Multiplatform (KMP) Support
+
+mutflow's mutation engine is **target-agnostic**: the same operators and mutation points
+work on JVM, Kotlin/JS, Kotlin/WASM, and Kotlin/Native. The compiler plugin injects the
+same guarded `when`/conditionals on every backend, and the runtime (`mutflow-core`) lives
+in `commonMain` with only trivial expect/actual for concurrency.
+
+To use mutflow in a KMP project, apply the plugin and add the runtime to the common source
+sets:
+
+```kotlin
+plugins {
+    kotlin("multiplatform") version "2.4.0"
+    id("io.github.anschnapp.mutflow") version "<latest-version>"
+}
+
+kotlin {
+    jvm()
+    js(IR) { nodejs() }
+    wasmJs { nodejs() }
+    linuxX64()
+
+    sourceSets {
+        commonMain.dependencies {
+            implementation("io.github.anschnapp.mutflow:mutflow-annotations:<version>")
+            implementation("io.github.anschnapp.mutflow:mutflow-core:<version>")
+        }
+        commonTest.dependencies {
+            implementation("io.github.anschnapp.mutflow:mutflow-core:<version>")
+            implementation(kotlin("test"))
+        }
+    }
+}
+```
+
+> If you use the Gradle plugin, the `commonMain`/`commonTest` runtime wiring is done for
+> you automatically.
+
+**Test runner per platform:**
+
+- **JVM**: use `@MutFlowTest` / `MutFlow.underTest` with JUnit 6 (`mutflow-junit6`).
+- **JS / WASM / Native**: use `kotlin.test` (`@Test`). The `MutationRegistry` session API
+  (`withSession`, `startSession`/`endSession`) is multiplatform and works identically.
+
+**Production safety on KMP:** the plugin is applied to every compilation, but injection is
+gated on `@MutationTarget` (or configured target patterns) — production code is untouched
+unless explicitly annotated. See [docs/migration-notes.md](docs/migration-notes.md) for
+full migration guidance, and the `mutflow-test-kmp` sample for a working multi-target
+project.
 
 ## Quick Start
 
@@ -432,8 +483,26 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 - [**Boolean return**](#how-boolean-return-mutations-work) - Boolean return values replaced with `true`/`false` (explicit returns only)
 - [**Nullable return**](#how-nullable-return-mutations-work) - Nullable return values replaced with `null` (explicit returns only)
 - [**Void function body**](#how-void-function-body-mutations-work) - Unit function bodies replaced with empty bodies, detecting untested side effects
+- **Bitwise** - `and` ↔ `or`, `xor` → `and`/`or`, `shl` ↔ `shr`, `ushr` → `shl` (integer types)
+- **Unary minus** - `-a` → `a`
+- **Increment** - `++` ↔ `--` (and experimental `a++` → `a`)
+- **Replace non-void call** - non-void call → default value of its return type
+- **Primitive return** - numeric return → `0`; **Object return** - object return → `null`
+- **Boolean const** - `true` ↔ `false`; **String literal** - string → `""`
+- **Constructor call** - `Foo()` → `null`
+- **Force conditional** - `if (cond)` → `true` / `false`
+- **String methods** - `endsWith` ↔ `startsWith`, `toUpperCase` ↔ `toLowerCase`, `trim` → `""`
+- **Collection methods** - `filter` ↔ `filterNot`, `any` ↔ `all`, `take` ↔ `drop`, `isEmpty` ↔ `isNotEmpty`, `min` ↔ `max`, `minBy` ↔ `maxBy`
+- **Reference equality** - `===` ↔ `!==`
+- **Elvis** - `a ?: b` → `a` / `b`
+- **Safe call** - `a?.b` → `a!!.b` (drop the null guard)
+- **Empty collection return** - `return listOf(...)` → `return emptyList()` (also emptySet/emptyMap)
+- **Assign const** - `a = b` → `a = <default constant>` (0, `""`, `false`, or `null`)
 - **Recursive operator nesting** - Multiple mutation types combine on the same expression
 - **Type-agnostic** - Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
+
+> The full catalog, including per-backend (JVM/JS/WASM/Native) lowering forms and
+> experimental operators, is documented in [docs/mutation-catalog.md](docs/mutation-catalog.md).
 
 ## Features
 

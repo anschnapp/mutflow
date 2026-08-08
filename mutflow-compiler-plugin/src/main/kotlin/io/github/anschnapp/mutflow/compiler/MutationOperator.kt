@@ -15,6 +15,11 @@ import org.jetbrains.kotlin.ir.expressions.IrExpression
 interface MutationOperator {
 
     /**
+     * Declarative metadata for this operator (stable id, group, status).
+     */
+    val descriptor: MutatorDescriptor
+
+    /**
      * Returns true if this operator can generate mutations for the given call.
      */
     fun matches(call: IrCall): Boolean

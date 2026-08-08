@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.types.isBoolean
+import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.expressions.impl.IrBlockImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrElseBranchImpl
@@ -38,46 +39,28 @@ class MutflowIrTransformer(
     private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators(),
     private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators(),
     private val whenOperators: List<WhenMutationOperator> = defaultWhenOperators(),
+    private val constOperators: List<ConstMutationOperator> = defaultConstOperators(),
+    private val constructorCallOperators: List<ConstructorCallMutationOperator> = defaultConstructorCallOperators(),
+    private val assignmentOperators: List<AssignmentMutationOperator> = defaultAssignmentOperators(),
     private val targetPatterns: List<String> = emptyList()
 ) : IrElementTransformerVoid() {
 
     companion object {
-        private const val ENABLE_DEBUG_LOGGING = false
+        fun defaultCallOperators(): List<MutationOperator> = MutationCatalog.callOperators
 
-        private fun debug(msg: String) {
-            if (ENABLE_DEBUG_LOGGING) {
-                // Use System.err which reliably shows in build output
-                System.err.println("[MUTFLOW] $msg")
-                // Also try to write to a log file in user home (more reliable than /tmp)
-                try {
-                    val logFile = java.io.File(System.getProperty("user.home"), "mutflow-debug.log")
-                    logFile.appendText("[MUTFLOW] $msg\n")
-                } catch (_: Exception) {
-                    // Ignore file write errors
-                }
-            }
-        }
+        fun defaultReturnOperators(): List<ReturnMutationOperator> = MutationCatalog.returnOperators
 
-        fun defaultCallOperators(): List<MutationOperator> = listOf(
-            RelationalComparisonOperator(),
-            ConstantBoundaryOperator(),
-            ArithmeticOperator(),
-            EqualitySwapOperator(),
-            BooleanInversionOperator()
-        )
+        fun defaultFunctionBodyOperators(): List<FunctionBodyMutationOperator> = MutationCatalog.functionBodyOperators
 
-        fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(
-            BooleanReturnOperator(),
-            NullableReturnOperator()
-        )
+        fun defaultWhenOperators(): List<WhenMutationOperator> = MutationCatalog.whenOperators
 
-        fun defaultFunctionBodyOperators(): List<FunctionBodyMutationOperator> = listOf(
-            VoidFunctionBodyOperator()
-        )
+        fun defaultConstOperators(): List<ConstMutationOperator> = MutationCatalog.constOperators
 
-        fun defaultWhenOperators(): List<WhenMutationOperator> = listOf(
-            BooleanLogicOperator()
-        )
+        fun defaultConstructorCallOperators(): List<ConstructorCallMutationOperator> =
+            MutationCatalog.constructorCallOperators
+
+        fun defaultAssignmentOperators(): List<AssignmentMutationOperator> =
+            MutationCatalog.assignmentOperators
 
         /**
          * Compiles glob-style target patterns into regexes for FQN matching.
@@ -134,11 +117,20 @@ class MutflowIrTransformer(
     private var suppressedLines: Set<Int> = emptySet()
     private val suppressedLinesCache = mutableMapOf<String, Set<Int>>()
 
+    /**
+     * Boolean constants that form the structural shape of `&&`/`||` whens.
+     *
+     * The JVM backend asserts the exact shape of these whens (e.g. `&&` must end
+     * with an `else -> true -> false` pair), so mutating those constants would
+     * break lowering. The `&&` ↔ `||` swap is already handled by
+     * [BooleanLogicOperator], so skipping them loses no coverage.
+     */
+    private var structuralBooleanConsts: Set<IrConst> = emptySet()
+
     // Compiled target patterns from Gradle config (glob-style → regex)
     private val compiledTargetPatterns: List<Regex> = compileTargetPatterns(targetPatterns)
 
     override fun visitFile(declaration: IrFile): IrFile {
-        debug("visitFile: ${declaration.fileEntry.name}")
         val previousFile = currentFile
         currentFile = declaration
         val result = super.visitFile(declaration)
@@ -147,9 +139,6 @@ class MutflowIrTransformer(
     }
 
     override fun visitClass(declaration: IrClass): IrStatement {
-        debug("visitClass: ${declaration.fqNameWhenAvailable}")
-        debug("  annotations count: ${declaration.annotations.size}")
-
         val wasMutationTarget = isInMutationTarget
         val wasSuppressed = isInSuppressedScope
         val previousSuppressedLines = suppressedLines
@@ -158,8 +147,6 @@ class MutflowIrTransformer(
         isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName)
                 || matchesTargetPattern(declaration)
         currentClass = declaration
-
-        debug("  isInMutationTarget: $isInMutationTarget")
 
         // Check for @SuppressMutations on the class
         if (isInMutationTarget && declaration.hasAnnotation(suppressMutationsFqName)) {
@@ -172,7 +159,6 @@ class MutflowIrTransformer(
             // Parse source file for comment-based line suppression
             val filePath = currentFile?.fileEntry?.name
             suppressedLines = if (filePath != null) parseSuppressedLines(filePath) else emptySet()
-            debug("  -> WILL TRANSFORM this class!")
         }
 
         val result = super.visitClass(declaration)
@@ -230,7 +216,67 @@ class MutflowIrTransformer(
         }
 
         val fn = currentFunction ?: return transformed
-        return transformCallWithOperators(transformed, fn, callOperators)
+        val result = transformCallWithOperators(transformed, fn, callOperators)
+        return result
+    }
+
+    override fun visitConstructorCall(expression: IrConstructorCall): IrExpression {
+        // First, transform children (bottom-up for nested expressions)
+        val transformed = super.visitConstructorCall(expression) as IrConstructorCall
+
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        val fn = currentFunction ?: return transformed
+        return transformConstructorCallWithOperators(transformed, fn, constructorCallOperators)
+    }
+
+    override fun visitSetValue(expression: IrSetValue): IrExpression {
+        // First, transform children (bottom-up for nested expressions)
+        val transformed = super.visitSetValue(expression) as IrSetValue
+
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        val fn = currentFunction ?: return transformed
+        val mutatedValue = transformAssignmentValue(
+            transformed.value, transformed.symbol.owner.type, transformed, fn
+        )
+        if (mutatedValue === transformed.value) return transformed
+        // Rebuild the assignment with the mutation-guarded value.
+        transformed.value = mutatedValue
+        return transformed
+    }
+
+    override fun visitSetField(expression: IrSetField): IrExpression {
+        // First, transform children (bottom-up for nested expressions)
+        val transformed = super.visitSetField(expression) as IrSetField
+
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        val fn = currentFunction ?: return transformed
+        val mutatedValue = transformAssignmentValue(
+            transformed.value, transformed.symbol.owner.type, transformed, fn
+        )
+        if (mutatedValue === transformed.value) return transformed
+        // Rebuild the assignment with the mutation-guarded value.
+        transformed.value = mutatedValue
+        return transformed
     }
 
     override fun visitGetValue(expression: IrGetValue): IrExpression {
@@ -271,8 +317,6 @@ class MutflowIrTransformer(
         val sourceLocation = getSourceLocation(original)
         val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
         val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, varName)
-
-        debug("MUTATION: $varName at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: !$varName")
 
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
             call.arguments[0] = builder.irGetObject(registryClass)
@@ -325,9 +369,27 @@ class MutflowIrTransformer(
         return transformReturnWithOperators(transformed, fn, returnOperators)
     }
 
+    override fun visitBlock(expression: IrBlock): IrExpression {
+        // Record the enclosing block's origin so when-operators (elvis, safe-call)
+        // can identify constructs whose distinguishing origin sits on this block
+        // rather than on the inner IrWhen (common-IR KMP form).
+        val previousOrigin = EnclosingOriginProvider.currentOrigin
+        EnclosingOriginProvider.currentOrigin = expression.origin?.debugName
+        try {
+            return super.visitBlock(expression)
+        } finally {
+            EnclosingOriginProvider.currentOrigin = previousOrigin
+        }
+    }
+
     override fun visitWhen(expression: IrWhen): IrExpression {
+        // Record the structural boolean constants of &&/|| whens so const
+        // operators don't mutate them (the JVM backend asserts their shape).
+        val previousStructural = structuralBooleanConsts
+        structuralBooleanConsts = collectStructuralBooleanConsts(expression)
         // First, transform children (bottom-up for nested expressions)
         val transformed = super.visitWhen(expression) as IrWhen
+        structuralBooleanConsts = previousStructural
 
         // Only transform if we're in a @MutationTarget class and not suppressed
         if (!isInMutationTarget || isInSuppressedScope) {
@@ -338,7 +400,65 @@ class MutflowIrTransformer(
         }
 
         val fn = currentFunction ?: return transformed
-        return transformWhenWithOperators(transformed, fn, whenOperators)
+        val result = transformWhenWithOperators(transformed, fn, whenOperators)
+        return result
+    }
+
+    /**
+     * Returns the boolean constants that the JVM backend asserts on for `&&`/`||`
+     * whens: ANDAND requires `branches[1].condition == true` and
+     * `branches[1].result == false`; OROR requires `branches[0].result == true`
+     * and `branches[1].condition == true`.
+     */
+    private fun collectStructuralBooleanConsts(whenExpr: IrWhen): Set<IrConst> {
+        val structural = mutableSetOf<IrConst>()
+        when (whenExpr.origin) {
+            IrStatementOrigin.ANDAND -> {
+                if (whenExpr.branches.size == 2) {
+                    (whenExpr.branches[1].condition as? IrConst)?.let { structural += it }
+                    (whenExpr.branches[1].result as? IrConst)?.let { structural += it }
+                }
+            }
+            IrStatementOrigin.OROR -> {
+                if (whenExpr.branches.size == 2) {
+                    (whenExpr.branches[0].result as? IrConst)?.let { structural += it }
+                    (whenExpr.branches[1].condition as? IrConst)?.let { structural += it }
+                }
+            }
+            else -> {}
+        }
+        // Protect the else-branch `true` const of any when whose last branch is a
+        // plain branch (not IrElseBranch) with a `true` condition. K2 represents
+        // `if/else` this way, and the JS backend's isElseBranch() relies on that
+        // const to recognize the implicit else. Mutating it (e.g. BooleanConstOperator
+        // wrapping it in a schemata when) breaks the JS backend's
+        // "Non unit when-expression must have else branch" assertion.
+        val last = whenExpr.branches.lastOrNull()
+        if (last != null) {
+            val cond = last.condition
+            if (cond is IrConst && cond.value == true) {
+                structural += cond
+            }
+        }
+        return structural
+    }
+
+    override fun visitConst(expression: IrConst): IrExpression {
+        // Constants are leaf nodes, so no child transformation is needed.
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return expression
+        }
+        if (isLineSuppressedByComment(expression.startOffset)) {
+            return expression
+        }
+        // Skip structural boolean constants of &&/|| whens (JVM backend asserts their shape).
+        if (expression in structuralBooleanConsts) {
+            return expression
+        }
+
+        val fn = currentFunction ?: return expression
+        val result = transformConstWithOperators(expression, fn, constOperators)
+        return result
     }
 
     override fun visitWhileLoop(loop: IrWhileLoop): IrExpression {
@@ -436,11 +556,9 @@ class MutflowIrTransformer(
         remainingOperators: List<MutationOperator>
     ): IrExpression {
         val checkFn = checkFunction ?: run {
-            debug("ERROR: checkFunction is NULL! MutationRegistry.check not found on classpath")
             return original
         }
         val registryClass = mutationRegistryClass ?: run {
-            debug("ERROR: mutationRegistryClass is NULL! MutationRegistry not found on classpath")
             return original
         }
 
@@ -459,8 +577,6 @@ class MutflowIrTransformer(
         val variantOperators = variants.joinToString(",") { it.description }
         val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
         val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
-
-        debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
 
         // Helper to create a fresh check() call for each branch condition
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
@@ -493,6 +609,173 @@ class MutflowIrTransformer(
                 endOffset = original.endOffset,
                 condition = builder.irTrue(),
                 result = transformCallWithOperators(original, containingFunction, remainingOperators)
+            )
+        }
+    }
+
+    /**
+     * Recursively applies matching constructor-call operators to an expression.
+     *
+     * Mirrors [transformCallWithOperators] for [IrConstructorCall], which is a
+     * distinct IR node type from [IrCall] in Kotlin 2.4.0.
+     */
+    private fun transformConstructorCallWithOperators(
+        original: IrConstructorCall,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<ConstructorCallMutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return original
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(original)) {
+            return transformConstructorCallWithOperators(original, containingFunction, rest)
+        }
+
+        return transformConstructorCallWithOperator(original, containingFunction, operator, rest)
+    }
+
+    /**
+     * Transforms a constructor call using the given mutation operator.
+     *
+     * Generates the same `when` + inline `check()` shape as [transformCallWithOperator].
+     */
+    private fun transformConstructorCallWithOperator(
+        original: IrConstructorCall,
+        containingFunction: IrSimpleFunction,
+        operator: ConstructorCallMutationOperator,
+        remainingOperators: List<ConstructorCallMutationOperator>
+    ): IrExpression {
+        val checkFn = checkFunction ?: run {
+            return original
+        }
+        val registryClass = mutationRegistryClass ?: run {
+            return original
+        }
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+
+        val variants = operator.variants(original, context)
+        if (variants.isEmpty()) {
+            return transformConstructorCallWithOperators(original, containingFunction, remainingOperators)
+        }
+
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = operator.originalDescription(original)
+        val variantOperators = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
+
+        // Helper to create a fresh check() call for each branch condition
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
+        }
+
+        // Generate when expression with inline check() calls - no temporary variable.
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = original.type,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = transformConstructorCallWithOperators(original, containingFunction, remainingOperators)
+            )
+        }
+    }
+
+    /**
+     * Applies matching assignment operators to an assignment's value, wrapping it
+     * in a mutation-guarded `when`. Returns the mutation-guarded value expression
+     * (or the original value if no operator matches). The caller assigns the result
+     * back to the assignment node's `value`.
+     */
+    private fun transformAssignmentValue(
+        assignedValue: IrExpression,
+        targetType: org.jetbrains.kotlin.ir.types.IrType,
+        original: IrExpression,
+        containingFunction: IrSimpleFunction
+    ): IrExpression {
+        val checkFn = checkFunction ?: return assignedValue
+        val registryClass = mutationRegistryClass ?: return assignedValue
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+
+        // Collect variants from all matching assignment operators.
+        val allVariants = mutableListOf<MutationOperator.Variant>()
+        val allOriginalOperators = mutableListOf<String>()
+        for (operator in assignmentOperators) {
+            if (operator.matches(targetType, assignedValue)) {
+                val variants = operator.variants(targetType, assignedValue, context)
+                if (variants.isNotEmpty()) {
+                    allVariants += variants
+                    allOriginalOperators += operator.originalDescription(assignedValue)
+                }
+            }
+        }
+        if (allVariants.isEmpty()) return assignedValue
+
+        val pointId = generatePointId()
+        val variantCount = allVariants.size
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = allOriginalOperators.firstOrNull() ?: "="
+        val variantOperators = allVariants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
+
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
+        }
+
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = targetType,
+            origin = null
+        ).apply {
+            allVariants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = assignedValue
             )
         }
     }
@@ -557,9 +840,6 @@ class MutflowIrTransformer(
         val variantDescriptions = variants.joinToString(",") { it.description }
         val lineNumber = currentFile?.fileEntry?.getLineNumber(original.value.startOffset)?.plus(1) ?: 0
         val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalDescription)
-
-        val fnName = containingFunction.name.asString()
-        debug("MUTATION: RETURN in $fnName at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantDescriptions")
 
         val originalValue = original.value
 
@@ -674,8 +954,6 @@ class MutflowIrTransformer(
         val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
         val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
 
-        debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
-
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
             call.arguments[0] = builder.irGetObject(registryClass)
             call.arguments[1] = builder.irString(pointId)
@@ -689,7 +967,7 @@ class MutflowIrTransformer(
         return IrWhenImpl(
             startOffset = original.startOffset,
             endOffset = original.endOffset,
-            type = pluginContext.irBuiltIns.booleanType,
+            type = original.type,
             origin = null
         ).apply {
             variants.forEachIndexed { index, variant ->
@@ -705,6 +983,100 @@ class MutflowIrTransformer(
                 endOffset = original.endOffset,
                 condition = builder.irTrue(),
                 result = transformWhenWithOperators(original, containingFunction, remainingOperators)
+            )
+        }
+    }
+
+    /**
+     * Recursively applies matching const operators to an IrConst expression.
+     *
+     * Each matching operator wraps the constant in a mutation check, with the
+     * else branch passing to the next operator.
+     */
+    private fun transformConstWithOperators(
+        original: IrConst,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<ConstMutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return original
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(original)) {
+            return transformConstWithOperators(original, containingFunction, rest)
+        }
+
+        return transformConstWithOperator(original, containingFunction, operator, rest)
+    }
+
+    /**
+     * Transforms a constant expression using the given mutation operator.
+     *
+     * Generates a when expression with inline check() calls (no temporary variable):
+     * ```
+     * when {
+     *     MutationRegistry.check(...) == 0 -> <mutated constant>
+     *     else -> <original constant OR recursion to next operator>
+     * }
+     * ```
+     */
+    private fun transformConstWithOperator(
+        original: IrConst,
+        containingFunction: IrSimpleFunction,
+        operator: ConstMutationOperator,
+        remainingOperators: List<ConstMutationOperator>
+    ): IrExpression {
+        val checkFn = checkFunction ?: return original
+        val registryClass = mutationRegistryClass ?: return original
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+
+        val variants = operator.variants(original, context)
+        if (variants.isEmpty()) {
+            return transformConstWithOperators(original, containingFunction, remainingOperators)
+        }
+
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = operator.originalDescription(original)
+        val variantOperators = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
+
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
+        }
+
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = original.type,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = transformConstWithOperators(original, containingFunction, remainingOperators)
             )
         }
     }
@@ -739,8 +1111,6 @@ class MutflowIrTransformer(
         val variantDescriptions = operator.variantDescriptions(declaration).joinToString(",")
         val lineNumber = currentFile?.fileEntry?.getLineNumber(declaration.startOffset)?.plus(1) ?: 0
         val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalDescription)
-
-        debug("MUTATION: BODY of $originalDescription at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantDescriptions")
 
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
             call.arguments[0] = builder.irGetObject(registryClass)
@@ -905,7 +1275,6 @@ class MutflowIrTransformer(
             }
         }
 
-        debug("Parsed suppressed lines for $filePath: $suppressed")
         suppressedLinesCache[filePath] = suppressed
         return suppressed
     }

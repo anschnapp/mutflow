@@ -12,6 +12,11 @@ import org.jetbrains.kotlin.ir.expressions.IrWhen
 interface WhenMutationOperator {
 
     /**
+     * Declarative metadata for this operator (stable id, group, status).
+     */
+    val descriptor: MutatorDescriptor
+
+    /**
      * Returns true if this operator can generate mutations for the given when expression.
      */
     fun matches(whenExpr: IrWhen): Boolean

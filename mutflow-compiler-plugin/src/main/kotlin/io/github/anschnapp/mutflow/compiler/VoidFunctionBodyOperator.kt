@@ -31,6 +31,14 @@ import org.jetbrains.kotlin.ir.util.isPropertyAccessor
  */
 class VoidFunctionBodyOperator : FunctionBodyMutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "VOID_FUNCTION_BODY",
+        name = "VoidFunctionBody",
+        description = "Empty the body of Unit-returning functions",
+        group = MutatorGroup.CALL,
+        status = MutatorStatus.STABLE
+    )
+
     override fun matches(function: IrSimpleFunction): Boolean {
         if (!function.returnType.isUnit()) return false
         if (function.isPropertyAccessor) return false

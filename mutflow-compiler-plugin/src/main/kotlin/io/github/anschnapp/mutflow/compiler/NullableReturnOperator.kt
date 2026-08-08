@@ -35,6 +35,14 @@ import org.jetbrains.kotlin.ir.types.isNullable
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class NullableReturnOperator : ReturnMutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "RETURN_NULLABLE",
+        name = "NullableReturn",
+        description = "Replace nullable return with null",
+        group = MutatorGroup.RETURN,
+        status = MutatorStatus.STABLE
+    )
+
     override fun matches(ret: IrReturn): Boolean {
         val value = ret.value
 

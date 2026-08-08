@@ -589,6 +589,62 @@ The environment variable override is intentional: it allows the same test code t
 The `mutflow-core` module contains the bridge between compiler-generated code and test
 runtime. Both sides depend on it, but not on each other, keeping coupling minimal.
 
+### Multiplatform Architecture (KMR)
+
+mutflow's mutation engine is **target-agnostic**: every operator is defined and applied on
+Kotlin's common IR (post-FIR), and the same mutation points and IDs appear on every backend.
+The backends simply lower the resulting guarded `when`/conditionals naturally:
+
+| Backend | Lowering target | Notes |
+|---|---|---|
+| JVM | JVM bytecode | `IF_ICMP*`, `IADD`/`ISUB`, `IRETURN`, … |
+| Kotlin/JS | JS operators | `+`→`-`, `===`→`!==`, `&&`→`||`, … |
+| Kotlin/WASM | WASM | same JS-style conditionals compiled to WASM |
+| Kotlin/Native | LLVM IR | `icmp slt`→`icmp sle`, `add`→`sub`, `br`→`select`, … |
+
+**Module layout (multiplatform):**
+
+```
+mutflow-annotations   commonMain   @MutationTarget, @SuppressMutations
+mutflow-core          commonMain   MutationRegistry, session mgmt, discovery
+                      jvmMain      real synchronized + java.util.concurrent
+                      jsMain       single-threaded (no-op lock)
+                      wasmJsMain   single-threaded (no-op lock)
+                      nativeMain   sequential (no-op lock; TODO: real mutex)
+mutflow-runtime       commonMain   MutFlow, MutFlowSession, selection/shuffle, traps, reporting
+                      jvmMain      real thread-id + ConcurrentHashMap
+                      jsMain/wasmJsMain/nativeMain   single-threaded constants
+mutflow-compiler-plugin            K2 IR plugin (JVM-hosted, applies to all targets)
+mutflow-gradle-plugin               Gradle plugin (JVM + KMP wiring)
+mutflow-test-kmp                    sample: jvm(), js(IR), wasmJs(), linuxX64()
+```
+
+**Key design points:**
+
+1. **Single source of truth at IR level.** All operators live in the compiler plugin and
+   match on common IR. The same `MutationRegistry.check(...)` call is injected regardless
+   of target, so mutation IDs and source locations are identical across backends.
+
+2. **Test-only injection.** On JVM, the Gradle plugin uses a dedicated `mutatedMain` source
+   set (dual compilation) so production artifacts never contain mutation markers. On KMP,
+   the plugin is applied to every compilation, but injection is gated on `@MutationTarget`
+   (or configured target patterns) — production code is untouched unless explicitly
+   annotated. The optional CLI safe-guard verification (see README) can additionally assert
+   that release artifacts contain no mutation markers.
+
+3. **Multiplatform runtime.** `MutationRegistry`, session management, discovery, selection
+   strategies, and timeout detection all live in `commonMain`. The only expect/actual
+   pieces are the concurrent collection factories and the session lock
+   (`withSessionLock`), which are trivial per platform.
+
+4. **Backend-specific lowering is mechanical.** The IR injection is identical; each backend
+   lowers the guarded `when` naturally. No per-backend mutation logic exists.
+
+**Cross-backend consistency.** The `mutflow-test-kmp` sample runs the same
+`CalculatorTest` on JVM, JS, WASM, and Native, asserting that the same mutation points are
+discovered and killed on every backend. This is the primary regression guard for
+target-agnosticism.
+
 ### Session-Based Architecture
 
 State is scoped to sessions rather than being globally mutable:
@@ -869,6 +925,23 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
   - Catches tests that don't verify side effects - "what if this function did nothing?"
   - Operates at the function declaration level, not at call sites
+- Additional operators (see `MutationCatalog.kt` and `docs/mutation-catalog.md`):
+  - `BitwiseOperator` — `and`↔`or`, `xor`→`and`/`or`, `shl`↔`shr`, `ushr`→`shl` (integer types)
+  - `UnaryMinusOperator` — `-a` → `a`
+  - `IncrementOperator` — `++` ↔ `--`; `RemoveIncrementOperator` (experimental) — `a++` → `a`
+  - `ReplaceNonVoidCallOperator` — non-void call → default value of return type
+  - `PrimitiveReturnOperator` — numeric return → `0`; `ObjectReturnOperator` — object return → `null`
+  - `BooleanConstOperator` — boolean literal `true` ↔ `false`; `StringLiteralOperator` — string → `""`
+  - `ConstructorCallOperator` — constructor call → `null`
+  - `ForceConditionalOperator` — force `if` condition to `true`/`false`
+  - `StringMethodOperator` — `endsWith`↔`startsWith`, `toUpperCase`↔`toLowerCase`, `trim`→`""`
+  - `CollectionMethodOperator` — `filter`↔`filterNot`, `any`↔`all`, `take`↔`drop`,
+    `isEmpty`↔`isNotEmpty`, `min`↔`max`, `minBy`↔`maxBy` (indexOf↔lastIndexOf omitted — WASM-incompatible)
+  - `ReferenceEqualityOperator` — `===`↔`!==`
+  - `ElvisOperator` — `a ?: b` → `a` / `b`
+  - `SafeCallOperator` — `a?.b` → `a!!.b` (drop null guard)
+  - `EmptyCollectionReturnOperator` — collection return → `emptyList()`/`emptySet()`/`emptyMap()`
+  - `AssignConstOperator` — `a = b` → `a = <default const>` (numeric 0, `""`, `false`, `null`)
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions
@@ -890,6 +963,10 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Target filtering: `includeTargets`/`excludeTargets` for scoping mutations by class
 - `MutationsExhaustedException` when all mutations tested
 - `VerificationMode` enum: `STRICT`, `LENIENT`, `DISABLED`
+- **Multiplatform**: lives in `commonMain`; uses `kotlin.uuid.Uuid` for session IDs and
+  `TimeSource.Monotonic` for seeds. Thread routing and the concurrent map are expect/actual
+  (real `Thread.currentThread().id` + `ConcurrentHashMap` on JVM; constants/plain maps on
+  JS/WASM/Native).
 
 **mutflow-junit6:**
 - `@MutFlowTest` meta-annotation combining `@ClassTemplate` + `@ExtendWith`
@@ -900,6 +977,17 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 **mutflow-test-sample:**
 - Integration tests demonstrating both APIs
+
+**mutflow-test-kmp (multiplatform sample):**
+- Same `CalculatorTest` runs on JVM, JS (IR), WASM, and Native (linuxX64)
+- Verifies cross-backend consistency of mutation points and killing
+- `mutflow-core` provides expect/actual for concurrent collections and the session lock
+  (`jvmMain` real `synchronized`, `jsMain`/`wasmJsMain`/`nativeMain` no-op)
+
+**mutflow-gradle-plugin:**
+- JVM: dual-compilation via a dedicated `mutatedMain` source set
+- KMP: applies the compiler plugin to every compilation and wires the runtime into
+  `commonMain`/`commonTest`; injection gated on `@MutationTarget` keeps production clean
 
 ### Target API
 
@@ -977,9 +1065,10 @@ fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt
 
 ### Planned
 
-- Gradle plugin for easy setup
 - Smarter likelihood calculations (see below)
 - State invalidation hooks
+- Real mutex for Native `withSessionLock` (currently sequential no-op)
+- WASM/WASI target (beyond `wasmJs`)
 
 #### Smarter Likelihood Calculations
 

@@ -15,6 +15,11 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 interface FunctionBodyMutationOperator {
 
     /**
+     * Declarative metadata for this operator (stable id, group, status).
+     */
+    val descriptor: MutatorDescriptor
+
+    /**
      * Returns true if this operator can generate a mutation for the given function.
      */
     fun matches(function: IrSimpleFunction): Boolean

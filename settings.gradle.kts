@@ -2,6 +2,7 @@ pluginManagement {
     val kotlinVersion: String by settings
     plugins {
         kotlin("jvm") version kotlinVersion
+        kotlin("multiplatform") version kotlinVersion
     }
 }
 
@@ -14,3 +15,4 @@ include("mutflow-compiler-plugin")
 include("mutflow-junit6")
 include("mutflow-gradle-plugin")
 include("mutflow-test-sample")
+include("mutflow-test-kmp")

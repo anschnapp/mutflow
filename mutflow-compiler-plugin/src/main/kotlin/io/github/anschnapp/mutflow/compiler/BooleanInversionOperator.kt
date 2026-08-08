@@ -22,6 +22,14 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class BooleanInversionOperator : MutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "BOOLEAN_INVERSION",
+        name = "BooleanInversion",
+        description = "Invert boolean expression: expr → !expr",
+        group = MutatorGroup.BOOLEAN,
+        status = MutatorStatus.STABLE
+    )
+
     override fun matches(call: IrCall): Boolean {
         val name = call.symbol.owner.name.asString()
         if (name == "not") return false

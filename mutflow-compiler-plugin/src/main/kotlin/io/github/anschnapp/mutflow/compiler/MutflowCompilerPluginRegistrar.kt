@@ -36,6 +36,8 @@ class MutflowCompilerPluginRegistrar : CompilerPluginRegistrar() {
     override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
         debug("registerExtensions() called!")
         debug("  configuration: $configuration")
+        // Fail fast on catalog invariants (duplicate/blank ids) before any compilation.
+        MutationCatalog.validate()
         val targetPatterns = configuration.get(MUTFLOW_TARGET_PATTERNS_KEY) ?: emptyList()
         debug("  target patterns: $targetPatterns")
         IrGenerationExtension.registerExtension(MutflowIrGenerationExtension(targetPatterns))

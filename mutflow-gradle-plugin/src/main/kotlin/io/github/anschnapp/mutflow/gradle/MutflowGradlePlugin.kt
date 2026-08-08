@@ -77,6 +77,56 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
             }
             debug("  configuration complete")
         }
+
+        // Kotlin Multiplatform: apply the compiler plugin to every compilation and
+        // wire the runtime into commonMain/commonTest. Production code stays clean
+        // because the plugin only injects mutations into @MutationTarget classes
+        // (or classes matching the configured target patterns). This mirrors how the
+        // KMP sample project (mutflow-test-kmp) is wired up.
+        target.plugins.withId("org.jetbrains.kotlin.multiplatform") {
+            debug("  kotlin.multiplatform plugin detected, configuring...")
+            target.afterEvaluate {
+                if (extension.enabled.get()) {
+                    addKmpDependencies(target)
+                } else {
+                    // Keep code compiling even when mutation testing is disabled.
+                    addKmpDependencies(target)
+                }
+            }
+            debug("  KMP configuration complete")
+        }
+    }
+
+    /**
+     * Adds the mutflow runtime dependencies to the KMP common source sets.
+     *
+     * - `commonMain` gets `mutflow-annotations` (for `@MutationTarget`) and
+     *   `mutflow-core` (for the `MutationRegistry.check()` calls the compiler
+     *   plugin injects).
+     * - `commonTest` gets `mutflow-core` so tests can drive sessions.
+     *
+     * The compiler plugin itself is applied to every compilation via
+     * [isApplicable] / [applyToCompilation]; production artifacts remain clean
+     * because injection is gated on `@MutationTarget` / target patterns.
+     */
+    private fun addKmpDependencies(project: Project) {
+        val kotlin = project.extensions.findByName("kotlin")
+            ?: return
+        val sourceSets = (kotlin as? org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension)
+            ?.sourceSets
+            ?: return
+
+        sourceSets.matching { it.name == "commonMain" }.configureEach { ss ->
+            ss.dependencies {
+                implementation("$GROUP_ID:mutflow-annotations:$MUTFLOW_VERSION")
+                implementation("$GROUP_ID:mutflow-core:$MUTFLOW_VERSION")
+            }
+        }
+        sourceSets.matching { it.name == "commonTest" }.configureEach { ss ->
+            ss.dependencies {
+                implementation("$GROUP_ID:mutflow-core:$MUTFLOW_VERSION")
+            }
+        }
     }
 
     /**
@@ -181,8 +231,12 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         val extension = project.extensions.findByType(MutflowExtension::class.java)
         val enabled = extension?.enabled?.get() ?: true
         val compilationName = kotlinCompilation.name
-        val isApplicable = enabled && compilationName == MUTATED_MAIN
-        debug("isApplicable(compilation='$compilationName', enabled=$enabled) -> $isApplicable")
+        // JVM: only the dedicated `mutatedMain` compilation is mutated (dual-compilation).
+        // KMP: apply to every compilation (main + test) — injection is gated on
+        // @MutationTarget / target patterns, so production artifacts stay clean.
+        val isKmp = project.plugins.hasPlugin("org.jetbrains.kotlin.multiplatform")
+        val isApplicable = enabled && (if (isKmp) true else compilationName == MUTATED_MAIN)
+        debug("isApplicable(compilation='$compilationName', enabled=$enabled, kmp=$isKmp) -> $isApplicable")
         return isApplicable
     }
 

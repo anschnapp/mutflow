@@ -23,6 +23,14 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class RelationalComparisonOperator : MutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "RELATIONAL_COMPARISON",
+        name = "RelationalComparison",
+        description = "Boundary (add/remove equality) and direction flip for <, >, <=, >=",
+        group = MutatorGroup.RELATIONAL,
+        status = MutatorStatus.STABLE
+    )
+
     companion object {
         private val SUPPORTED_ORIGINS = setOf(
             IrStatementOrigin.GT,

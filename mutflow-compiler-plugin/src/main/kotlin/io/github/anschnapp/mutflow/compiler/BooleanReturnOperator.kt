@@ -29,6 +29,14 @@ import org.jetbrains.kotlin.ir.types.isBoolean
  */
 class BooleanReturnOperator : ReturnMutationOperator {
 
+    override val descriptor = MutatorDescriptor(
+        id = "RETURN_BOOLEAN",
+        name = "BooleanReturn",
+        description = "Replace boolean return with true / false",
+        group = MutatorGroup.RETURN,
+        status = MutatorStatus.STABLE
+    )
+
     override fun matches(ret: IrReturn): Boolean {
         val value = ret.value
 

@@ -11,6 +11,11 @@ import org.jetbrains.kotlin.ir.expressions.IrReturn
 interface ReturnMutationOperator {
 
     /**
+     * Declarative metadata for this operator (stable id, group, status).
+     */
+    val descriptor: MutatorDescriptor
+
+    /**
      * Returns true if this operator can generate mutations for the given return statement.
      */
     fun matches(ret: IrReturn): Boolean
