@@ -51,9 +51,12 @@ results changed.
 
 - Inputs that throw are recorded as `CRASH:<Exception>` rather than aborting the
   run, so a crashing mutant is still reported (and counted as killed).
-- The `ConstructorCallOperator` deliberately skips `Regex(...)` constructor
-  calls: replacing a `Regex` with `null` makes the subsequent `.containsMatchIn()`
-  a null-deref that is a catchable NPE on JVM/JS but an **uncatchable segfault**
-  on Kotlin/Native and Kotlin/Wasm, which would kill the whole test process.
+- The `ConstructorCallOperator` deliberately skips constructor calls for types in
+  its `UNSAFE_NULL_DEREF_TYPES` list (currently just `Regex`, whose matching
+  delegates to the native/JS regex engine): replacing such an object with `null`
+  makes the subsequent method call a null-deref that is a catchable NPE on JVM/JS
+  but an **uncatchable segfault** on Kotlin/Native and Kotlin/Wasm, which would
+  kill the whole test process. There's no reliable way to detect this from IR
+  alone, so add to that list if another type is found to crash the same way.
 - The tool targets the KMP `sample.Calculator` artifact. Point it at another
   module's mutated classes by editing the build tasks in `inspect-all.sh`.

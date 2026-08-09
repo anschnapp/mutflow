@@ -84,10 +84,11 @@ for p in platforms:
     variants = d.get("variants", [])
     killed = sum(1 for v in variants if v.get("killed"))
     survived = len(variants) - killed
+    kill_rate = f"{100.0*killed/len(variants):.1f}%" if variants else "n/a"
     rows.append(
         f"<tr class='plat'><td class='mono'>{p}</td>"
         f"<td>{len(variants)}</td><td>{killed}</td><td>{survived}</td>"
-        f"<td>{100.0*killed/len(variants):.1f}%</td>"
+        f"<td>{kill_rate}</td>"
         f"<td class='detail'>{esc('; '.join(v['operator'] for v in variants[:8]))}{' …' if len(variants)>8 else ''}</td></tr>"
     )
 

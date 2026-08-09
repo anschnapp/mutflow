@@ -20,9 +20,10 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  * least two value arguments whose types are equal, so the replacement typechecks
  * on every backend.
  *
- * Argument layout: for a dispatch member call (`a.f(b, c)`) `call.arguments[0]`
- * is the dispatch receiver; for an extension call (`xs.f(b)`) `call.arguments[0]`
- * is the extension receiver. Both are excluded from the propagable value args.
+ * Argument layout: `call.arguments` is positionally aligned with
+ * `call.symbol.owner.parameters`, so dispatch receiver, context parameters,
+ * and extension receiver slots (in any combination) are identified by kind
+ * and excluded from the propagable value args.
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class ArgumentPropagationOperator : MutationOperator {
@@ -46,18 +47,16 @@ class ArgumentPropagationOperator : MutationOperator {
         call.symbol.owner.name.asString()
 
     /**
-     * Returns the value arguments (excluding the dispatch receiver and, for
-     * extension functions, the extension receiver at argument 0) as
-     * (expression, argumentIndex) pairs.
+     * Returns the value arguments (excluding dispatch receiver, context
+     * parameters, and extension receiver, regardless of which combination is
+     * present) as (expression, argumentIndex) pairs. `call.arguments` is
+     * positionally aligned with `call.symbol.owner.parameters`, so each slot's
+     * kind is looked up directly rather than inferred from a single offset.
      */
     private fun valueArguments(call: IrCall): List<Pair<IrExpression, Int>> {
-        val start = when {
-            call.dispatchReceiver != null -> 1 // dispatch receiver occupies arguments[0]
-            call.symbol.owner.parameters.any { it.kind == IrParameterKind.ExtensionReceiver } -> 1
-            else -> 0
-        }
-        return call.arguments.drop(start).mapIndexedNotNull { i, expr ->
-            if (expr != null) expr to (i + start) else null
+        val kinds = call.symbol.owner.parameters.map { it.kind }
+        return call.arguments.mapIndexedNotNull { i, expr ->
+            if (expr != null && kinds.getOrNull(i) == IrParameterKind.Regular) expr to i else null
         }
     }
 

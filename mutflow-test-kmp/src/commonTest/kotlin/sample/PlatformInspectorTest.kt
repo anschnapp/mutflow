@@ -44,8 +44,8 @@ class PlatformInspectorTest {
     @Test
     fun inspectAllPlatforms() {
         // Baseline: discover points + record expected results per input.
-        val expected = MutationRegistry.withSession<Map<String, List<Any?>>>(null) { runBattery() }.first
-        val points = MutationRegistry.withSession<Unit>(null) { runBattery() }.second.discoveredPoints
+        val (expected, baseline) = MutationRegistry.withSession<Map<String, List<Any?>>>(null) { runBattery() }
+        val points = baseline.discoveredPoints
 
         // For each point × variant, run the battery and classify killed/survived.
         val variants = mutableListOf<VariantResult>()

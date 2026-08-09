@@ -6,19 +6,18 @@ internal actual fun currentPlatform(): String = "wasmJs"
 // write the inspector JSON to inspect-results/<platform>.json in the test working
 // directory (the WASM package dir). inspect-all.sh globs the repo for these files.
 // Kotlin/Wasm JS interop only allows external/primitive/string/function params,
-// so we use the single-arg mkdirSync (which throws EEXIST if the dir exists) and
-// the two-arg writeFileSync.
+// so we check existsSync first rather than calling mkdirSync unconditionally and
+// swallowing its EEXIST throw — that would also hide genuine mkdir failures.
 @JsModule("fs")
 private external object fs {
+    fun existsSync(path: String): Boolean
     fun mkdirSync(path: String)
     fun writeFileSync(path: String, data: String)
 }
 
 internal actual fun writeResultsFile(platform: String, json: String) {
-    try {
+    if (!fs.existsSync("inspect-results")) {
         fs.mkdirSync("inspect-results")
-    } catch (e: Throwable) {
-        // EEXIST is fine — the directory already exists from a prior run.
     }
     fs.writeFileSync("inspect-results/$platform.json", json)
 }
