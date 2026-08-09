@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # mutflow-inspect-all: run the mutated binary on EVERY KMP target (JVM, JS,
-# WASM, Native) and aggregate the per-platform JSON results into one HTML
-# dashboard so you can see killed vs survived mutants by eye, per platform.
+# WASM, Native linuxX64, Native macosArm64) and aggregate the per-platform JSON
+# results into one HTML dashboard so you can see killed vs survived mutants by
+# eye, per platform. Kotlin/Native only builds/runs targets compatible with the
+# current host (e.g. macosArm64 requires a macOS host, linuxX64 a Linux host),
+# so whichever native target doesn't match this machine is skipped, not failed.
 #
 # Usage:
 #   ./inspect-all.sh                 # build + run all targets + write report-all.html
@@ -23,6 +26,7 @@ if [[ "${1:-}" != "--no-build" ]]; then
       :mutflow-test-kmp:compileKotlinJs \
       :mutflow-test-kmp:compileKotlinWasmJs \
       :mutflow-test-kmp:compileKotlinLinuxX64 \
+      :mutflow-test-kmp:compileKotlinMacosArm64 \
       --console=plain -q)
 fi
 
@@ -41,13 +45,16 @@ echo "[inspect-all] running inspector on WASM (node)..."
 echo "[inspect-all] running inspector on Native (linuxX64)..."
 (cd "$ROOT" && ./gradlew :mutflow-test-kmp:linuxX64Test --tests 'sample.PlatformInspectorTest' --rerun-tasks --console=plain -q)
 
+echo "[inspect-all] running inspector on Native (macosArm64)..."
+(cd "$ROOT" && ./gradlew :mutflow-test-kmp:macosArm64Test --tests 'sample.PlatformInspectorTest' --rerun-tasks --console=plain -q)
+
 # 3. Aggregate the JSON files into one HTML dashboard.
 echo "[inspect-all] aggregating results..."
 python3 - "$ROOT" "$OUT" <<'PY'
 import json, os, sys, html
 
 root, out = sys.argv[1], sys.argv[2]
-platforms = ["jvm", "js", "wasmJs", "linuxX64"]
+platforms = ["jvm", "js", "wasmJs", "linuxX64", "macosArm64"]
 data = {}
 # Each target writes inspect-results/<platform>.json into its own working dir
 # (JVM/native: mutflow-test-kmp/build/inspect-results; JS/WASM: the package dir).
@@ -128,7 +135,7 @@ th{{background:#f4f4f4}}.mono{{font-family:ui-monospace,monospace}}
 tr.plat td{{font-weight:600}}
 </style></head><body>
 <h1>mutflow multiplatform binary inspection</h1>
-<p>Mutated classes: <span class='mono'>sample.Calculator</span> &middot; targets: JVM, JS, WASM, Native</p>
+<p>Mutated classes: <span class='mono'>sample.Calculator</span> &middot; targets: JVM, JS, WASM, Native (linuxX64), Native (macosArm64)</p>
 <table><tr><th>Platform</th><th>Variants</th><th>Killed</th><th>Survived</th><th>Kill rate</th><th>Operators</th></tr>
 {''.join(rows)}
 </table>

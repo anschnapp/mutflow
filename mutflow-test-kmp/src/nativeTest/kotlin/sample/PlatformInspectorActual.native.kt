@@ -2,6 +2,7 @@ package sample
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import platform.posix.mkdir
@@ -18,11 +19,14 @@ import platform.posix.EEXIST
 import platform.posix.errno
 import platform.posix.strerror
 
-internal actual fun currentPlatform(): String = "linuxX64"
-
+// Shared across every Kotlin/Native leaf target (linuxX64, macosArm64, ...) via the
+// default hierarchy template's "native" intermediate source set. Per-target platform
+// naming lives in each leaf target's own PlatformInspectorActual.<target>.kt.
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun writeResultsFile(platform: String, json: String) {
-    if (mkdir("inspect-results", (S_IRUSR or S_IWUSR or S_IXUSR).toUInt()) != 0 && errno != EEXIST) {
+    // mode_t is a different width per platform (e.g. UShort on Darwin, UInt on
+    // Linux); `.convert()` adapts to whatever each platform's binding expects.
+    if (mkdir("inspect-results", (S_IRUSR or S_IWUSR or S_IXUSR).convert()) != 0 && errno != EEXIST) {
         error("mkdir(inspect-results) failed: ${strerror(errno)?.toKString()}")
     }
     val path = "inspect-results/$platform.json"

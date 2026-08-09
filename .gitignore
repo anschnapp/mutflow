@@ -5,3 +5,6 @@ build
 .idea
 CLAUDE.md
 example
+# Written by native (linuxX64/macosArm64) inspector test runs into the module
+# root rather than build/ (Kotlin/Native test process working directory).
+mutflow-test-kmp/inspect-results/
