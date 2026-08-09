@@ -3,6 +3,7 @@ package io.github.anschnapp.mutflow.compiler
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
+import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.makeNullable
 
 /**
@@ -19,6 +20,19 @@ import org.jetbrains.kotlin.ir.types.makeNullable
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class ConstructorCallOperator : ConstructorCallMutationOperator {
 
+    companion object {
+        // Types whose members delegate to a native/JS-backed implementation (e.g.
+        // Regex's platform regex engine) where a null-deref segfaults uncatchably
+        // on Kotlin/Native and Kotlin/Wasm instead of throwing a catchable NPE like
+        // it does on JVM/JS. There's no reliable IR-level signal (e.g. `isExternal`
+        // on a member function) that flags this — the crash can originate several
+        // calls deep inside stdlib internals — so this has to be a manually
+        // maintained list of FQNs found to be unsafe in practice.
+        private val UNSAFE_NULL_DEREF_TYPES = setOf(
+            "kotlin.text.Regex"
+        )
+    }
+
     override val descriptor = MutatorDescriptor(
         id = "CONSTRUCTOR_CALL",
         name = "ConstructorCall",
@@ -27,7 +41,8 @@ class ConstructorCallOperator : ConstructorCallMutationOperator {
         status = MutatorStatus.STABLE
     )
 
-    override fun matches(call: IrConstructorCall): Boolean = true
+    override fun matches(call: IrConstructorCall): Boolean =
+        call.type.classFqName?.asString() !in UNSAFE_NULL_DEREF_TYPES
 
     override fun originalDescription(call: IrConstructorCall): String =
         call.symbol.owner.name.asString()

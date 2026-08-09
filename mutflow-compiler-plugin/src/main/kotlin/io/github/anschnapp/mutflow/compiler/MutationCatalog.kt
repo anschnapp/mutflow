@@ -26,18 +26,11 @@ object MutationCatalog {
         IncrementOperator(),
         ReplaceNonVoidCallOperator(),
         StringMethodOperator(),
-        CollectionMethodOperator()
-    )
-
-    /**
-     * Experimental call operators, NOT enabled by default.
-     *
-     * These are high-noise or not yet validated across all backends. Opt in by
-     * passing `MutationCatalog.callOperators + MutationCatalog.experimentalCallOperators`
-     * to the transformer.
-     */
-    val experimentalCallOperators: List<MutationOperator> = listOf(
-        RemoveIncrementOperator()
+        CollectionMethodOperator(),
+        // Experimental call operators, enabled by default but marked EXPERIMENTAL
+        // for reporting/filtering.
+        RemoveIncrementOperator(),
+        ArgumentPropagationOperator()
     )
 
     /** Operators that match on [org.jetbrains.kotlin.ir.expressions.IrReturn] nodes. */
@@ -66,7 +59,8 @@ object MutationCatalog {
         BooleanLogicOperator(),
         ForceConditionalOperator(),
         ElvisOperator(),
-        SafeCallOperator()
+        SafeCallOperator(),
+        SwitchOperator()
     )
 
     /** Operators that match on [org.jetbrains.kotlin.ir.expressions.IrConst] nodes. */
@@ -82,7 +76,8 @@ object MutationCatalog {
      * in Kotlin 2.4.0, so they get their own list and transformer visitor path.
      */
     val constructorCallOperators: List<ConstructorCallMutationOperator> = listOf(
-        ConstructorCallOperator()
+        ConstructorCallOperator(),
+        RegexPatternOperator()
     )
 
     /** Operators that match on assignment nodes ([org.jetbrains.kotlin.ir.expressions.IrSetValue]
@@ -99,7 +94,6 @@ object MutationCatalog {
      */
     val allDescriptors: List<MutatorDescriptor> =
         (callOperators.map { it.descriptor } +
-            experimentalCallOperators.map { it.descriptor } +
             returnOperators.map { it.descriptor } +
             functionBodyOperators.map { it.descriptor } +
             whenOperators.map { it.descriptor } +

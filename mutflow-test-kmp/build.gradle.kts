@@ -17,6 +17,7 @@ kotlin {
         nodejs()
     }
     linuxX64()
+    macosArm64()
 
     sourceSets {
         commonMain.dependencies {
