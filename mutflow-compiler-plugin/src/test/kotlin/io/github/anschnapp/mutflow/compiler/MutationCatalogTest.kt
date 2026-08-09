@@ -14,15 +14,20 @@ class MutationCatalogTest {
 
     @Test
     fun `all operators are registered`() {
-        assertEquals(13, MutationCatalog.callOperators.size)
-        assertEquals(1, MutationCatalog.experimentalCallOperators.size)
+        // 13 original + RemoveIncrement + ArgumentPropagation
+        assertEquals(15, MutationCatalog.callOperators.size)
         assertEquals(5, MutationCatalog.returnOperators.size)
         assertEquals(1, MutationCatalog.functionBodyOperators.size)
-        assertEquals(4, MutationCatalog.whenOperators.size)
+        // 4 original + Switch
+        assertEquals(5, MutationCatalog.whenOperators.size)
         assertEquals(2, MutationCatalog.constOperators.size)
-        assertEquals(1, MutationCatalog.constructorCallOperators.size)
+        // ConstructorCall + RegexPattern
+        assertEquals(2, MutationCatalog.constructorCallOperators.size)
         assertEquals(1, MutationCatalog.assignmentOperators.size)
-        assertEquals(27, MutationCatalog.allDescriptors.size)
+        // 27 original + 4 new = 31 raw, minus 1 for the BooleanLogic descriptor that
+        // appears in both the call and when lists (deduped by distinct() because
+        // MutatorDescriptor is a data class and the two instances produce equal values).
+        assertEquals(30, MutationCatalog.allDescriptors.size)
     }
 
     @Test
@@ -74,6 +79,10 @@ class MutationCatalogTest {
         assertNotNull(MutationCatalog.byId("SAFE_CALL"))
         assertNotNull(MutationCatalog.byId("RETURN_EMPTY_COLLECTION"))
         assertNotNull(MutationCatalog.byId("ASSIGN_CONST"))
+        assertNotNull(MutationCatalog.byId("REMOVE_INCREMENT"))
+        assertNotNull(MutationCatalog.byId("ARGUMENT_PROPAGATION"))
+        assertNotNull(MutationCatalog.byId("SWITCH"))
+        assertNotNull(MutationCatalog.byId("REGEX_PATTERN"))
     }
 
     @Test
@@ -88,11 +97,12 @@ class MutationCatalogTest {
         assertEquals(3, MutationCatalog.byGroup(MutatorGroup.BOOLEAN).size)   // BooleanInversion + BooleanLogic + BooleanConst
         assertEquals(1, MutationCatalog.byGroup(MutatorGroup.CONSTANT).size)
         assertEquals(5, MutationCatalog.byGroup(MutatorGroup.RETURN).size)
-        assertEquals(3, MutationCatalog.byGroup(MutatorGroup.CALL).size)   // ReplaceNonVoid + ConstructorCall + VoidFunctionBody
-        assertEquals(1, MutationCatalog.byGroup(MutatorGroup.CONTROL_FLOW).size)
+        assertEquals(4, MutationCatalog.byGroup(MutatorGroup.CALL).size)   // ReplaceNonVoid + ConstructorCall + VoidFunctionBody + ArgumentPropagation
+        assertEquals(2, MutationCatalog.byGroup(MutatorGroup.CONTROL_FLOW).size) // ForceConditional + Switch
         assertEquals(2, MutationCatalog.byGroup(MutatorGroup.KOTLIN_SPECIFIC).size) // Elvis + SafeCall
         assertEquals(2, MutationCatalog.byGroup(MutatorGroup.STRING).size)   // StringLiteral + StringMethod
         assertEquals(1, MutationCatalog.byGroup(MutatorGroup.COLLECTION).size)
+        assertEquals(1, MutationCatalog.byGroup(MutatorGroup.REGEX).size)    // RegexPattern
     }
 
     @Test

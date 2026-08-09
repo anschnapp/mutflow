@@ -42,4 +42,18 @@ class Calculator {
         result = x * 2
         return result
     }
+
+    // --- Experimental operators ---
+
+    fun switchOp(x: Int): Int = when (x) {
+        1 -> 10
+        2 -> 20
+        else -> 0
+    }
+
+    fun combine(a: Int, b: Int): Int = sum(a, b)
+
+    private fun sum(a: Int, b: Int): Int = a + b
+
+    fun matchesRegex(s: String): Boolean = Regex("^a").containsMatchIn(s)
 }

@@ -3,6 +3,7 @@ package io.github.anschnapp.mutflow.compiler
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
+import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.makeNullable
 
 /**
@@ -27,7 +28,14 @@ class ConstructorCallOperator : ConstructorCallMutationOperator {
         status = MutatorStatus.STABLE
     )
 
-    override fun matches(call: IrConstructorCall): Boolean = true
+    override fun matches(call: IrConstructorCall): Boolean {
+        // Replacing a Regex(...) with null makes the subsequent .containsMatchIn()
+        // a null-deref that is a catchable NPE on JVM/JS but an uncatchable segfault
+        // on Kotlin/Native and Kotlin/Wasm. Skip Regex so the mutant stays testable
+        // on every backend.
+        if (call.type.classFqName?.asString() == "kotlin.text.Regex") return false
+        return true
+    }
 
     override fun originalDescription(call: IrConstructorCall): String =
         call.symbol.owner.name.asString()

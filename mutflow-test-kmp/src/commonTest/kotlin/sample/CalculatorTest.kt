@@ -32,6 +32,9 @@ class CalculatorTest {
             calc.lengthOf("abc")
             calc.emptyListReturn()
             calc.doubleThenSet(21)
+            calc.switchOp(2)
+            calc.combine(3, 4)
+            calc.matchesRegex("abc")
         }
         assertTrue(
             session.mutationPointCount > 0,
@@ -55,6 +58,13 @@ class CalculatorTest {
         assertTrue(operators.contains("return ..."), "expected a return mutation, got: $operators")
         // The assign-const operator fires on the `result = x * 2` assignment.
         assertTrue(operators.contains("="), "expected assign-const (=) mutation, got: $operators")
+        // The experimental operators fire on the real compilation across all backends.
+        assertTrue(operators.contains("when"), "expected switch (when) mutation, got: $operators")
+        assertTrue(operators.contains("sum"), "expected argument-propagation (sum) mutation, got: $operators")
+        assertTrue(
+            operators.any { it.startsWith("Regex(") },
+            "expected Regex pattern mutation, got: $operators"
+        )
     }
 
     @Test
