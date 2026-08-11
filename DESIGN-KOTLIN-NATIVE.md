@@ -217,6 +217,7 @@ inherits the platform's own boundaries and covers everything inside them.
 | `macosX64`, `macosArm64` | Planned: same model; a macOS host is required even to produce the klibs, so these wait for a Mac/CI (adding them is a build-file one-liner per module) |
 | Apple simulators (`iosSimulatorArm64`, `iosX64`, `watchosSimulatorArm64`, ...) | Planned: same model; env vars need the `SIMCTL_CHILD_` prefix to reach the simulated process |
 | iOS/watchOS/tvOS device targets, Android Native | Out of scope: no standard Gradle test execution exists for these |
+| `jvm()` target **inside a KMP project** | **Gap, not yet supported.** The JVM wiring keys off the `org.jetbrains.kotlin.jvm` plugin id and the Java `SourceSetContainer`, neither of which a KMP project has; `MutflowKmpSupport` handles `KotlinNativeTarget` only. Nothing is instrumented, so `underTest {}` is a pass-through. See Open Questions |
 | JS / Wasm (Node or browser) | Not part of this work. Node could reuse the pattern later; browser lacks env vars and file IO and needs a different design |
 | Android local unit tests | Separate question: JVM path in principle, but `mutflow-junit6` requires JUnit 6 (Android ecosystem is JUnit 4/5-centric) |
 
@@ -238,6 +239,8 @@ This is acceptable because:
   logic, which is where most mutations live. The intended workflow: develop against
   the JVM target (interactive mutation feedback), run Native mutation verification
   in CI (catches `actual` implementations and platform-specific code).
+  **Not implemented yet** - see "JVM target inside a KMP project" in Open Questions.
+  Until it is, this fallback is the plan rather than the current state.
 - Everything that differentiates mutflow survives: single compilation, no separate
   tool, `underTest {}` scoping, traps, copy-pasteable survivor names, build fails
   on survivors.
@@ -436,6 +439,29 @@ Each phase keeps the JVM path green and releasable.
 
 ## Open Questions
 
+- **JVM target inside a KMP project.** Today mutflow supports two shapes: a plain
+  `kotlin("jvm")` project (Java source sets, `mutatedMain`, JUnit 6 in-process runs)
+  and the native targets of a KMP project (`MutflowKmpSupport`, process-per-mutation).
+  The `jvm()` target *of a KMP project* falls between them and gets nothing: the JVM
+  branch keys off `plugins.withId("org.jetbrains.kotlin.jvm")`, which never fires
+  there, and every API it uses (`SourceSetContainer`, `getByName("main")`,
+  `implementation`, `compileMutatedMainKotlin`) belongs to the Java plugin model that
+  KMP does not have. `MutflowKmpSupport.configure()` only iterates
+  `KotlinNativeTarget`.
+
+  This matters beyond completeness: the UX Tradeoff section argues the weaker Native
+  UX is acceptable *because* the JVM target keeps the interactive experience. That
+  argument only holds once this is closed. It is also the first thing a team hits
+  when they move an existing JVM module to KMP: mutation testing silently stops.
+
+  Likely shape of the fix: reuse the `compilations.create` + `associateWith` approach
+  already built for native (`KotlinJvmTarget` also exposes `compilations`), so the
+  `mutatedMain`/`mutatedTest` half should port fairly directly. The run side differs
+  and is the real work: JVM should keep the in-process JUnit 6 path rather than the
+  process orchestrator, which means pointing the existing `jvmTest` task at the
+  `mutatedTest` output instead of registering a new task. `mutflow-junit6` also needs
+  adding to `jvmTest` in the KMP path, where today only `mutflow-annotations` and
+  `mutflow-runtime` are wired.
 - Where traps and target filtering live on the Native path (run limits, timeout
   and verification mode landed in the Gradle DSL in Phase 3; traps are still open).
 - Random selection strategies (PureRandom, MostLikelyRandom) on the Native path:
