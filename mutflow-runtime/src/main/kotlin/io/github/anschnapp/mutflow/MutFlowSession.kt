@@ -187,8 +187,8 @@ class MutFlowSession internal constructor(
         return includeTargets.isNotEmpty() || excludeTargets.isNotEmpty()
     }
 
-    // Name of the first test that killed the current mutation
-    private var killedByTest: String? = null
+    // All tests that killed the current mutation (tracked for full per-test-per-mutation matrix)
+    private val killedByTests = mutableSetOf<String>()
 
     /**
      * Marks that a test failed during the baseline run.
@@ -200,14 +200,14 @@ class MutFlowSession internal constructor(
 
     /**
      * Marks that a test failed in the current run (mutation killed).
-     * Called by JUnit extension's exception handler.
+     * Called by JUnit extension's exception handler. Tracks ALL tests
+     * that killed this mutation for full per-test-per-mutation analysis.
      *
      * @param testName The name of the test that killed the mutation
      */
     fun markTestFailed(testName: String) {
-        if (!testFailedInCurrentRun && activeMutation != null) {
-            // Record first test that killed this mutation
-            killedByTest = testName
+        if (activeMutation != null) {
+            killedByTests.add(testName)
         }
         testFailedInCurrentRun = true
     }
@@ -235,11 +235,11 @@ class MutFlowSession internal constructor(
         if (timedOutInCurrentRun) {
             mutationResults[mutation] = MutationResult.TimedOut
         } else if (testFailedInCurrentRun) {
-            mutationResults[mutation] = MutationResult.Killed(killedByTest ?: "unknown")
+            mutationResults[mutation] = MutationResult.Killed(killedByTests.toSet())
         } else {
             mutationResults[mutation] = MutationResult.Survived
         }
-        killedByTest = null
+        killedByTests.clear()
     }
 
     /**
@@ -539,8 +539,10 @@ class MutFlowSession internal constructor(
                 when (result) {
                     is MutationResult.Killed -> {
                         println("║  ✓ ${mutationStr.padEnd(61)}║")
-                        val testLine = "      killed by: ${result.testName}"
-                        println("║${testLine.take(64).padEnd(64)}║")
+                        result.testNames.sorted().forEach { testName ->
+                            val testLine = "      killed by: $testName"
+                            println("║${testLine.take(64).padEnd(64)}║")
+                        }
                     }
                     is MutationResult.Survived -> {
                         survivedMutations.add(mutationStr)
@@ -597,7 +599,7 @@ data class SessionState(
  * Result of testing a single mutation.
  */
 sealed class MutationResult {
-    data class Killed(val testName: String) : MutationResult()
+    data class Killed(val testNames: Set<String>) : MutationResult()
     data object Survived : MutationResult()
     data object TimedOut : MutationResult()
 }
