@@ -452,6 +452,126 @@ class MutFlowTest {
 
         MutFlow.closeSession(sessionId)
     }
+    @Test
+    fun `markTestFailed records all killing tests not just first`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("point-0", 2)
+        }
+
+        // Run mutation 1
+        val mutation = runMutationWithSession(sessionId, 1)
+        assertNotNull(mutation)
+
+        // Simulate 3 tests failing during the mutation run
+        val session = MutFlow.getSession(sessionId)!!
+        MutFlow.startRun(sessionId, 1, mutation)
+        MutFlow.underTest {
+            session.markTestFailed("testAlpha()")
+            session.markTestFailed("testBeta()")
+            session.markTestFailed("testGamma()")
+        }
+        session.recordMutationResult()
+
+        val summary = session.getSummary()
+        val result = summary.results[mutation]
+        assertNotNull(result, "Mutation should have a result")
+        assertIs<MutationResult.Killed>(result)
+        assertEquals(setOf("testAlpha()", "testBeta()", "testGamma()"), result.testNames,
+            "All killing tests should be recorded, not just the first")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `markTestFailed with no killing tests stores Survived`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("point-0", 2)
+        }
+
+        val mutation = runMutationWithSession(sessionId, 1)
+        assertNotNull(mutation)
+
+        // No tests fail — mutation survives
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `markTestFailed ignores tests when no active mutation`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("point-0", 2)
+        }
+
+        val session = MutFlow.getSession(sessionId)!!
+        // markTestFailed without an active mutation should not store anything
+        session.markTestFailed("shouldNotBeRecorded()")
+        session.recordMutationResult()
+
+        // No mutation result should be recorded (no active mutation)
+        val summary = session.getSummary()
+        assertTrue(summary.results.isEmpty(), "No mutation results without active mutation")
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `printSummary outputs all killing tests`() {
+        val sessionId = MutFlow.createSession(
+            selection = Selection.MostLikelyStable,
+            shuffle = Shuffle.PerChange,
+            maxRuns = 10
+        )
+
+        runBaselineWithSession(sessionId) {
+            simulateMutationPoint("point-0", 2)
+        }
+
+        val mutation = runMutationWithSession(sessionId, 1)
+        assertNotNull(mutation)
+
+        val session = MutFlow.getSession(sessionId)!!
+        MutFlow.startRun(sessionId, 1, mutation)
+        MutFlow.underTest {
+            session.markTestFailed("testAlpha()")
+            session.markTestFailed("testBeta()")
+        }
+        session.recordMutationResult()
+
+        // Capture stdout
+        val originalOut = System.out
+        val captured = java.io.ByteArrayOutputStream()
+        System.setOut(java.io.PrintStream(captured))
+        try {
+            session.printSummary()
+        } finally {
+            System.setOut(originalOut)
+        }
+
+        val output = captured.toString()
+        assertTrue(output.contains("killed by: testAlpha()"),
+            "Summary should contain all killing tests: $output")
+        assertTrue(output.contains("killed by: testBeta()"),
+            "Summary should contain second killer: $output")
+
+        MutFlow.closeSession(sessionId)
+    }
 
     @Test
     fun `exhaustion works correctly with target filter`() {
