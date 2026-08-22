@@ -38,6 +38,7 @@ class MutflowIrTransformer(
     private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators(),
     private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators(),
     private val whenOperators: List<WhenMutationOperator> = defaultWhenOperators(),
+    private val constructorOperators: List<ConstructorMutationOperator> = defaultConstructorOperators(),
     private val targetPatterns: List<String> = emptyList()
 ) : IrElementTransformerVoid() {
 
@@ -63,7 +64,11 @@ class MutflowIrTransformer(
             ConstantBoundaryOperator(),
             ArithmeticOperator(),
             EqualitySwapOperator(),
-            BooleanInversionOperator()
+            BooleanInversionOperator(),
+        )
+
+        fun defaultConstructorOperators(): List<ConstructorMutationOperator> = listOf(
+            ExceptionTypeSwapOperator()
         )
 
         fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(
@@ -231,6 +236,22 @@ class MutflowIrTransformer(
 
         val fn = currentFunction ?: return transformed
         return transformCallWithOperators(transformed, fn, callOperators)
+    }
+
+    override fun visitConstructorCall(expression: IrConstructorCall): IrExpression {
+        // First, transform children (bottom-up for nested expressions)
+        val transformed = super.visitConstructorCall(expression) as IrConstructorCall
+
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        val fn = currentFunction ?: return transformed
+        return transformConstructorCallWithOperators(transformed, fn, constructorOperators)
     }
 
     override fun visitGetValue(expression: IrGetValue): IrExpression {
@@ -493,6 +514,111 @@ class MutflowIrTransformer(
                 endOffset = original.endOffset,
                 condition = builder.irTrue(),
                 result = transformCallWithOperators(original, containingFunction, remainingOperators)
+            )
+        }
+    }
+
+    /**
+     * Recursively applies matching constructor operators to an IrConstructorCall.
+     *
+     * Each matching operator wraps the constructor call in a when block, with
+     * the else branch passing to the next operator.
+     */
+    private fun transformConstructorCallWithOperators(
+        original: IrConstructorCall,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<ConstructorMutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return original
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(original)) {
+            return transformConstructorCallWithOperators(original, containingFunction, rest)
+        }
+
+        return transformConstructorCallWithOperator(original, containingFunction, operator, rest)
+    }
+
+    /**
+     * Transforms a constructor call using the given mutation operator.
+     *
+     * Generates a when expression with inline check() calls, using a common
+     * supertype (Throwable) for the result type since sibling exception types
+     * are not subtypes of each other:
+     * ```
+     * when {
+     *     MutationRegistry.check(...) == 0 -> IllegalStateException(msg)
+     *     else -> IllegalArgumentException(msg)
+     * }
+     * ```
+     */
+    private fun transformConstructorCallWithOperator(
+        original: IrConstructorCall,
+        containingFunction: IrSimpleFunction,
+        operator: ConstructorMutationOperator,
+        remainingOperators: List<ConstructorMutationOperator>
+    ): IrExpression {
+        val checkFn = checkFunction ?: return original
+        val registryClass = mutationRegistryClass ?: return original
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+
+        val variants = operator.variants(original, context)
+        if (variants.isEmpty()) {
+            return transformConstructorCallWithOperators(original, containingFunction, remainingOperators)
+        }
+
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(original)
+        val originalOperator = operator.originalDescription(original)
+        val variantOperators = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
+
+        debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
+
+        // Helper to create a fresh check() call for each branch condition
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
+        }
+
+        // Use Throwable as the when type since sibling exception types
+        // (e.g. IllegalArgumentException, IllegalStateException) share only
+        // Throwable as a common supertype.
+        val throwableType = pluginContext.irBuiltIns.throwableType
+
+        // Generate when expression with inline check() calls - no temporary variable.
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = throwableType,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = original.startOffset,
+                    endOffset = original.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = transformConstructorCallWithOperators(original, containingFunction, remainingOperators)
             )
         }
     }
