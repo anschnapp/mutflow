@@ -199,7 +199,9 @@ CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 ║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
 ║  ✓ (Calculator.kt:7) > → <                                      ║
+║      killed by: isPositive returns false for negative numbers()║
 ║      killed by: isPositive returns true at boundary()          ║
+║      killed by: isPositive returns true for positive numbers() ║
 ║  ✓ (Calculator.kt:7) 0 → 1                                      ║
 ║      killed by: isPositive returns true at boundary()          ║
 ║  ✓ (Calculator.kt:7) 0 → -1                                     ║

@@ -887,6 +887,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Selection strategies: `PureRandom`, `MostLikelyRandom`, `MostLikelyStable`
 - Shuffle modes: `PerRun`, `PerChange`
 - Touch count tracking during baseline
+- Killer tracking: every test that kills a mutation is recorded in `MutationResult.Killed(testNames)` and listed in the summary
 - Target filtering: `includeTargets`/`excludeTargets` for scoping mutations by class
 - `MutationsExhaustedException` when all mutations tested
 - `VerificationMode` enum: `STRICT`, `LENIENT`, `DISABLED`
@@ -942,7 +943,9 @@ CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 ║  ✓ (Calculator.kt:7) > → >=                                     ║
 ║      killed by: isPositive returns false for zero()            ║
 ║  ✓ (Calculator.kt:7) > → <                                      ║
+║      killed by: isPositive returns false for negative numbers()║
 ║      killed by: isPositive returns true at boundary()          ║
+║      killed by: isPositive returns true for positive numbers() ║
 ║  ✓ (Calculator.kt:7) 0 → 1                                      ║
 ║      killed by: isPositive returns true at boundary()          ║
 ║  ✓ (Calculator.kt:7) 0 → -1                                     ║

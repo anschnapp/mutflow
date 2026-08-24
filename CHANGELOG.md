@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- The mutation summary now lists every test that killed a mutation instead of only the first one. `MutationResult.Killed` carries `testNames: Set<String>` in place of `testName: String`, which is a source-incompatible change if you read mutation results programmatically. (#17)
+
+### Contributors
+Thanks to @trancee for the multi-killer tracking.
+
 ## [1.0.3] - 2026-07-04
 ### Fixed
 - Equality swap operator no longer mutates null comparisons. Kotlin's null-safety operators (`?:`, `?.`) desugar to a synthesized `x == null` check, which previously produced confusing `== -> !=` mutations on code with no visible equality operator (and, for safe-calls, an always-crashing mutant). Explicit `x == null` / `x != null` are skipped too, since inverting a null check is typically an equivalent mutant with little signal.
