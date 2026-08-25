@@ -8,6 +8,7 @@ import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
+import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
@@ -50,7 +51,6 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
             "kotlin.NumberFormatException" to "kotlin.IllegalArgumentException",
             "kotlin.ArithmeticException" to "kotlin.IllegalStateException",
             "kotlin.NoSuchElementException" to "kotlin.IllegalStateException",
-            "kotlin.RuntimeException" to "kotlin.IllegalArgumentException",
         )
     }
 
@@ -130,7 +130,7 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
             .firstOrNull { constructor ->
                 val targetParamTypes = constructor.parameters.map { it.type }
                 targetParamTypes.size == sourceParamTypes.size &&
-                    targetParamTypes.zip(sourceParamTypes).all { (target, source) -> target == source }
+                    targetParamTypes.zip(sourceParamTypes).all { (target, source) -> target.classifierOrNull == source.classifierOrNull }
             }
     }
 
