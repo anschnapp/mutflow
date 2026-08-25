@@ -153,4 +153,88 @@ class ExceptionTypeSwapTest {
         assertEquals("IllegalStateException", mutant,
             "On mutation, should throw IllegalStateException instead of ArithmeticException")
     }
+
+    @Test
+    fun `unsupported operation exception swap changes thrown type on mutation`() {
+        val baseline = runAndCapture(run = 0) {
+            thrower.throwUnsupported("not supported")
+        }
+        assertEquals("UnsupportedOperationException", baseline, "Baseline should throw UnsupportedOperationException")
+
+        val mutant = runAndCapture(run = 1) {
+            thrower.throwUnsupported("not supported")
+        }
+        assertEquals("IllegalStateException", mutant,
+            "On mutation, should throw IllegalStateException instead of UnsupportedOperationException")
+    }
+
+    @Test
+    fun `index out of bounds exception swap changes thrown type on mutation`() {
+        val baseline = runAndCapture(run = 0) {
+            thrower.throwIndexOutOfBounds("invalid index")
+        }
+        assertEquals("IndexOutOfBoundsException", baseline, "Baseline should throw IndexOutOfBoundsException")
+
+        val mutant = runAndCapture(run = 1) {
+            thrower.throwIndexOutOfBounds("invalid index")
+        }
+        assertEquals("IllegalStateException", mutant,
+            "On mutation, should throw IllegalStateException instead of IndexOutOfBoundsException")
+    }
+
+    @Test
+    fun `class cast exception swap changes thrown type on mutation`() {
+        val baseline = runAndCapture(run = 0) {
+            thrower.throwClassCast("invalid cast")
+        }
+        assertEquals("ClassCastException", baseline, "Baseline should throw ClassCastException")
+
+        val mutant = runAndCapture(run = 1) {
+            thrower.throwClassCast("invalid cast")
+        }
+        assertEquals("IllegalArgumentException", mutant,
+            "On mutation, should throw IllegalArgumentException instead of ClassCastException")
+    }
+
+    @Test
+    fun `number format exception swap changes thrown type on mutation`() {
+        val baseline = runAndCapture(run = 0) {
+            thrower.throwNumber("not a number")
+        }
+        assertEquals("NumberFormatException", baseline, "Baseline should throw NumberFormatException")
+
+        val mutant = runAndCapture(run = 1) {
+            thrower.throwNumber("not a number")
+        }
+        assertEquals("IllegalArgumentException", mutant,
+            "On mutation, should throw IllegalArgumentException instead of NumberFormatException")
+    }
+
+    @Test
+    fun `no such element exception swap changes thrown type on mutation`() {
+        val baseline = runAndCapture(run = 0) {
+            thrower.throwNoSuchElement("missing element")
+        }
+        assertEquals("NoSuchElementException", baseline, "Baseline should throw NoSuchElementException")
+
+        val mutant = runAndCapture(run = 1) {
+            thrower.throwNoSuchElement("missing element")
+        }
+        assertEquals("IllegalStateException", mutant,
+            "On mutation, should throw IllegalStateException instead of NoSuchElementException")
+    }
+
+    @Test
+    fun `illegal state exception swap changes thrown type on mutation`() {
+        val baseline = runAndCapture(run = 0) {
+            thrower.throwState("bad state")
+        }
+        assertEquals("IllegalStateException", baseline, "Baseline should throw IllegalStateException")
+
+        val mutant = runAndCapture(run = 1) {
+            thrower.throwState("bad state")
+        }
+        assertEquals("IllegalArgumentException", mutant,
+            "On mutation, should throw IllegalArgumentException instead of IllegalStateException")
+    }
 }

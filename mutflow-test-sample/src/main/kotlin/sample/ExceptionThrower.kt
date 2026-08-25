@@ -30,7 +30,23 @@ class ExceptionThrower {
         throw ArithmeticException("division by zero")
     }
 
-    fun throwRuntime(message: String): RuntimeException {
-        throw RuntimeException(message)
+    fun throwIndexOutOfBounds(message: String): IndexOutOfBoundsException {
+        throw IndexOutOfBoundsException(message)
+    }
+
+    fun throwClassCast(message: String): ClassCastException {
+        throw ClassCastException(message)
+    }
+
+    fun throwNumber(format: String): NumberFormatException {
+        throw NumberFormatException(format)
+    }
+
+    fun throwNoSuchElement(message: String): NoSuchElementException {
+        throw NoSuchElementException(message)
+    }
+
+    fun throwState(message: String): IllegalStateException {
+        throw IllegalStateException(message)
     }
 }
