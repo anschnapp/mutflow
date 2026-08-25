@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
@@ -33,31 +34,30 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
     /**
      * Maps source exception FQNs to sibling replacement FQNs.
      *
-     * Each pair is chosen so that both classes share `RuntimeException` as
-     * an immediate supertype (neither is a subtype of the other), ensuring
-     * valid IR type substitution at throw sites.
+     * Uses `kotlin.*` FQNs (typealiased to `java.lang.*` on JVM, available
+     * on all platforms including Kotlin/Native). Each pair is chosen so that
+     * neither class is a subtype of the other — both extend `RuntimeException`
+     * as an immediate supertype, ensuring valid IR type substitution at throw sites.
      */
     private companion object {
         internal val EXCEPTION_SWAPS: Map<String, String> = mapOf(
-            "java.lang.IllegalArgumentException" to "java.lang.IllegalStateException",
-            "java.lang.IllegalStateException" to "java.lang.IllegalArgumentException",
-            "java.lang.NullPointerException" to "java.lang.IllegalArgumentException",
-            "java.lang.IndexOutOfBoundsException" to "java.lang.ArrayIndexOutOfBoundsException",
-            "java.lang.ArrayIndexOutOfBoundsException" to "java.lang.IndexOutOfBoundsException",
-            "java.lang.UnsupportedOperationException" to "java.lang.IllegalStateException",
-            "java.lang.ClassCastException" to "java.lang.IllegalArgumentException",
-            "java.lang.NumberFormatException" to "java.lang.IllegalArgumentException",
-            "java.lang.ArithmeticException" to "java.lang.IllegalStateException",
-            "java.lang.NoSuchElementException" to "java.lang.IllegalStateException",
-            "java.lang.RuntimeException" to "java.lang.IllegalArgumentException",
+            "kotlin.IllegalArgumentException" to "kotlin.IllegalStateException",
+            "kotlin.IllegalStateException" to "kotlin.IllegalArgumentException",
+            "kotlin.NullPointerException" to "kotlin.IllegalArgumentException",
+            "kotlin.IndexOutOfBoundsException" to "kotlin.IllegalStateException",
+            "kotlin.UnsupportedOperationException" to "kotlin.IllegalStateException",
+            "kotlin.ClassCastException" to "kotlin.IllegalArgumentException",
+            "kotlin.NumberFormatException" to "kotlin.IllegalArgumentException",
+            "kotlin.ArithmeticException" to "kotlin.IllegalStateException",
+            "kotlin.NoSuchElementException" to "kotlin.IllegalStateException",
+            "kotlin.RuntimeException" to "kotlin.IllegalArgumentException",
         )
     }
 
-    override fun matches(call: IrConstructorCall): Boolean {
+    override fun matches(call: IrConstructorCall, context: MutationContext): Boolean {
         val constructedType = call.symbol.owner.returnType
-        val classSymbol = constructedType.classOrNull ?: return false
-        val fqName = classSymbol.owner.fqNameWhenAvailable?.asString()
-        return fqName != null && EXCEPTION_SWAPS.containsKey(fqName)
+        val sourceSymbol = constructedType.classOrNull ?: return false
+        return findSwapPair(sourceSymbol, context) != null
     }
 
     override fun originalDescription(call: IrConstructorCall): String {
@@ -68,11 +68,9 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
 
     override fun variants(call: IrConstructorCall, context: MutationContext): List<MutationOperator.Variant> {
         val sourceType = call.symbol.owner.returnType
-        val sourceClassSymbol = sourceType.classOrNull ?: return emptyList()
-        val sourceClass = sourceClassSymbol.owner
-        val sourceFqName = sourceClass.fqNameWhenAvailable?.asString() ?: return emptyList()
+        val sourceSymbol = sourceType.classOrNull ?: return emptyList()
+        val (sourceFqName, targetFqName) = findSwapPair(sourceSymbol, context) ?: return emptyList()
 
-        val targetFqName = EXCEPTION_SWAPS[sourceFqName] ?: return emptyList()
         val targetClassId = ClassId.topLevel(FqName(targetFqName))
         val targetClassSymbol = context.pluginContext.referenceClass(targetClassId) ?: return emptyList()
         val targetClass = targetClassSymbol.owner
@@ -84,7 +82,7 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
 
         return listOf(
             MutationOperator.Variant(
-                description = "$sourceShortName → $targetShortName"
+                description = "$sourceShortName \u2192 $targetShortName"
             ) {
                 buildVariantCall(
                     builder = context.builder,
@@ -93,6 +91,27 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
                 )
             }
         )
+    }
+
+    /**
+     * Finds the swap pair for a source class symbol by resolving each [kotlin.*]
+     * FQN in [EXCEPTION_SWAPS] through [IrPluginContext.referenceClass] and
+     * comparing the resulting [IrClassSymbol]s. On JVM, kotlin.* typealiases
+     * resolve to java.lang.* (or java.util.*), so symbol identity — not
+     * FQName string comparison — is the correct matching strategy.
+     */
+    private fun findSwapPair(
+        sourceSymbol: IrClassSymbol,
+        context: MutationContext
+    ): Pair<String, String>? {
+        for ((sourceFqName, targetFqName) in EXCEPTION_SWAPS) {
+            val classId = ClassId.topLevel(FqName(sourceFqName))
+            val resolvedSymbol = context.pluginContext.referenceClass(classId) ?: continue
+            if (resolvedSymbol == sourceSymbol) {
+                return sourceFqName to targetFqName
+            }
+        }
+        return null
     }
 
     /**

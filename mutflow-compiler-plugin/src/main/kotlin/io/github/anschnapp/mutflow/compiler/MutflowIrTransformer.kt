@@ -536,11 +536,14 @@ class MutflowIrTransformer(
         val operator = remainingOperators.first()
         val rest = remainingOperators.drop(1)
 
-        if (!operator.matches(original)) {
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+
+        if (!operator.matches(original, context)) {
             return transformConstructorCallWithOperators(original, containingFunction, rest)
         }
 
-        return transformConstructorCallWithOperator(original, containingFunction, operator, rest)
+        return transformConstructorCallWithOperator(original, context, operator, rest)
     }
 
     /**
@@ -558,15 +561,15 @@ class MutflowIrTransformer(
      */
     private fun transformConstructorCallWithOperator(
         original: IrConstructorCall,
-        containingFunction: IrSimpleFunction,
+        context: MutationContext,
         operator: ConstructorMutationOperator,
         remainingOperators: List<ConstructorMutationOperator>
     ): IrExpression {
+        val containingFunction = context.containingFunction
         val checkFn = checkFunction ?: return original
         val registryClass = mutationRegistryClass ?: return original
 
-        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
-        val context = MutationContext(pluginContext, builder, containingFunction)
+        val builder = context.builder
 
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {

@@ -13,8 +13,11 @@ interface ConstructorMutationOperator {
 
     /**
      * Returns true if this operator can generate mutations for the given constructor call.
+     *
+     * @param call The original IR constructor call expression
+     * @param context Context providing access to plugin context and IR builder
      */
-    fun matches(call: IrConstructorCall): Boolean
+    fun matches(call: IrConstructorCall, context: MutationContext): Boolean
 
     /**
      * Generates mutation variants for the given constructor call.
