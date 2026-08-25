@@ -238,9 +238,9 @@ class MutflowIrTransformer(
         return transformCallWithOperators(transformed, fn, callOperators)
     }
 
-    override fun visitConstructorCall(expression: IrConstructorCall): IrExpression {
+    override fun visitThrow(expression: IrThrow): IrExpression {
         // First, transform children (bottom-up for nested expressions)
-        val transformed = super.visitConstructorCall(expression) as IrConstructorCall
+        val transformed = super.visitThrow(expression) as IrThrow
 
         // Only transform if we're in a @MutationTarget class and not suppressed
         if (!isInMutationTarget || isInSuppressedScope) {
@@ -250,8 +250,18 @@ class MutflowIrTransformer(
             return transformed
         }
 
+        // Only mutate constructor calls directly thrown (not variables):
+        // val e = IllegalStateException(); throw e
+        // In the above, the thrown expression is IrGetValue, not IrConstructorCall.
+        val thrownExpr = transformed.value ?: return transformed
+        val constructorCall = thrownExpr as? IrConstructorCall ?: return transformed
+
         val fn = currentFunction ?: return transformed
-        return transformConstructorCallWithOperators(transformed, fn, constructorOperators)
+        val mutated = transformConstructorCallWithOperators(constructorCall, fn, constructorOperators)
+        if (mutated !== constructorCall) {
+            transformed.value = mutated
+        }
+        return transformed
     }
 
     override fun visitGetValue(expression: IrGetValue): IrExpression {
