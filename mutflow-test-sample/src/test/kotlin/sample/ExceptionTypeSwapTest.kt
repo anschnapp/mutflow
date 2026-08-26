@@ -206,8 +206,8 @@ class ExceptionTypeSwapTest {
         val mutant = runAndCapture(run = 1) {
             thrower.throwNumber("not a number")
         }
-        assertEquals("IllegalArgumentException", mutant,
-            "On mutation, should throw IllegalArgumentException instead of NumberFormatException")
+        assertEquals("IllegalStateException", mutant,
+            "On mutation, should throw IllegalStateException instead of NumberFormatException")
     }
 
     @Test

@@ -48,7 +48,7 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
             "kotlin.IndexOutOfBoundsException" to "kotlin.IllegalStateException",
             "kotlin.UnsupportedOperationException" to "kotlin.IllegalStateException",
             "kotlin.ClassCastException" to "kotlin.IllegalArgumentException",
-            "kotlin.NumberFormatException" to "kotlin.IllegalArgumentException",
+            "kotlin.NumberFormatException" to "kotlin.IllegalStateException",
             "kotlin.ArithmeticException" to "kotlin.IllegalStateException",
             "kotlin.NoSuchElementException" to "kotlin.IllegalStateException",
         )

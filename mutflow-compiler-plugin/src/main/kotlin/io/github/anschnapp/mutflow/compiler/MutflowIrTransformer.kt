@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.*
+import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -247,6 +248,17 @@ class MutflowIrTransformer(
             return transformed
         }
         if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        // Filter out synthetic throws:
+        // - !, TODO(), require/check/ensure, exhaustive when-lowering all generate throws
+        // - These can be detected by UNDEFINED_OFFSET or zero-width span
+        if (transformed.startOffset == UNDEFINED_OFFSET || transformed.startOffset < 0) {
+            return transformed
+        }
+        if (transformed.startOffset == transformed.endOffset) {
+            // Zero-width throw is synthetic (from compiled-in stdlib functions like require())
             return transformed
         }
 
