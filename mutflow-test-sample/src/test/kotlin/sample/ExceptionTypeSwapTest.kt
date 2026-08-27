@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 /**
  * Tests the exception type swap mutation operator.
  *
- * The operator matches `IrConstructorCall` nodes for exception types
+ * The operator matches `IrThrow` nodes for exception types
  * and generates variants that call a sibling exception constructor
  * instead (e.g., `IllegalArgumentException` → `IllegalStateException`).
  *

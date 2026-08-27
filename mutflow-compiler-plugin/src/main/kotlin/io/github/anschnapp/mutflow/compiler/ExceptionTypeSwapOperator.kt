@@ -1,11 +1,13 @@
 package io.github.anschnapp.mutflow.compiler
 
+import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.IrBuilder
 import org.jetbrains.kotlin.ir.builders.irCall
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrThrow
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.classifierOrNull
@@ -16,21 +18,22 @@ import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 
 /**
- * Mutation operator that swaps exception types at constructor call sites.
+ * Mutation operator that swaps exception types at throw sites.
  *
  * When source code throws one exception type (e.g. `IllegalArgumentException`),
  * this operator generates a variant that throws a sibling exception type
  * (e.g. `IllegalStateException`) instead. Sibling pairs are chosen so that
  * neither type is a subtype of the other — both extend `RuntimeException`.
  *
- * The operator matches on `IrConstructorCall` nodes and produces a
- * `MutationOperator.Variant` that replaces the constructor invocation
- * with one from the sibling class, copying constructor arguments by position.
+ * The operator matches on `IrThrow` nodes and produces a
+ * `MutationOperator.Variant` that replaces the thrown expression
+ * with a call to the sibling exception's constructor, copying constructor
+ * arguments by position.
  *
- * @see ConstructorMutationOperator for the interface contract
+ * @see ThrowMutationOperator for the interface contract
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class ExceptionTypeSwapOperator : ConstructorMutationOperator {
+class ExceptionTypeSwapOperator : ThrowMutationOperator {
 
     /**
      * Maps source exception FQNs to sibling replacement FQNs.
@@ -39,6 +42,9 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
      * on all platforms including Kotlin/Native). Each pair is chosen so that
      * neither class is a subtype of the other — both extend `RuntimeException`
      * as an immediate supertype, ensuring valid IR type substitution at throw sites.
+     *
+     * Note: `NumberFormatException` extends `IllegalArgumentException`, so pairing
+     * them would be subtype-equivalent. We pair with `IllegalStateException` instead.
      */
     private companion object {
         internal val EXCEPTION_SWAPS: Map<String, String> = mapOf(
@@ -54,20 +60,40 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
         )
     }
 
-    override fun matches(call: IrConstructorCall, context: MutationContext): Boolean {
-        val constructedType = call.symbol.owner.returnType
-        val sourceSymbol = constructedType.classOrNull ?: return false
-        return findSwapPair(sourceSymbol, context) != null
+    override fun matches(throwExpr: IrThrow): Boolean {
+        // Filter synthetic throws: not every IrThrow comes from a developer-written
+        // throw statement. The following all lower to IrThrow in the IR:
+        // - !! (NullPointerException)
+        // - exhaustive when without else (NoWhenBranchMatchedException)
+        // - TODO() (NotImplementedError)
+        // - inlined require()/check() (IllegalArgumentException)
+        //
+        // These have UNDEFINED_OFFSET (-1), negative offsets, or zero-width spans
+        // because they don't correspond to a throw statement in source.
+        if (throwExpr.startOffset == UNDEFINED_OFFSET || throwExpr.startOffset < 0) {
+            return false
+        }
+        if (throwExpr.startOffset == throwExpr.endOffset) {
+            return false
+        }
+
+        // Only mutate constructor calls directly thrown (not variables):
+        // val e = IllegalStateException(); throw e
+        // In the above, the thrown expression is IrGetValue, not IrConstructorCall.
+        val thrownExpr = throwExpr.value ?: return false
+        return thrownExpr is IrConstructorCall
     }
 
-    override fun originalDescription(call: IrConstructorCall): String {
-        val constructedType = call.symbol.owner.returnType
+    override fun originalDescription(throwExpr: IrThrow): String {
+        val thrownExpr = throwExpr.value as? IrConstructorCall ?: return "?"
+        val constructedType = thrownExpr.symbol.owner.returnType
         val classSymbol = constructedType.classOrNull ?: return "?"
         return classSymbol.owner.fqNameWhenAvailable?.asString()?.substringAfterLast('.') ?: "?"
     }
 
-    override fun variants(call: IrConstructorCall, context: MutationContext): List<MutationOperator.Variant> {
-        val sourceType = call.symbol.owner.returnType
+    override fun variants(throwExpr: IrThrow, context: MutationContext): List<MutationOperator.Variant> {
+        val thrownExpr = throwExpr.value as? IrConstructorCall ?: return emptyList()
+        val sourceType = thrownExpr.symbol.owner.returnType
         val sourceSymbol = sourceType.classOrNull ?: return emptyList()
         val (sourceFqName, targetFqName) = findSwapPair(sourceSymbol, context) ?: return emptyList()
 
@@ -75,18 +101,18 @@ class ExceptionTypeSwapOperator : ConstructorMutationOperator {
         val targetClassSymbol = context.pluginContext.referenceClass(targetClassId) ?: return emptyList()
         val targetClass = targetClassSymbol.owner
 
-        val matchingConstructor = findMatchingConstructor(call, targetClass) ?: return emptyList()
+        val matchingConstructor = findMatchingConstructor(thrownExpr, targetClass) ?: return emptyList()
 
         val sourceShortName = sourceFqName.substringAfterLast('.')
         val targetShortName = targetFqName.substringAfterLast('.')
 
         return listOf(
             MutationOperator.Variant(
-                description = "$sourceShortName \u2192 $targetShortName"
+                description = "$sourceShortName → $targetShortName"
             ) {
                 buildVariantCall(
                     builder = context.builder,
-                    original = call,
+                    original = thrownExpr,
                     targetConstructor = matchingConstructor
                 )
             }

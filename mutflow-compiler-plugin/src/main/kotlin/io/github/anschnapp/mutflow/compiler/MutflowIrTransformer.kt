@@ -4,7 +4,6 @@ import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.*
-import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -39,7 +38,7 @@ class MutflowIrTransformer(
     private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators(),
     private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators(),
     private val whenOperators: List<WhenMutationOperator> = defaultWhenOperators(),
-    private val constructorOperators: List<ConstructorMutationOperator> = defaultConstructorOperators(),
+    private val throwOperators: List<ThrowMutationOperator> = defaultThrowOperators(),
     private val targetPatterns: List<String> = emptyList()
 ) : IrElementTransformerVoid() {
 
@@ -68,7 +67,7 @@ class MutflowIrTransformer(
             BooleanInversionOperator(),
         )
 
-        fun defaultConstructorOperators(): List<ConstructorMutationOperator> = listOf(
+        fun defaultThrowOperators(): List<ThrowMutationOperator> = listOf(
             ExceptionTypeSwapOperator()
         )
 
@@ -251,27 +250,13 @@ class MutflowIrTransformer(
             return transformed
         }
 
-        // Filter out synthetic throws:
-        // - !, TODO(), require/check/ensure, exhaustive when-lowering all generate throws
-        // - These can be detected by UNDEFINED_OFFSET or zero-width span
-        if (transformed.startOffset == UNDEFINED_OFFSET || transformed.startOffset < 0) {
-            return transformed
-        }
-        if (transformed.startOffset == transformed.endOffset) {
-            // Zero-width throw is synthetic (from compiled-in stdlib functions like require())
-            return transformed
-        }
-
-        // Only mutate constructor calls directly thrown (not variables):
-        // val e = IllegalStateException(); throw e
-        // In the above, the thrown expression is IrGetValue, not IrConstructorCall.
-        val thrownExpr = transformed.value ?: return transformed
-        val constructorCall = thrownExpr as? IrConstructorCall ?: return transformed
-
+        // Delegate to ThrowMutationOperators. Each operator's matches() handles:
+        // - Synthetic throw filtering (!! , when-without-else, TODO(), require/check)
+        // - Checking that the thrown expression is a directly-thrown constructor call
         val fn = currentFunction ?: return transformed
-        val mutated = transformConstructorCallWithOperators(constructorCall, fn, constructorOperators)
-        if (mutated !== constructorCall) {
-            transformed.value = mutated
+        val mutatedValue = transformThrowWithOperators(transformed, fn, throwOperators)
+        if (mutatedValue !== transformed.value) {
+            transformed.value = mutatedValue
         }
         return transformed
     }
@@ -541,35 +526,34 @@ class MutflowIrTransformer(
     }
 
     /**
-     * Recursively applies matching constructor operators to an IrConstructorCall.
+     * Recursively applies matching throw operators to an IrThrow.
      *
-     * Each matching operator wraps the constructor call in a when block, with
+     * Each matching operator wraps the thrown expression in a when block, with
      * the else branch passing to the next operator.
      */
-    private fun transformConstructorCallWithOperators(
-        original: IrConstructorCall,
+    private fun transformThrowWithOperators(
+        throwExpr: IrThrow,
         containingFunction: IrSimpleFunction,
-        remainingOperators: List<ConstructorMutationOperator>
+        remainingOperators: List<ThrowMutationOperator>
     ): IrExpression {
         if (remainingOperators.isEmpty()) {
-            return original
+            return throwExpr.value ?: throwExpr
         }
 
         val operator = remainingOperators.first()
         val rest = remainingOperators.drop(1)
 
-        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
-        val context = MutationContext(pluginContext, builder, containingFunction)
-
-        if (!operator.matches(original, context)) {
-            return transformConstructorCallWithOperators(original, containingFunction, rest)
+        if (!operator.matches(throwExpr)) {
+            return transformThrowWithOperators(throwExpr, containingFunction, rest)
         }
 
-        return transformConstructorCallWithOperator(original, context, operator, rest)
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+        return transformThrowWithOperator(throwExpr, context, operator, rest)
     }
 
     /**
-     * Transforms a constructor call using the given mutation operator.
+     * Transforms a throw statement using the given mutation operator.
      *
      * Generates a when expression with inline check() calls, using a common
      * supertype (Throwable) for the result type since sibling exception types
@@ -581,29 +565,30 @@ class MutflowIrTransformer(
      * }
      * ```
      */
-    private fun transformConstructorCallWithOperator(
-        original: IrConstructorCall,
+    private fun transformThrowWithOperator(
+        throwExpr: IrThrow,
         context: MutationContext,
-        operator: ConstructorMutationOperator,
-        remainingOperators: List<ConstructorMutationOperator>
+        operator: ThrowMutationOperator,
+        remainingOperators: List<ThrowMutationOperator>
     ): IrExpression {
         val containingFunction = context.containingFunction
-        val checkFn = checkFunction ?: return original
-        val registryClass = mutationRegistryClass ?: return original
+        val checkFn = checkFunction ?: return throwExpr.value ?: throwExpr
+        val registryClass = mutationRegistryClass ?: return throwExpr.value ?: throwExpr
 
         val builder = context.builder
 
-        val variants = operator.variants(original, context)
+        val variants = operator.variants(throwExpr, context)
         if (variants.isEmpty()) {
-            return transformConstructorCallWithOperators(original, containingFunction, remainingOperators)
+            return transformThrowWithOperators(throwExpr, containingFunction, remainingOperators)
         }
 
+        val thrownExpr = throwExpr.value ?: return throwExpr
         val pointId = generatePointId()
         val variantCount = variants.size
-        val sourceLocation = getSourceLocation(original)
-        val originalOperator = operator.originalDescription(original)
+        val sourceLocation = getSourceLocation(thrownExpr)
+        val originalOperator = operator.originalDescription(throwExpr)
         val variantOperators = variants.joinToString(",") { it.description }
-        val lineNumber = currentFile?.fileEntry?.getLineNumber(original.startOffset)?.plus(1) ?: 0
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(thrownExpr.startOffset)?.plus(1) ?: 0
         val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
 
         debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
@@ -625,25 +610,27 @@ class MutflowIrTransformer(
         val throwableType = pluginContext.irBuiltIns.throwableType
 
         // Generate when expression with inline check() calls - no temporary variable.
+        // The when block replaces throwExpr.value (the original thrown expression).
+        val originalValue = thrownExpr
         return IrWhenImpl(
-            startOffset = original.startOffset,
-            endOffset = original.endOffset,
+            startOffset = originalValue.startOffset,
+            endOffset = originalValue.endOffset,
             type = throwableType,
             origin = null
         ).apply {
             variants.forEachIndexed { index, variant ->
                 branches += IrBranchImpl(
-                    startOffset = original.startOffset,
-                    endOffset = original.endOffset,
+                    startOffset = originalValue.startOffset,
+                    endOffset = originalValue.endOffset,
                     condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
                     result = variant.createExpression()
                 )
             }
             branches += IrElseBranchImpl(
-                startOffset = original.startOffset,
-                endOffset = original.endOffset,
+                startOffset = originalValue.startOffset,
+                endOffset = originalValue.endOffset,
                 condition = builder.irTrue(),
-                result = transformConstructorCallWithOperators(original, containingFunction, remainingOperators)
+                result = transformThrowWithOperators(throwExpr, containingFunction, remainingOperators)
             )
         }
     }
