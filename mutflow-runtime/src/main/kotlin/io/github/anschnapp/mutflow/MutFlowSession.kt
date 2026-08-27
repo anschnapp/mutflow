@@ -292,10 +292,20 @@ class MutFlowSession internal constructor(
     }
 
     private fun <T> executeBaseline(block: () -> T): T {
-        val (result, sessionResult) = MutationRegistry.withSession(activeMutation = null) {
+        // Points are merged from the onSessionEnd hook rather than from the return
+        // value, so that a block which throws (a test asserting an expected
+        // exception) still contributes everything it discovered before throwing.
+        val (result, _) = MutationRegistry.withSession(
+            activeMutation = null,
+            onSessionEnd = ::mergeDiscoveredPoints
+        ) {
             block()
         }
 
+        return result
+    }
+
+    private fun mergeDiscoveredPoints(sessionResult: SessionResult) {
         // Merge discovered points and update touch counts
         for (point in sessionResult.discoveredPoints) {
             val isNew = point.pointId !in discoveredPoints
@@ -313,8 +323,6 @@ class MutFlowSession internal constructor(
                 println("[mutflow] Discovered mutation point: $displayLoc ${point.originalOperator} with ${point.variantCount} variants")
             }
         }
-
-        return result
     }
 
     private fun <T> executeMutationRun(run: Int, block: () -> T): T {

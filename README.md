@@ -716,6 +716,13 @@ assertThrows<RuntimeException> { account.withdraw(-5) }
 assertThrows<IllegalArgumentException> { account.withdraw(-5) }  // Catches the type swap
 ```
 
+Wrap the call as usual and assert around it - the exception escaping the block is fine, mutation points reached before the throw are still discovered:
+```kotlin
+assertThrows<IllegalArgumentException> {
+    MutFlow.underTest { account.withdraw(-5) }
+}
+```
+
 **Swap pairs:**
 
 | Original | Becomes |

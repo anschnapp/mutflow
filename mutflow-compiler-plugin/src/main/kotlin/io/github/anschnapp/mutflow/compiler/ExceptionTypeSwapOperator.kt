@@ -102,7 +102,7 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
         val thrownExpr = throwExpr.value as? IrConstructorCall ?: return emptyList()
         val sourceType = thrownExpr.symbol.owner.returnType
         val sourceSymbol = sourceType.classOrNull ?: return emptyList()
-        val (sourceFqName, targetFqName) = findSwapPair(sourceSymbol, context) ?: return emptyList()
+        val (_, targetFqName) = findSwapPair(sourceSymbol, context) ?: return emptyList()
 
         val targetClassId = ClassId.topLevel(FqName(targetFqName))
         val targetClassSymbol = context.pluginContext.referenceClass(targetClassId) ?: return emptyList()
@@ -110,12 +110,14 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
 
         val matchingConstructor = findMatchingConstructor(thrownExpr, targetClass) ?: return emptyList()
 
-        val sourceShortName = sourceFqName.substringAfterLast('.')
         val targetShortName = targetFqName.substringAfterLast('.')
 
         return listOf(
+            // Just the target type: the display name is assembled as
+            // "(file:line) <original> → <variant>", so repeating the source type
+            // here would render as "ISE → ISE → IAE".
             MutationOperator.Variant(
-                description = "$sourceShortName → $targetShortName"
+                description = targetShortName
             ) {
                 buildVariantCall(
                     builder = context.builder,

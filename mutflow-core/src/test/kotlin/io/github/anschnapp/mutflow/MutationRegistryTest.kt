@@ -141,4 +141,51 @@ class MutationRegistryTest {
         assertEquals(">", point.originalOperator)
         assertEquals(listOf(">=", "<", "=="), point.variantOperators)
     }
+
+    @Test
+    fun `withSession reports discovered points when the block returns`() {
+        val reported = mutableListOf<SessionResult>()
+
+        val (value, returned) = MutationRegistry.withSession(onSessionEnd = { reported += it }) {
+            check("point-a", 2)
+            "ok"
+        }
+
+        assertEquals("ok", value)
+        assertEquals(1, returned.mutationPointCount)
+        assertEquals(1, reported.size, "onSessionEnd should be called exactly once")
+        assertEquals(listOf("point-a"), reported.single().discoveredPoints.map { it.pointId })
+    }
+
+    @Test
+    fun `withSession reports discovered points when the block throws`() {
+        // A test asserting an expected exception lets it escape underTest {}.
+        // Points reached before the throw must still reach the runtime, otherwise
+        // mutations on throwing paths are never discovered and never tested.
+        val reported = mutableListOf<SessionResult>()
+
+        assertFailsWith<IllegalStateException> {
+            MutationRegistry.withSession(onSessionEnd = { reported += it }) {
+                check("point-a", 2)
+                check("point-b", 1)
+                throw IllegalStateException("boom")
+            }
+        }
+
+        assertEquals(1, reported.size, "onSessionEnd should be called exactly once")
+        assertEquals(
+            listOf("point-a", "point-b"),
+            reported.single().discoveredPoints.map { it.pointId },
+            "Points reached before the throw must be reported"
+        )
+    }
+
+    @Test
+    fun `withSession clears the session after a throwing block`() {
+        assertFailsWith<IllegalStateException> {
+            MutationRegistry.withSession { throw IllegalStateException("boom") }
+        }
+
+        assertFalse(MutationRegistry.hasActiveSession(), "Session must be cleared on the exceptional path")
+    }
 }

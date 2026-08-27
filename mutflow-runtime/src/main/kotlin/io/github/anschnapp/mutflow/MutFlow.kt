@@ -207,16 +207,23 @@ object MutFlow {
     }
 
     private fun <T> legacyExecuteBaseline(block: () -> T): T {
-        val (result, sessionResult) = MutationRegistry.withSession(activeMutation = null) {
+        // Merged from the onSessionEnd hook so a throwing block (test asserting an
+        // expected exception) still contributes the points it reached.
+        val (result, _) = MutationRegistry.withSession(
+            activeMutation = null,
+            onSessionEnd = ::legacyMergeDiscoveredPoints
+        ) {
             block()
         }
 
+        return result
+    }
+
+    private fun legacyMergeDiscoveredPoints(sessionResult: SessionResult) {
         for (point in sessionResult.discoveredPoints) {
             legacyDiscoveredPoints[point.pointId] = point.variantCount
             legacyTouchCounts[point.pointId] = (legacyTouchCounts[point.pointId] ?: 0) + 1
         }
-
-        return result
     }
 
     private fun <T> legacyExecuteMutationRun(

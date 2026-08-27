@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.1] - 2026-08-27
+### Fixed
+- Baseline discovery no longer loses mutation points when the block under test throws. `MutationRegistry.withSession()` assembled its result only on the normal return path, so an exception escaping `MutFlow.underTest {}` - the natural shape of a test asserting an expected exception - discarded every point that block had discovered; those mutations were never selected, tested or reported. This hit the exception type swap operator added in 1.1.0 hardest, since its mutation point sits on the `throw` and is reachable only on a throwing path, but the defect goes back to the initial release: projects with error-case tests should expect this version to discover mutations that earlier ones silently skipped.
+- Exception type swap display names no longer repeat the source type. `IllegalStateException -> IllegalStateException -> IllegalArgumentException` now reads `IllegalStateException -> IllegalArgumentException`. Traps pinned against the old spelling must be updated.
 
 ## [1.1.0] - 2026-08-27
 ### Added

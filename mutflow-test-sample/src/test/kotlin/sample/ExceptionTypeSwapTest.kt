@@ -16,9 +16,9 @@ import kotlin.test.assertTrue
  * and generates variants that call a sibling exception constructor
  * instead (e.g., `IllegalArgumentException` → `IllegalStateException`).
  *
- * Important: catch exceptions INSIDE the `underTest` block so that
- * `MutationRegistry.withSession` completes normally and records
- * discovered mutation points.
+ * The exceptions are asserted OUTSIDE the `underTest` block, which is how such
+ * a test is naturally written. Discovery survives a block that throws, so the
+ * mutation point on the throw is still recorded.
  */
 class ExceptionTypeSwapTest {
 
@@ -31,21 +31,20 @@ class ExceptionTypeSwapTest {
     }
 
     /**
-     * Helper: runs the block under mutation testing, catching any
-     * exception thrown inside the block and returning it as a string
-     * (the class simple name), or "no-exception" if none was thrown.
+     * Helper: runs the block under mutation testing and returns the simple name
+     * of the exception it raised, or "no-exception" if none was thrown.
      *
-     * The try-catch MUST be inside the block so that withSession completes
-     * normally and mutation points are discovered.
+     * The try-catch sits outside `underTest`, so the exception escapes the block
+     * exactly as it does in a real `assertThrows` test.
      */
     private fun runAndCapture(run: Int, block: () -> Unit): String {
-        return MutFlow.underTest(run = run, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-            try {
+        return try {
+            MutFlow.underTest(run = run, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
                 block()
-                "no-exception"
-            } catch (e: Throwable) {
-                e::class.java.simpleName
             }
+            "no-exception"
+        } catch (e: Throwable) {
+            e::class.java.simpleName
         }
     }
 
@@ -84,33 +83,21 @@ class ExceptionTypeSwapTest {
         // Baseline: throws IllegalArgumentException(msg, cause)
         val baseline = try {
             MutFlow.underTest(run = 0, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-                try {
-                    thrower.throwWithMessageAndCause("wrapper", cause)
-                    "no-exception:null"
-                } catch (e: IllegalArgumentException) {
-                    "IllegalArgumentException:${e.message}"
-                } catch (e: IllegalStateException) {
-                    "IllegalStateException:${e.message}"
-                }
+                thrower.throwWithMessageAndCause("wrapper", cause)
             }
+            "no-exception:null"
         } catch (e: Throwable) {
-            "outer:${e::class.java.simpleName}"
+            "${e::class.java.simpleName}:${e.message}"
         }
 
         // Mutant: IllegalStateException(msg, cause)
         val mutant = try {
             MutFlow.underTest(run = 1, selection = Selection.MostLikelyStable, shuffle = Shuffle.PerChange) {
-                try {
-                    thrower.throwWithMessageAndCause("wrapper", cause)
-                    "no-exception:null"
-                } catch (e: IllegalArgumentException) {
-                    "IllegalArgumentException:${e.message}"
-                } catch (e: IllegalStateException) {
-                    "IllegalStateException:${e.message}"
-                }
+                thrower.throwWithMessageAndCause("wrapper", cause)
             }
+            "no-exception:null"
         } catch (e: Throwable) {
-            "outer:${e::class.java.simpleName}"
+            "${e::class.java.simpleName}:${e.message}"
         }
 
         assertTrue(baseline.startsWith("IllegalArgumentException"), "Baseline should be IllegalArgumentException")

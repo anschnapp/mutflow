@@ -94,6 +94,8 @@ Mutation points are discovered **dynamically at runtime**, not statically at cla
 
 2. **Mutation runs**: The caller specifies which mutation to activate via `ActiveMutation(pointId, variantIndex)`. When that point calls `check()`, it returns the active variant index instead of `null`.
 
+**Blocks that throw still count.** A test asserting an expected exception lets it escape `MutFlow.underTest {}`. The session hands its discovered points to the runtime on both the normal and the exceptional path (`withSession(onSessionEnd = ...)`), so points reached before the throw are recorded. Without this, any mutation only reachable on a throwing path stays invisible - exception type swaps in particular, since their mutation point sits on the throw itself.
+
 This dynamic discovery matters because:
 - Different `underTest` blocks exercise different code paths
 - Only mutations actually reached by the test are counted
@@ -809,7 +811,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 **mutflow-core:**
 - `MutationRegistry` with `check()`, `checkTimeout()`, `startSession()`, `endSession()`, `withSession()` API
-- `withSession()`: synchronized wrapper that ensures only one mutation session is active at a time
+- `withSession()`: synchronized wrapper that ensures only one mutation session is active at a time; its `onSessionEnd` hook delivers discovered points whether the block returns or throws
 - `checkTimeout()`: compiler-injected loop guard that throws `MutationTimedOutException` when deadline exceeded
 - Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `@MutationTarget` annotation for scoping mutations

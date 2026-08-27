@@ -119,13 +119,22 @@ object MutationRegistry {
      * and releases the lock. This ensures only one mutation session is active at
      * a time, even when multiple test classes run in parallel.
      *
+     * [onSessionEnd] is invoked with the session result whether the block returns
+     * normally or throws. Blocks that throw are normal: a test asserting that the
+     * code under test raises an exception lets it escape `underTest {}`. The
+     * mutation points reached before the throw must still be recorded, otherwise
+     * every mutation on a throwing path (exception type swaps in particular) stays
+     * invisible to discovery.
+     *
      * @param activeMutation If set, which mutation to activate during this session
+     * @param onSessionEnd Called with the session result on both the normal and the exceptional path
      * @param block The code to execute within the session
      * @return A pair of the block's result and the session result
      */
     fun <T> withSession(
         activeMutation: ActiveMutation? = null,
         timeoutMs: Long = 0,
+        onSessionEnd: (SessionResult) -> Unit = {},
         block: () -> T
     ): Pair<T, SessionResult> {
         synchronized(lock) {
@@ -133,19 +142,22 @@ object MutationRegistry {
             val deadlineNanos = if (activeMutation != null && timeoutMs > 0) {
                 System.nanoTime() + timeoutMs * 1_000_000
             } else 0L
-            currentSession = Session(activeMutation, deadlineNanos = deadlineNanos)
+            val session = Session(activeMutation, deadlineNanos = deadlineNanos)
+            currentSession = session
             try {
                 val result = block()
-                val session = currentSession!!
-                return result to SessionResult(
-                    mutationPointCount = session.discoveredPoints.size,
-                    discoveredPoints = session.discoveredPoints.toList()
-                )
+                return result to buildSessionResult(session)
             } finally {
                 currentSession = null
+                onSessionEnd(buildSessionResult(session))
             }
         }
     }
+
+    private fun buildSessionResult(session: Session): SessionResult = SessionResult(
+        mutationPointCount = session.discoveredPoints.size,
+        discoveredPoints = session.discoveredPoints.toList()
+    )
 
     /**
      * Returns true if a session is currently active.
