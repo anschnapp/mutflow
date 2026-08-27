@@ -12,6 +12,7 @@ import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.classOrNull
+import org.jetbrains.kotlin.ir.util.constructors
 import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.name.ClassId
@@ -61,15 +62,21 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
     }
 
     override fun matches(throwExpr: IrThrow): Boolean {
-        // Filter synthetic throws: not every IrThrow comes from a developer-written
-        // throw statement. The following all lower to IrThrow in the IR:
-        // - !! (NullPointerException)
-        // - exhaustive when without else (NoWhenBranchMatchedException)
-        // - TODO() (NotImplementedError)
-        // - inlined require()/check() (IllegalArgumentException)
+        // Precautionary guard against throws that have no source span: a missing
+        // or zero-width offset means the node was synthesized rather than written
+        // by a developer, and mutating it would be meaningless.
         //
-        // These have UNDEFINED_OFFSET (-1), negative offsets, or zero-width spans
-        // because they don't correspond to a throw statement in source.
+        // As of Kotlin 2.4 this guard is unreachable. Constructs that eventually
+        // become throws (`!!`, `TODO()`, `require`/`check`, exhaustive `when`
+        // without else) are still IrCall nodes when IR plugin extensions run;
+        // they only become IrThrow in later backend lowerings. Verified by dumping
+        // IR at this phase: `!!` is CALL 'CHECK_NOT_NULL' origin=EXCLEXCL, and an
+        // exhaustive `when` ends in CALL 'noWhenBranchMatchedException()'.
+        //
+        // Kept because it costs nothing and lowering order is not a stable contract.
+        // Note this differs from BooleanReturnOperator, whose equivalent check IS
+        // load-bearing: synthetic IrReturn (expression-bodied functions) does exist
+        // at this phase.
         if (throwExpr.startOffset == UNDEFINED_OFFSET || throwExpr.startOffset < 0) {
             return false
         }
@@ -151,8 +158,7 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
         val sourceConstructor = call.symbol.owner
         val sourceParamTypes = sourceConstructor.parameters.map { it.type }
 
-        return targetClass.declarations
-            .filterIsInstance<IrConstructor>()
+        return targetClass.constructors
             .firstOrNull { constructor ->
                 val targetParamTypes = constructor.parameters.map { it.type }
                 targetParamTypes.size == sourceParamTypes.size &&

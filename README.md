@@ -70,8 +70,8 @@ older mutflow release:
 
 | mutflow | Kotlin |
 |---------|--------|
-| 1.1.0+ | 2.4.x |
-| up to 1.0.3 | 2.2.x - 2.3.x |
+| 1.0.2+ | 2.4.x |
+| up to 1.0.1 | 2.2.x - 2.3.x |
 
 A mismatch typically fails with an obscure compiler error (e.g. `NoClassDefFoundError`
 during compilation) - if you see that, check your Kotlin version first.
@@ -434,6 +434,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 - [**Boolean return**](#how-boolean-return-mutations-work) - Boolean return values replaced with `true`/`false` (explicit returns only)
 - [**Nullable return**](#how-nullable-return-mutations-work) - Nullable return values replaced with `null` (explicit returns only)
 - [**Void function body**](#how-void-function-body-mutations-work) - Unit function bodies replaced with empty bodies, detecting untested side effects
+- [**Exception type swap**](#how-exception-type-swap-mutations-work) - Thrown exceptions replaced with a sibling type (e.g. `IllegalArgumentException` → `IllegalStateException`), detecting tests that assert *something* threw but not *what*
 - **Recursive operator nesting** - Multiple mutation types combine on the same expression
 - **Type-agnostic** - Works with `Int`, `Long`, `Double`, `Float`, `Short`, `Byte`, `Char`
 
@@ -465,7 +466,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 - **Session-based architecture** - Clean lifecycle, no leaked global state
 
 **Extensibility**
-- **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), and `FunctionBodyMutationOperator` (for function bodies) interfaces for adding new mutation types
+- **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), `FunctionBodyMutationOperator` (for function bodies), and `ThrowMutationOperator` (for throw statements) interfaces for adding new mutation types
 
 ## How Mutations Work
 
@@ -686,6 +687,54 @@ assertEquals(listOf("apple"), service.getItems())  // Catches empty body mutatio
 ```
 
 **Note:** Void function body mutations only apply to functions that return Unit, have non-empty bodies, and are not property accessors (getters/setters).
+
+### How Exception Type Swap Mutations Work
+
+Exception type swap mutations verify that your tests assert *which* exception was thrown, not merely that the call failed.
+
+**Example:** For a function that validates its input:
+```kotlin
+fun withdraw(amount: Int) {
+    if (amount <= 0) throw IllegalArgumentException("amount must be positive")
+    ...
+}
+```
+
+| Mutation | Original | Becomes | Caught when |
+|----------|----------|---------|-------------|
+| type swap | `IllegalArgumentException` | `IllegalStateException` | Test asserts the specific exception type |
+
+**Common weak test patterns this catches:**
+```kotlin
+// WEAK: Only checks that something went wrong
+assertThrows<Exception> { account.withdraw(-5) }
+
+// WEAK: Catches the supertype, so a swapped sibling still matches
+assertThrows<RuntimeException> { account.withdraw(-5) }
+
+// STRONG: Asserts the exact type
+assertThrows<IllegalArgumentException> { account.withdraw(-5) }  // Catches the type swap
+```
+
+**Swap pairs:**
+
+| Original | Becomes |
+|----------|---------|
+| `IllegalArgumentException` | `IllegalStateException` |
+| `IllegalStateException` | `IllegalArgumentException` |
+| `NullPointerException` | `IllegalArgumentException` |
+| `IndexOutOfBoundsException` | `IllegalStateException` |
+| `UnsupportedOperationException` | `IllegalStateException` |
+| `ClassCastException` | `IllegalArgumentException` |
+| `NumberFormatException` | `IllegalStateException` |
+| `ArithmeticException` | `IllegalStateException` |
+| `NoSuchElementException` | `IllegalStateException` |
+
+Pairs are chosen so that neither type is a subtype of the other. A swap to a subtype would be an equivalent mutant, since a `catch` of the supertype matches both. This is why `NumberFormatException` is paired with `IllegalStateException` rather than with `IllegalArgumentException`, which it extends.
+
+Constructor arguments are copied by position onto a matching constructor of the target type, so `throw IllegalArgumentException(message, cause)` mutates to `IllegalStateException(message, cause)`.
+
+**Note:** Only a `throw` of a direct constructor call is mutated. `val e = IllegalStateException(); throw e` is not, since the thrown expression is a variable read rather than a constructor call. Constructs that eventually become throws (`!!`, `TODO()`, `require`/`check`, exhaustive `when` without `else`) are never mutated by this operator either, because they are still ordinary calls at the point where the compiler plugin runs.
 
 ## Design Decisions
 

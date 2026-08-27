@@ -8,22 +8,18 @@ import org.jetbrains.kotlin.ir.expressions.IrThrow
  * Each implementation handles a specific category of mutations
  * on thrown values (e.g., exception type swaps).
  *
- * Unlike the previous constructor-based interface which operated on the inner
- * [IrConstructorCall], this interface operates directly on [IrThrow],
- * aligning the dispatch point (visitThrow) with the operator contract.
- *
- * Synthetic throws — from `!!`, exhaustive `when` without else, `TODO()`,
- * and inlined `require`/`check` — are filtered in [matches] using
- * offset-based heuristics, the same approach used by
- * [BooleanReturnOperator] for synthetic returns.
+ * The interface operates directly on [IrThrow] so that the dispatch point
+ * (`visitThrow` in [MutflowIrTransformer]) and the operator contract agree on
+ * the node shape.
  */
 interface ThrowMutationOperator {
 
     /**
-     * Returns true if this operator can generate mutations for the given throw expression.
+     * Returns true if the throw expression has the node shape this operator handles.
      *
-     * Implementations should filter synthetic throws (offset-based check)
-     * and return false for throws that don't match the operator's category.
+     * This is a shape check only. Whether a mutation is actually available
+     * (for example, whether a swap pair exists for the thrown type) is decided
+     * in [variants], which returns an empty list when there is nothing to mutate.
      */
     fun matches(throwExpr: IrThrow): Boolean
 

@@ -552,11 +552,12 @@ The environment variable override is intentional: it allows the same test code t
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
 │                           │  and Gradle-configured target classes│
 │                           │  Injects MutationRegistry.check()   │
-│                           │  Four operator interfaces:          │
+│                           │  Five operator interfaces:          │
 │                           │    MutationOperator (IrCall nodes)  │
 │                           │    ReturnMutationOperator (IrReturn)│
 │                           │    FunctionBodyMutationOperator     │
 │                           │    WhenMutationOperator (IrWhen)    │
+│                           │    ThrowMutationOperator (IrThrow)  │
 │                           │  RelationalComparisonOperator:      │
 │                           │    handles >, <, >=, <= operators   │
 │                           │  ConstantBoundaryOperator:          │
@@ -575,6 +576,8 @@ The environment variable override is intentional: it allows the same test code t
 │                           │    replaces nullable returns w/ null│
 │                           │  VoidFunctionBodyOperator:          │
 │                           │    removes Unit function bodies     │
+│                           │  ExceptionTypeSwapOperator:         │
+│                           │    swaps sibling exception types    │
 │                           │  Depends on: mutflow-core           │
 ├─────────────────────────────────────────────────────────────────┤
 │  mutflow-core             │  @MutationTarget annotation         │
@@ -816,11 +819,12 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - K2 compiler plugin with extensible mutation operator mechanism
 - `MutflowCommandLineProcessor` receives target patterns from Gradle plugin via `SubpluginOption`
 - Target pattern matching: glob-style patterns (`*`, `**`) compiled to regex for FQN matching
-- Four operator interfaces for different IR node types:
+- Five operator interfaces for different IR node types:
   - `MutationOperator` - for `IrCall` nodes (comparison operators, etc.)
   - `ReturnMutationOperator` - for `IrReturn` nodes (return statement mutations)
   - `FunctionBodyMutationOperator` - for function declarations (body-level mutations)
   - `WhenMutationOperator` - for `IrWhen` nodes (boolean logic operators)
+  - `ThrowMutationOperator` - for `IrThrow` nodes (exception type mutations)
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
   - Each operator produces 2 variants: boundary mutation + direction flip
 - `ConstantBoundaryOperator` mutates numeric constants in comparisons
@@ -869,6 +873,13 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
   - Catches tests that don't verify side effects - "what if this function did nothing?"
   - Operates at the function declaration level, not at call sites
+- `ExceptionTypeSwapOperator` swaps a thrown exception for a sibling type
+  - Produces 1 variant: the paired sibling exception (e.g. `IllegalArgumentException` → `IllegalStateException`)
+  - Only matches `throw` of a direct constructor call; `val e = ...; throw e` is not matched
+  - Pairs are chosen so neither type is a subtype of the other, otherwise a `catch` of the supertype would still match and the mutant would be equivalent
+  - Constructor arguments are copied by position onto a matching constructor of the target type
+  - Catches tests that assert something threw without asserting what
+  - Synthetic throws are not a concern at this phase: `!!`, `TODO()`, `require`/`check` and exhaustive `when` are still `IrCall` nodes when IR plugin extensions run
 - Recursive operator application: multiple operators can match the same expression
 - Type-agnostic: works with `Int`, `Long`, `Double`, `Float`, etc.
 - Respects `@SuppressMutations` annotation on classes and functions

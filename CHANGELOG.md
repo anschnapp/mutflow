@@ -1,11 +1,25 @@
 # Changelog
 
 ## [Unreleased]
+
+## [1.1.0] - 2026-08-27
+### Added
+- Exception type swap mutation operator. A `throw` of one exception type is mutated into a sibling type (for example `IllegalArgumentException` -> `IllegalStateException`), catching tests that assert *something* was thrown without asserting *what*. Nine exception types are covered. Pairs are chosen so that neither type is a subtype of the other, otherwise a `catch` of the shared supertype would still match and the mutant would be equivalent. (#16)
+- `ThrowMutationOperator`, a fifth operator interface for `IrThrow` nodes, alongside `MutationOperator`, `ReturnMutationOperator`, `FunctionBodyMutationOperator` and `WhenMutationOperator`.
+
 ### Changed
 - The mutation summary now lists every test that killed a mutation instead of only the first one. `MutationResult.Killed` carries `testNames: Set<String>` in place of `testName: String`, which is a source-incompatible change if you read mutation results programmatically. (#17)
 
 ### Contributors
-Thanks to @trancee for the multi-killer tracking.
+Thanks to @trancee for the exception type swap operator and the multi-killer tracking.
+
+## [1.0.5] - 2026-08-11
+### Changed
+- Gradle wrapper and JUnit patch version updates. (#15)
+
+## [1.0.4] - 2026-07-05
+### Fixed
+- Arithmetic mutations on `Double` and `Float` no longer lose precision. The `when` wrapper generated around a mutated expression was hardcoded to `Boolean`, so a `Boolean`-typed `when` around a `Double` expression silently truncated fractional values. The wrapper now carries the original expression's type. (#12)
 
 ## [1.0.3] - 2026-07-04
 ### Fixed
