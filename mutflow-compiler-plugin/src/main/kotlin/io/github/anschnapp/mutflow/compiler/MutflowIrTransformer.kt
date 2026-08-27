@@ -38,6 +38,7 @@ class MutflowIrTransformer(
     private val returnOperators: List<ReturnMutationOperator> = defaultReturnOperators(),
     private val functionBodyOperators: List<FunctionBodyMutationOperator> = defaultFunctionBodyOperators(),
     private val whenOperators: List<WhenMutationOperator> = defaultWhenOperators(),
+    private val throwOperators: List<ThrowMutationOperator> = defaultThrowOperators(),
     private val targetPatterns: List<String> = emptyList()
 ) : IrElementTransformerVoid() {
 
@@ -63,7 +64,11 @@ class MutflowIrTransformer(
             ConstantBoundaryOperator(),
             ArithmeticOperator(),
             EqualitySwapOperator(),
-            BooleanInversionOperator()
+            BooleanInversionOperator(),
+        )
+
+        fun defaultThrowOperators(): List<ThrowMutationOperator> = listOf(
+            ExceptionTypeSwapOperator()
         )
 
         fun defaultReturnOperators(): List<ReturnMutationOperator> = listOf(
@@ -231,6 +236,29 @@ class MutflowIrTransformer(
 
         val fn = currentFunction ?: return transformed
         return transformCallWithOperators(transformed, fn, callOperators)
+    }
+
+    override fun visitThrow(expression: IrThrow): IrExpression {
+        // First, transform children (bottom-up for nested expressions)
+        val transformed = super.visitThrow(expression) as IrThrow
+
+        // Only transform if we're in a @MutationTarget class and not suppressed
+        if (!isInMutationTarget || isInSuppressedScope) {
+            return transformed
+        }
+        if (isLineSuppressedByComment(transformed.startOffset)) {
+            return transformed
+        }
+
+        // Delegate to ThrowMutationOperators. Each operator's matches() handles:
+        // - Synthetic throw filtering (!! , when-without-else, TODO(), require/check)
+        // - Checking that the thrown expression is a directly-thrown constructor call
+        val fn = currentFunction ?: return transformed
+        val mutatedValue = transformThrowWithOperators(transformed, fn, throwOperators)
+        if (mutatedValue !== transformed.value) {
+            transformed.value = mutatedValue
+        }
+        return transformed
     }
 
     override fun visitGetValue(expression: IrGetValue): IrExpression {
@@ -493,6 +521,116 @@ class MutflowIrTransformer(
                 endOffset = original.endOffset,
                 condition = builder.irTrue(),
                 result = transformCallWithOperators(original, containingFunction, remainingOperators)
+            )
+        }
+    }
+
+    /**
+     * Recursively applies matching throw operators to an IrThrow.
+     *
+     * Each matching operator wraps the thrown expression in a when block, with
+     * the else branch passing to the next operator.
+     */
+    private fun transformThrowWithOperators(
+        throwExpr: IrThrow,
+        containingFunction: IrSimpleFunction,
+        remainingOperators: List<ThrowMutationOperator>
+    ): IrExpression {
+        if (remainingOperators.isEmpty()) {
+            return throwExpr.value ?: throwExpr
+        }
+
+        val operator = remainingOperators.first()
+        val rest = remainingOperators.drop(1)
+
+        if (!operator.matches(throwExpr)) {
+            return transformThrowWithOperators(throwExpr, containingFunction, rest)
+        }
+
+        val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
+        val context = MutationContext(pluginContext, builder, containingFunction)
+        return transformThrowWithOperator(throwExpr, context, operator, rest)
+    }
+
+    /**
+     * Transforms a throw statement using the given mutation operator.
+     *
+     * Generates a when expression with inline check() calls, using a common
+     * supertype (Throwable) for the result type since sibling exception types
+     * are not subtypes of each other:
+     * ```
+     * when {
+     *     MutationRegistry.check(...) == 0 -> IllegalStateException(msg)
+     *     else -> IllegalArgumentException(msg)
+     * }
+     * ```
+     */
+    private fun transformThrowWithOperator(
+        throwExpr: IrThrow,
+        context: MutationContext,
+        operator: ThrowMutationOperator,
+        remainingOperators: List<ThrowMutationOperator>
+    ): IrExpression {
+        val containingFunction = context.containingFunction
+        val checkFn = checkFunction ?: return throwExpr.value ?: throwExpr
+        val registryClass = mutationRegistryClass ?: return throwExpr.value ?: throwExpr
+
+        val builder = context.builder
+
+        val variants = operator.variants(throwExpr, context)
+        if (variants.isEmpty()) {
+            return transformThrowWithOperators(throwExpr, containingFunction, remainingOperators)
+        }
+
+        val thrownExpr = throwExpr.value ?: return throwExpr
+        val pointId = generatePointId()
+        val variantCount = variants.size
+        val sourceLocation = getSourceLocation(thrownExpr)
+        val originalOperator = operator.originalDescription(throwExpr)
+        val variantOperators = variants.joinToString(",") { it.description }
+        val lineNumber = currentFile?.fileEntry?.getLineNumber(thrownExpr.startOffset)?.plus(1) ?: 0
+        val occurrenceOnLine = nextOccurrenceOnLine(lineNumber, originalOperator)
+
+        debug("MUTATION: $originalOperator at $sourceLocation (occurrence #$occurrenceOnLine) -> variants: $variantOperators")
+
+        // Helper to create a fresh check() call for each branch condition
+        fun createCheckCall() = builder.irCall(checkFn).also { call ->
+            call.arguments[0] = builder.irGetObject(registryClass)
+            call.arguments[1] = builder.irString(pointId)
+            call.arguments[2] = builder.irInt(variantCount)
+            call.arguments[3] = builder.irString(sourceLocation)
+            call.arguments[4] = builder.irString(originalOperator)
+            call.arguments[5] = builder.irString(variantOperators)
+            call.arguments[6] = builder.irInt(occurrenceOnLine)
+        }
+
+        // Use Throwable as the when type since sibling exception types
+        // (e.g. IllegalArgumentException, IllegalStateException) share only
+        // Throwable as a common supertype.
+        val throwableType = pluginContext.irBuiltIns.throwableType
+
+        // Generate when expression with inline check() calls - no temporary variable.
+        // The when block replaces throwExpr.value (the original thrown expression).
+        val originalValue = thrownExpr
+        return IrWhenImpl(
+            startOffset = originalValue.startOffset,
+            endOffset = originalValue.endOffset,
+            type = throwableType,
+            origin = null
+        ).apply {
+            variants.forEachIndexed { index, variant ->
+                branches += IrBranchImpl(
+                    startOffset = originalValue.startOffset,
+                    endOffset = originalValue.endOffset,
+                    condition = builder.irEquals(createCheckCall(), builder.irInt(index)),
+                    result = variant.createExpression()
+                )
+            }
+            branches += IrElseBranchImpl(
+                startOffset = originalValue.startOffset,
+                endOffset = originalValue.endOffset,
+                condition = builder.irTrue(),
+                result = transformThrowWithOperators(throwExpr, containingFunction, remainingOperators)
             )
         }
     }
