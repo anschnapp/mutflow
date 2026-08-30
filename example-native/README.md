@@ -68,4 +68,7 @@ mutflow {
 }
 ```
 
-See `../DESIGN-KOTLIN-NATIVE.md` for the full architecture.
+See [DESIGN-KOTLIN-NATIVE.md](../DESIGN-KOTLIN-NATIVE.md) for the full
+architecture, and the [Kotlin Multiplatform Support section of the main
+README](../README.md#kotlin-multiplatform-support-experimental) for setup and
+current limitations.

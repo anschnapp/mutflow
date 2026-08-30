@@ -471,8 +471,12 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 ## Kotlin Multiplatform Support (Experimental)
 
-mutflow also runs on Kotlin/Native targets in Multiplatform projects. To our
-knowledge it is the first mutation testing tool for Kotlin/Native: traditional
+mutflow also runs on Kotlin/Native targets in Multiplatform projects. The Gradle
+wiring is generic over native targets rather than written per target, so it is
+designed to work on any target where Kotlin/Native tests can run at all. Within
+this project it is verified only on `linuxX64` (see Current limitations below).
+
+To our knowledge it is the first mutation testing tool for Kotlin/Native: traditional
 tools mutate JVM bytecode, which does not exist on Native, and recompiling per
 mutant is impractical with native compile times. mutflow's compile-once
 approach sidesteps both problems.
