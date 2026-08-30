@@ -2,6 +2,7 @@ package io.github.anschnapp.mutflow.compiler
 
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 
@@ -14,9 +15,13 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
  */
 class MutflowIrGenerationExtension(
     private val targetPatterns: List<String> = emptyList(),
-    // POC (Phase 4): when set, classes containing MutFlow.underTest get this
-    // annotation synthesized onto them. See TestClassAnnotator.
-    private val annotateTestClasses: String? = null
+    /**
+     * When set, test classes in files that use MutFlow.underTest get this
+     * annotation synthesized onto them, so a commonTest class can carry a
+     * JVM-only annotation it cannot name in source. See TestClassAnnotator.
+     */
+    private val annotateTestClasses: String? = null,
+    private val messageCollector: MessageCollector = MessageCollector.NONE
 ) : IrGenerationExtension {
 
     companion object {
@@ -40,7 +45,10 @@ class MutflowIrGenerationExtension(
         debug("  transformation complete")
 
         if (annotateTestClasses != null) {
-            moduleFragment.transform(TestClassAnnotator(pluginContext, annotateTestClasses), null)
+            moduleFragment.transform(
+                TestClassAnnotator(pluginContext, annotateTestClasses, messageCollector),
+                null
+            )
             debug("  test class annotation complete")
         }
     }

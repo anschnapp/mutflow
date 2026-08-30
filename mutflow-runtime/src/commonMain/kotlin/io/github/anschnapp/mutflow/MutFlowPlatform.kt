@@ -43,9 +43,11 @@ internal expect fun generateSeed(): Long
  * Returns the process-level run for the Native orchestration path, or null
  * if `underTest {}` should use the JVM session machinery instead.
  *
- * JVM: always null - the JUnit extension owns the run loop, and the
- * MUTFLOW_* orchestration env vars are deliberately ignored so JVM behavior
- * is bit-identical to pre-Native releases.
+ * JVM: null - the JUnit extension owns the run loop, and the MUTFLOW_*
+ * orchestration env vars are deliberately ignored so JVM behavior is
+ * bit-identical to pre-Native releases. The one exception is
+ * MUTFLOW_INACTIVE, which yields a pass-through run for the stock test task
+ * of a multiplatform jvm() target.
  * Native: never null - one ProcessRun per process, resolved lazily from the
  * environment (Inactive when no MUTFLOW_* vars are set, so plain test runs
  * work without any orchestrator).

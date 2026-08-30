@@ -14,11 +14,15 @@ package io.github.anschnapp.mutflow
  *   MUTFLOW_ACTIVE_MUTATION=<pointId>:<index>  -> Mutation mode
  *   (neither set)                              -> Inactive mode
  *
+ * Inactive mode is also what the JVM uses for the stock test task of a
+ * multiplatform jvm() target, selected by MUTFLOW_INACTIVE=true. That is the
+ * only MUTFLOW_* variable the JVM reads.
+ *
  * One process = one run = one [ProcessRun] instance, resolved once from the
  * environment (see MutFlowPlatform.native.kt). `MutFlow.underTest {}`
  * delegates here on Native and never touches the session machinery; on the
- * JVM `currentProcessRun()` is hardwired to null, so the JVM behavior is
- * untouched.
+ * JVM `currentProcessRun()` is null except in that one pass-through case, so
+ * the JVM run loop is untouched.
  *
  * The class itself is common (not native-only) so its logic can be unit
  * tested on the JVM: the file-writing side effects are injected, and the

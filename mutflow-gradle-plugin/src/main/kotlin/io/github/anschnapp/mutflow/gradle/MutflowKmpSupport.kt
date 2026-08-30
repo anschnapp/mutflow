@@ -2,14 +2,21 @@ package io.github.anschnapp.mutflow.gradle
 
 import org.gradle.api.Project
 import org.gradle.api.tasks.TaskProvider
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import org.jetbrains.kotlin.gradle.plugin.getKotlinPluginVersion
+import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
 import org.jetbrains.kotlin.konan.target.HostManager
 
 /**
- * Kotlin Multiplatform wiring for the Native mutation testing path
- * (Phase 3 of DESIGN-KOTLIN-NATIVE.md).
+ * Kotlin Multiplatform wiring (Phases 3 and 4 of DESIGN-KOTLIN-NATIVE.md).
+ *
+ * Both target kinds share the compilation model below and differ only in how
+ * the mutation runs are driven: a native target gets one process per mutation
+ * from an orchestrator task, while a jvm() target runs the ordinary in-process
+ * JUnit path, exactly like a plain kotlin("jvm") project does.
  *
  * Kept in its own file so the classes from kotlin-gradle-plugin internals
  * (KotlinNativeTarget, HostManager, ...) are only loaded when the
@@ -72,6 +79,123 @@ internal object MutflowKmpSupport {
 
         kotlin.targets.withType(KotlinNativeTarget::class.java).all { target ->
             configureNativeTarget(project, extension, target, umbrella)
+        }
+
+        kotlin.targets.withType(KotlinJvmTarget::class.java).all { target ->
+            configureJvmTarget(project, extension, target)
+        }
+    }
+
+    /**
+     * The jvm() target of a multiplatform project.
+     *
+     * Same mutatedMain/mutatedTest compilation model as Native, but the test
+     * binary is a JUnit classpath rather than an executable, so the run loop
+     * is the one that already exists: @MutFlowTest turns the class into a
+     * JUnit @ClassTemplate and MutFlowExtension re-runs it once per mutation
+     * in-process.
+     *
+     * The reason mutatedTest exists at all here (rather than reusing the stock
+     * test compilation, as the plain kotlin("jvm") path does) is that the
+     * commonTest sources cannot write @MutFlowTest: it is a JVM-only
+     * annotation and commonTest must also compile for Native. So mutatedTest
+     * is compiled a second time with the plugin in annotate mode, which
+     * synthesizes the annotation into the bytecode. See TestClassAnnotator.
+     */
+    private fun configureJvmTarget(
+        project: Project,
+        extension: MutflowExtension,
+        target: KotlinJvmTarget
+    ) {
+        val sourceSets = project.extensions
+            .getByType(KotlinMultiplatformExtension::class.java)
+            .sourceSets
+
+        val mutatedMain = target.compilations.create(MutflowGradlePlugin.MUTATED_MAIN) { compilation ->
+            compilation.defaultSourceSet.dependsOn(sourceSets.getByName("${target.name}Main"))
+            compilation.defaultSourceSet.dependencies {
+                implementation("${MutflowGradlePlugin.GROUP_ID}:mutflow-core:$MUTFLOW_VERSION")
+            }
+        }
+
+        val mutatedTest = target.compilations.create(MUTATED_TEST) { compilation ->
+            compilation.defaultSourceSet.dependsOn(sourceSets.getByName("${target.name}Test"))
+            compilation.associateWith(mutatedMain)
+            compilation.defaultSourceSet.dependencies {
+                // The JUnit extension, plus the annotation the compiler plugin
+                // synthesizes references. Only this compilation gets it; the
+                // stock jvmTest compilation stays a plain kotlin.test run.
+                implementation("${MutflowGradlePlugin.GROUP_ID}:mutflow-junit6:$MUTFLOW_VERSION")
+
+                // Pinning the junit5 variant of kotlin-test explicitly is not
+                // redundant. KGP picks that variant by inspecting the test
+                // framework of the Test task wired to a compilation, and a
+                // compilation this plugin creates has no such task at
+                // resolution time - so a plain `kotlin("test")` in commonTest
+                // resolves to the bare artifact here and `kotlin.test.Test`
+                // does not resolve at all. This is the typealias that makes it
+                // org.junit.jupiter.api.Test, which is what @ClassTemplate
+                // discovery needs to see.
+                implementation(
+                    "org.jetbrains.kotlin:kotlin-test-junit5:${project.getKotlinPluginVersion()}"
+                )
+            }
+        }
+
+        // The stock jvmTest task keeps running uninstrumented code, exactly
+        // as stock <target>Test does on Native. It does need one thing though:
+        // its commonTest sources call MutFlow.underTest, and without a session
+        // that call fails by design (a missing @MutFlowTest is a mistake worth
+        // shouting about in a plain kotlin("jvm") project). Here there is no
+        // annotation to miss - it is synthesized onto mutatedTest only - so
+        // this tells the runtime to treat underTest as a pass-through, which
+        // is the same Inactive mode Native falls into when no orchestrator set
+        // any environment variable.
+        target.testRuns.all { testRun ->
+            testRun.executionTask.configure { task ->
+                task.environment("MUTFLOW_INACTIVE", "true")
+            }
+        }
+
+        val taskName = "mutflow${target.name.replaceFirstChar { it.uppercaseChar() }}Test"
+        project.tasks.register(taskName, Test::class.java) { task ->
+            task.group = "verification"
+            task.description = "Runs mutflow mutation testing for the '${target.name}' target"
+            task.testClassesDirs = mutatedTest.output.classesDirs
+            task.classpath = mutatedTest.output.allOutputs +
+                mutatedMain.output.allOutputs +
+                mutatedTest.runtimeDependencyFiles
+            task.useJUnitPlatform()
+
+            // The mutflow { } DSL reaches the in-process run loop the same way
+            // it reaches the native orchestrator: through the environment. The
+            // synthesized @MutFlowTest always carries default arguments, so
+            // annotation values are not a configuration surface in a
+            // multiplatform project. An ambient environment variable still
+            // wins, so a one-off CI override keeps working.
+            // maxMutationRuns counts MUTATION runs, which is what the native
+            // orchestrator plans. The JUnit extension counts total class
+            // invocations, and the baseline is one of them - hence the +1, so
+            // one DSL value means the same number of mutations on both paths.
+            // Saturating, because the default is Int.MAX_VALUE.
+            val maxRuns = extension.maxMutationRuns.get().let { runs ->
+                if (runs == Int.MAX_VALUE) runs else runs + 1
+            }
+            task.environment("MUTFLOW_MAX_RUNS", maxRuns.toString())
+            task.environment("MUTFLOW_TIMEOUT_MS", extension.timeoutMs.get().toString())
+            val mode = System.getenv("MUTFLOW_VERIFICATION_MODE") ?: extension.verificationMode.get()
+            task.environment("MUTFLOW_VERIFICATION_MODE", mode)
+
+            // Gradle's Test task does not treat environment variables as
+            // inputs, so without these the task stays UP-TO-DATE after a
+            // mutflow { } change and silently reports the previous run's
+            // result. The native orchestrator gets this for free: its
+            // equivalents are @Input properties on a custom task type.
+            task.inputs.property("mutflow.maxRuns", maxRuns)
+            task.inputs.property("mutflow.timeoutMs", extension.timeoutMs.get())
+            task.inputs.property("mutflow.verificationMode", mode)
+
+            task.onlyIf("mutflow is disabled") { extension.enabled.get() }
         }
     }
 
@@ -140,9 +264,9 @@ internal object MutflowKmpSupport {
                 task.testBinary.set(project.layout.file(project.provider { binary.outputFile }))
                 task.workDirectory.set(project.layout.buildDirectory.dir("mutflow/${target.name}"))
                 task.targetName.set(target.name)
-                task.maxMutationRuns.set(extension.nativeMaxMutationRuns)
-                task.timeoutMs.set(extension.nativeTimeoutMs)
-                task.verificationMode.set(extension.nativeVerificationMode)
+                task.maxMutationRuns.set(extension.maxMutationRuns)
+                task.timeoutMs.set(extension.timeoutMs)
+                task.verificationMode.set(extension.verificationMode)
                 task.onlyIf("mutflow is disabled") { extension.enabled.get() }
             }
             umbrella.configure { it.dependsOn(orchestrator) }

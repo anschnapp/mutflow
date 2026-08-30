@@ -9,8 +9,9 @@ import org.jetbrains.kotlin.config.CompilerConfigurationKey
 
 val MUTFLOW_TARGET_PATTERNS_KEY = CompilerConfigurationKey<List<String>>("mutflow target patterns")
 
-// POC (Phase 4): FQN of an annotation to synthesize onto test classes that
-// contain a MutFlow.underTest call. Unset means the annotator does not run.
+// FQN of an annotation to synthesize onto test classes in files that use
+// MutFlow.underTest. Unset means the annotator does not run. Set only for the
+// mutatedTest compilation of a JVM target (see MutflowKmpSupport).
 val MUTFLOW_ANNOTATE_TEST_CLASSES_KEY = CompilerConfigurationKey<String>("mutflow annotate test classes")
 
 @OptIn(ExperimentalCompilerApi::class)
@@ -29,7 +30,7 @@ class MutflowCommandLineProcessor : CommandLineProcessor {
         CliOption(
             optionName = "annotateTestClasses",
             valueDescription = "<annotation-fqn>",
-            description = "POC: synthesize this annotation onto test classes containing MutFlow.underTest",
+            description = "Synthesize this annotation onto test classes in files that use MutFlow.underTest",
             required = false,
             allowMultipleOccurrences = false
         )

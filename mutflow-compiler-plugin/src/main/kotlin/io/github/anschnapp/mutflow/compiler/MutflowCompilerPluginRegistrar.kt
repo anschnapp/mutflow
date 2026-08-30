@@ -4,6 +4,8 @@ import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.config.CommonConfigurationKeys
 
 /**
  * Entry point for the mutflow compiler plugin.
@@ -40,8 +42,10 @@ class MutflowCompilerPluginRegistrar : CompilerPluginRegistrar() {
         debug("  target patterns: $targetPatterns")
         val annotateTestClasses = configuration.get(MUTFLOW_ANNOTATE_TEST_CLASSES_KEY)
         debug("  annotate test classes: $annotateTestClasses")
+        val messageCollector = configuration.get(CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
+            ?: MessageCollector.NONE
         IrGenerationExtension.registerExtension(
-            MutflowIrGenerationExtension(targetPatterns, annotateTestClasses)
+            MutflowIrGenerationExtension(targetPatterns, annotateTestClasses, messageCollector)
         )
         debug("  IrGenerationExtension registered")
     }

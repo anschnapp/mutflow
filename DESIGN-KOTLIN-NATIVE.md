@@ -217,7 +217,7 @@ inherits the platform's own boundaries and covers everything inside them.
 | `macosX64`, `macosArm64` | Planned: same model; a macOS host is required even to produce the klibs, so these wait for a Mac/CI (adding them is a build-file one-liner per module) |
 | Apple simulators (`iosSimulatorArm64`, `iosX64`, `watchosSimulatorArm64`, ...) | Planned: same model; env vars need the `SIMCTL_CHILD_` prefix to reach the simulated process |
 | iOS/watchOS/tvOS device targets, Android Native | Out of scope: no standard Gradle test execution exists for these |
-| `jvm()` target **inside a KMP project** | **Gap, not yet supported.** The JVM wiring keys off the `org.jetbrains.kotlin.jvm` plugin id and the Java `SourceSetContainer`, neither of which a KMP project has; `MutflowKmpSupport` handles `KotlinNativeTarget` only. Nothing is instrumented, so `underTest {}` is a pass-through. See Open Questions |
+| `jvm()` target **inside a KMP project** | **Done (Phase 4)**: `MutflowKmpSupport` creates `mutatedMain`/`mutatedTest` compilations for the target and registers a `mutflow<Target>Test` task that runs the ordinary in-process JUnit loop. The compiler plugin synthesizes `@MutFlowTest` onto test classes, since `commonTest` cannot name a JVM-only annotation. The stock `jvmTest` task stays a pass-through |
 | JS / Wasm (Node or browser) | Not part of this work. Node could reuse the pattern later; browser lacks env vars and file IO and needs a different design |
 | Android local unit tests | Separate question: JVM path in principle, but `mutflow-junit6` requires JUnit 6 (Android ecosystem is JUnit 4/5-centric) |
 
@@ -239,8 +239,8 @@ This is acceptable because:
   logic, which is where most mutations live. The intended workflow: develop against
   the JVM target (interactive mutation feedback), run Native mutation verification
   in CI (catches `actual` implementations and platform-specific code).
-  **Not implemented yet** - this is what Phase 4 builds. Until it lands, this
-  fallback is the plan rather than the current state.
+  Implemented in Phase 4: `mutflowJvmTest` runs the same `commonTest` sources
+  through the in-process JUnit path, test tree and all.
 - Everything that differentiates mutflow survives: single compilation, no separate
   tool, `underTest {}` scoping, traps, copy-pasteable survivor names, build fails
   on survivors.
@@ -404,12 +404,13 @@ MostLikelyStable order is implemented; PureRandom/MostLikelyRandom need the
 seed plumbing moved into a shared pure selector first), and a
 machine-readable report file.
 
-## Phase 4 - The JVM Target of a KMP Project (planned)
+## Phase 4 - The JVM Target of a KMP Project (DONE)
 
 > Designed 2026-08-28, rewritten the same day after the POC below invalidated
-> the first draft. Not implemented. This phase closes the "JVM target inside a
-> KMP project" item in Open Questions and validates the UX Tradeoff section,
-> whose argument depends on it.
+> the first draft. **Implemented 2026-08-30.** This phase closes the "JVM
+> target inside a KMP project" item in Open Questions and validates the UX
+> Tradeoff section, whose argument depended on it. What the implementation
+> found on top of the plan is recorded in "Results" below.
 
 ### The decision
 
@@ -548,6 +549,67 @@ role Phase 3 gave the native-only example. Update the UX Tradeoff section (its
 "not implemented yet" caveat comes off), close the JVM-in-KMP open question,
 and rename this document since it stops being native-specific.
 
+### Results (2026-08-30)
+
+Implemented as planned in 4.1 through 4.5. `example-native/` gained a `jvm()`
+target and now greens 6/6 killed on both `mutflowJvmTest` and
+`mutflowLinuxX64Test` from the same `commonTest` sources, `./gradlew build`
+included. `example/` (plain `kotlin("jvm")`) is unchanged at 13/13.
+
+4.0 settled two of its three checks standalone, on a throwaway KMP project with
+no mutflow in it at all:
+
+- `kotlin.test.Test` in `commonTest` compiles to `org.junit.jupiter.api.Test`
+  in the `jvm()` target's bytecode with plain `kotlin("test")`. The reserved
+  fallback (documenting `kotlin("test-junit5")` as a user requirement) is not
+  needed.
+- The same sources compile and run clean on `linuxX64`.
+
+The third (annotation lands in `mutatedTest` bytecode) needs the Gradle wiring
+to exist and its mechanism was already proven by the plain-JVM POC, so it was
+folded into the 4.5 gate, where `javap` on
+`build/classes/kotlin/jvm/mutatedTest/com/example/CalculatorTest.class` shows
+the `RuntimeVisibleAnnotations` entry and the stock `jvm/test` copy shows none.
+
+Four things the plan did not anticipate, each of which would have shipped as a
+bug:
+
+**`kotlin-test` resolves to the wrong variant in a plugin-created compilation.**
+KGP picks the `junit5` variant of `kotlin-test` by inspecting the test framework
+of the `Test` task wired to a compilation. A compilation this plugin creates has
+no such task when the classpath is resolved, so `kotlin("test")` in `commonTest`
+resolved to the bare artifact and `kotlin.test.Test` did not resolve at all in
+`mutatedTest`. Fixed by adding `kotlin-test-junit5` explicitly, at the
+consumer's Kotlin version via `getKotlinPluginVersion()`.
+
+**The stock `jvmTest` task fails without a pass-through mode.** `commonTest`
+calls `MutFlow.underTest {}`, but only `mutatedTest` carries the synthesized
+annotation, so stock `jvmTest` hit the "no active MutFlow session" guard and
+`./gradlew build` failed for every KMP user. Native never had this problem: with
+no `MUTFLOW_*` variables set it falls into `ProcessRunMode.Inactive`, a
+transparent pass-through. The fix reuses exactly that seam rather than weakening
+the guard: the JVM `currentProcessRun()` actual returns an `Inactive` run when
+`MUTFLOW_INACTIVE=true`, and the plugin sets that variable on the `jvm()`
+target's stock test task only. A plain `kotlin("jvm")` project keeps the loud
+error, where a missing `@MutFlowTest` really is a mistake.
+
+**`maxMutationRuns` meant different things on the two paths.** The native
+orchestrator plans that many *mutation* runs; the JUnit extension's `maxRuns`
+counts total class invocations, of which the baseline is one. Unifying the DSL
+name silently made one value mean N mutations on Native and N-1 on the JVM.
+The task now converts at the boundary (saturating at `Int.MAX_VALUE`), so the
+DSL name is honest and the annotation keeps its own established meaning.
+
+**A `Test` task does not track environment variables as inputs.** Changing
+`mutflow { maxMutationRuns }` left `mutflowJvmTest` `UP-TO-DATE`, reporting the
+previous run's verdict. The native path gets this for free because its
+equivalents are `@Input` properties on a custom task type; the JVM task now
+declares them via `inputs.property`.
+
+Also done under 4.4: the `native*` DSL properties became `maxMutationRuns`,
+`timeoutMs` and `verificationMode`, since they now govern both paths. Nothing
+had been released from this branch, so no deprecation cycle was needed.
+
 ### Deferred out of Phase 4
 
 - **Cross-target selection agreement.** With `maxRuns` set, the JUnit extension
@@ -605,16 +667,18 @@ Each phase keeps the JVM path green and releasable.
    exit-code inversion, summary reporting, clean-production compilation model,
    and the `example-native/` KMP example project verified end-to-end (the
    shipping gate).
-5. **Phase 4 - The JVM target of a KMP project: PLANNED, POC passed.** The
+5. **Phase 4 - The JVM target of a KMP project: DONE (2026-08-30).** The
    `jvm()` target joins the existing in-process JUnit path, with the compiler
    plugin synthesizing the `@MutFlowTest` that `commonTest` cannot write.
-   `mutflow-junit6` is untouched and keeps serving plain `kotlin("jvm")`
-   projects. See Phase 4 above.
+   `mutflow-junit6` keeps serving plain `kotlin("jvm")` projects unchanged.
+   `example-native/` now greens 6/6 on both `mutflowJvmTest` and
+   `mutflowLinuxX64Test` from one set of sources. See Phase 4 above.
 
 ## Open Questions
 
 - Where traps and target filtering live on the Native path (run limits, timeout
-  and verification mode landed in the Gradle DSL in Phase 3; traps are still open).
+  and verification mode landed in the Gradle DSL in Phase 3 and became
+  target-neutral in Phase 4; traps are still open).
 - Random selection strategies (PureRandom, MostLikelyRandom) on the Native path:
   the orchestrator currently implements only the deterministic MostLikelyStable
   order. Doing this without duplicating semantics means extracting the seeded
