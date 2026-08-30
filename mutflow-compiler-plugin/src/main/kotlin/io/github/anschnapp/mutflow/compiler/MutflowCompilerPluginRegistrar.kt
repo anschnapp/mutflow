@@ -38,7 +38,11 @@ class MutflowCompilerPluginRegistrar : CompilerPluginRegistrar() {
         debug("  configuration: $configuration")
         val targetPatterns = configuration.get(MUTFLOW_TARGET_PATTERNS_KEY) ?: emptyList()
         debug("  target patterns: $targetPatterns")
-        IrGenerationExtension.registerExtension(MutflowIrGenerationExtension(targetPatterns))
+        val annotateTestClasses = configuration.get(MUTFLOW_ANNOTATE_TEST_CLASSES_KEY)
+        debug("  annotate test classes: $annotateTestClasses")
+        IrGenerationExtension.registerExtension(
+            MutflowIrGenerationExtension(targetPatterns, annotateTestClasses)
+        )
         debug("  IrGenerationExtension registered")
     }
 }

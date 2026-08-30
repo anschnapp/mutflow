@@ -239,8 +239,8 @@ This is acceptable because:
   logic, which is where most mutations live. The intended workflow: develop against
   the JVM target (interactive mutation feedback), run Native mutation verification
   in CI (catches `actual` implementations and platform-specific code).
-  **Not implemented yet** - see "JVM target inside a KMP project" in Open Questions.
-  Until it is, this fallback is the plan rather than the current state.
+  **Not implemented yet** - this is what Phase 4 builds. Until it lands, this
+  fallback is the plan rather than the current state.
 - Everything that differentiates mutflow survives: single compilation, no separate
   tool, `underTest {}` scoping, traps, copy-pasteable survivor names, build fails
   on survivors.
@@ -404,6 +404,175 @@ MostLikelyStable order is implemented; PureRandom/MostLikelyRandom need the
 seed plumbing moved into a shared pure selector first), and a
 machine-readable report file.
 
+## Phase 4 - The JVM Target of a KMP Project (planned)
+
+> Designed 2026-08-28, rewritten the same day after the POC below invalidated
+> the first draft. Not implemented. This phase closes the "JVM target inside a
+> KMP project" item in Open Questions and validates the UX Tradeoff section,
+> whose argument depends on it.
+
+### The decision
+
+A KMP project runs its native targets through the Gradle orchestrator built in
+Phase 3, and its `jvm()` target through the existing in-process JUnit path
+(`mutflow-junit6`, `@MutFlowTest`, `@ClassTemplate`) - the same machinery a
+plain `kotlin("jvm")` project uses today, unchanged.
+
+The obstacle was never the run model. It was that `@ClassTemplate` needs a
+JVM-only annotation physically present on a test class that lives in
+`commonTest`, where it cannot be written. The compiler plugin puts it there
+instead.
+
+| Project shape | Run model | Class-level opt-in |
+|---|---|---|
+| `kotlin("jvm")` | in-process JUnit runs | `@MutFlowTest`, hand-written |
+| KMP `jvm()` target | in-process JUnit runs | `@MutFlowTest`, synthesized by the compiler plugin |
+| KMP native target | one process per mutation | none needed |
+
+The authoring model is then identical on all three: mark production code with
+`@MutationTarget`, wrap assertions in `MutFlow.underTest {}`, write ordinary
+`kotlin.test` classes. Nothing in `commonTest` names a JVM type.
+
+### POC result (2026-08-28): annotation synthesis works
+
+A throwaway `kotlin("jvm")` project, both mutflow jars applied as raw
+`-Xplugin` arguments, a new opt-in compiler option
+`annotateTestClasses=<annotation-fqn>`, and a new `TestClassAnnotator` IR
+transformer that scans each class body for a call to `MutFlow.underTest` and,
+on a hit, appends the named annotation to the class. Verified:
+
+- `javap -v CalculatorTest` shows a class-level
+  `RuntimeVisibleAnnotations: io.github.anschnapp.mutflow.junit.MutFlowTest`.
+  Runtime retention survives into bytecode.
+- A control class in the same file with `@Test` methods but no `underTest` call
+  is left unannotated, so `underTest` discriminates correctly.
+- `./gradlew test` shows `@ClassTemplate` engaging and re-running the class per
+  mutation (`CalculatorTest > Mutation: (Calculator.kt:7) 0 -> -1 > ... PASSED`),
+  ending in the normal summary box: 4 discovered, 4 killed, 0 survived, build
+  green.
+
+So `@MutFlowTest` reaches JUnit through the compiler rather than through source,
+and the whole existing extension works behind it untouched.
+
+Two Kotlin 2.4 details the POC had to discover, worth recording because they
+are not in any blog post: `IrClass.annotations` is now `List<IrAnnotation>`
+rather than `List<IrConstructorCall>`, and the factory to use is
+`IrAnnotationImpl.fromSymbolOwner(type, constructorSymbol)` (an extension in
+`org.jetbrains.kotlin.ir.expressions.impl.BuildersKt`). Also
+`IrElementVisitorVoid` is a deprecated typealias for the abstract class
+`IrVisitorVoid`.
+
+What the POC did **not** cover, and 4.0 must: the KMP `jvm()` target
+specifically. The POC used `src/test` of a plain JVM project.
+
+### What this deletes from the previous draft
+
+The first Phase 4 draft routed the `jvm()` target through the Gradle
+orchestrator too, which required a new JVM runner module driving the JUnit
+Platform Launcher, plus moving env-var resolution into `commonMain` and adding
+a way to install a `ProcessRun` programmatically on the JVM. None of that is
+needed. The runner module is dropped entirely, the runtime is untouched, and
+the JVM keeps the interactive IDE test tree that the orchestrated model would
+have destroyed.
+
+The draft's load-bearing claim, that no extension API can promote an ordinary
+test class into a re-run template, is correct as stated and is still why a
+source-level solution fails. But it constrains what an *extension* can do at
+runtime, not what the compiler can do at compile time, and the draft never
+considered the second.
+
+### Steps
+
+**4.0 - POC gate (KMP shape).** Throwaway project, `jvm()` + `linuxX64()`, tests
+in `commonTest` only. Verify three things: the synthesized annotation lands in
+the `jvm()` target's `mutatedTest` bytecode; `kotlin.test.Test` resolves to
+`org.junit.jupiter.api.Test` there under `useJUnitPlatform()` (it is a typealias,
+and the resolution depends on the `kotlin("test")` variant the project pulls in);
+and the same `commonTest` sources still compile and run clean on `linuxX64`
+with the annotator switched off for that target. If Jupiter is not what resolves,
+the fallback is documenting `kotlin("test-junit5")` as a requirement for the
+JVM target rather than any design change.
+
+**4.1 - Promote the annotator out of POC status.** `TestClassAnnotator` gets
+real tests, an escape hatch (a class that already carries `@MutFlowTest` is
+skipped, which the POC already does, plus an opt-out for a project that wants
+to hand-annotate), and a decision on `underTest {}` called from a helper
+outside the class body - the current scan is class-local and would miss it.
+Options: widen the scan to the whole file, or accept the limitation and
+document it. Widening is cheap and has no false-positive cost worth worrying
+about, since annotating a class with no mutations simply produces a baseline
+run.
+
+**4.2 - Gradle wiring for the `jvm()` target.** Extend `MutflowKmpSupport` past
+`KotlinNativeTarget`: `KotlinJvmTarget` exposes `compilations` the same way, so
+the `mutatedMain` / `mutatedTest` / `associateWith` block ports over almost
+verbatim. Differences: `mutatedTest` gets `mutflow-junit6` on its compile and
+runtime classpath, and instead of an orchestrator task the target gets a plain
+`Test` task (`mutflowJvmTest`) that runs the `mutatedTest` output with
+`useJUnitPlatform()`. The stock `jvmTest` task is never touched, exactly as
+stock `<target>Test` is not on native.
+
+**4.3 - Compiler plugin applicability.** `isApplicable` currently matches the
+compilation name `mutatedMain` alone, so test compilations are never
+instrumented. The annotator needs the plugin applied to `mutatedTest` as well,
+but only for a JVM target and only in annotate mode: `applyToCompilation` passes
+`annotateTestClasses` and no `target` patterns there, which makes the mutation
+transformer a no-op on test code. Native `mutatedTest` must keep getting nothing
+at all, since there is no JUnit on that classpath and an unresolvable annotation
+FQN would only produce the POC's warning.
+
+**4.4 - Config surface.** The run-loop knobs (`maxRuns`, `timeoutMs`,
+`verificationMode`, `traps`) live in the `@MutFlowTest` annotation on the JVM
+path and in the Gradle DSL on the native path. In a KMP project the annotation
+is synthesized, so a user cannot write those values. Two ways to close it:
+
+1. Synthesize the annotation *with* argument values taken from the Gradle DSL,
+   passed down as compiler options.
+2. Keep the synthesized annotation parameterless and have `MutFlowExtension`
+   read the knobs from the environment, which the `mutflowJvmTest` task sets
+   from the same DSL properties.
+
+Prefer (2). It reuses the mechanism `MUTFLOW_VERIFICATION_MODE` already
+establishes, needs no IR work for enum and array annotation arguments, and
+crucially does not recompile `mutatedTest` every time a config value changes.
+Precedence on the JVM stays: environment overrides annotation, so a
+hand-annotated plain JVM project is unaffected.
+
+While doing this, rename the `native*` DSL properties to unprefixed names
+(`maxMutationRuns`, `timeoutMs`, `verificationMode`) - they now govern both
+paths, and nothing has been released from this branch yet.
+
+**4.5 - Gate and docs.** Add a `jvm()` target to `example-native/` and make
+both `mutflowJvmTest` and `mutflowLinuxX64Test` green the shipping gate, the
+role Phase 3 gave the native-only example. Update the UX Tradeoff section (its
+"not implemented yet" caveat comes off), close the JVM-in-KMP open question,
+and rename this document since it stops being native-specific.
+
+### Deferred out of Phase 4
+
+- **Cross-target selection agreement.** With `maxRuns` set, the JUnit extension
+  selects its own subset in-process while the native orchestrator selects from
+  Gradle, so the two targets would test different mutations and the aggregate
+  report would be confusing. Not wrong, just not comparable. The fix is Gradle
+  computing one selected list and passing it to both, which means extracting the
+  seeded selection out of `MutFlowSession` into a shared pure selector - the same
+  refactor the random selection strategies need. Unlimited runs (the default) has
+  no such problem, so this is a sharp edge rather than a blocker.
+- **Per-source-set differential mode.** Running every mutation on every target is
+  largely redundant for `commonMain` code: mutation testing measures test-suite
+  quality, which is a property of shared source plus shared tests, so the verdict
+  is the same on every target. The unique value is `actual` implementations,
+  which exist on one target only. A "run shared mutations once on the primary
+  target, plus each target's own source sets where they live" mode would be both
+  cheaper and more honest. Blocked on a compiler plugin change: `getSourceLocation`
+  does `substringAfterLast('/')`, so the source-set directory (the only thing
+  identifying which target a file belongs to) is discarded. Filename matching
+  from the Gradle side is ambiguous because `expect`/`actual` files often share a
+  name across source sets. Until then, the `targets` property covers the need.
+- Traps on the orchestrated (native) path.
+- Random selection strategies (PureRandom, MostLikelyRandom).
+- Machine-readable report file.
+
 ## Phased Plan
 
 Each phase keeps the JVM path green and releasable.
@@ -436,32 +605,14 @@ Each phase keeps the JVM path green and releasable.
    exit-code inversion, summary reporting, clean-production compilation model,
    and the `example-native/` KMP example project verified end-to-end (the
    shipping gate).
+5. **Phase 4 - The JVM target of a KMP project: PLANNED, POC passed.** The
+   `jvm()` target joins the existing in-process JUnit path, with the compiler
+   plugin synthesizing the `@MutFlowTest` that `commonTest` cannot write.
+   `mutflow-junit6` is untouched and keeps serving plain `kotlin("jvm")`
+   projects. See Phase 4 above.
 
 ## Open Questions
 
-- **JVM target inside a KMP project.** Today mutflow supports two shapes: a plain
-  `kotlin("jvm")` project (Java source sets, `mutatedMain`, JUnit 6 in-process runs)
-  and the native targets of a KMP project (`MutflowKmpSupport`, process-per-mutation).
-  The `jvm()` target *of a KMP project* falls between them and gets nothing: the JVM
-  branch keys off `plugins.withId("org.jetbrains.kotlin.jvm")`, which never fires
-  there, and every API it uses (`SourceSetContainer`, `getByName("main")`,
-  `implementation`, `compileMutatedMainKotlin`) belongs to the Java plugin model that
-  KMP does not have. `MutflowKmpSupport.configure()` only iterates
-  `KotlinNativeTarget`.
-
-  This matters beyond completeness: the UX Tradeoff section argues the weaker Native
-  UX is acceptable *because* the JVM target keeps the interactive experience. That
-  argument only holds once this is closed. It is also the first thing a team hits
-  when they move an existing JVM module to KMP: mutation testing silently stops.
-
-  Likely shape of the fix: reuse the `compilations.create` + `associateWith` approach
-  already built for native (`KotlinJvmTarget` also exposes `compilations`), so the
-  `mutatedMain`/`mutatedTest` half should port fairly directly. The run side differs
-  and is the real work: JVM should keep the in-process JUnit 6 path rather than the
-  process orchestrator, which means pointing the existing `jvmTest` task at the
-  `mutatedTest` output instead of registering a new task. `mutflow-junit6` also needs
-  adding to `jvmTest` in the KMP path, where today only `mutflow-annotations` and
-  `mutflow-runtime` are wired.
 - Where traps and target filtering live on the Native path (run limits, timeout
   and verification mode landed in the Gradle DSL in Phase 3; traps are still open).
 - Random selection strategies (PureRandom, MostLikelyRandom) on the Native path:

@@ -13,7 +13,10 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
  * 2. Transforms comparison operators into mutation-aware branches
  */
 class MutflowIrGenerationExtension(
-    private val targetPatterns: List<String> = emptyList()
+    private val targetPatterns: List<String> = emptyList(),
+    // POC (Phase 4): when set, classes containing MutFlow.underTest get this
+    // annotation synthesized onto them. See TestClassAnnotator.
+    private val annotateTestClasses: String? = null
 ) : IrGenerationExtension {
 
     companion object {
@@ -35,5 +38,10 @@ class MutflowIrGenerationExtension(
         val transformer = MutflowIrTransformer(pluginContext, targetPatterns = targetPatterns)
         moduleFragment.transform(transformer, null)
         debug("  transformation complete")
+
+        if (annotateTestClasses != null) {
+            moduleFragment.transform(TestClassAnnotator(pluginContext, annotateTestClasses), null)
+            debug("  test class annotation complete")
+        }
     }
 }

@@ -150,7 +150,7 @@ object MutationRegistry {
             currentSession = session
             try {
                 val result = block()
-                return result to buildSessionResult(session)
+                result to buildSessionResult(session)
             } finally {
                 currentSession = null
                 onSessionEnd(buildSessionResult(session))
