@@ -1,11 +1,47 @@
 plugins {
-    kotlin("jvm")
+    // Switched from kotlin("jvm") to kotlin("multiplatform") for the Native effort.
+    // Phase 1 ships the JVM target only; native targets are added in Phase 2.
+    kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
 
-dependencies {
-    api(project(":mutflow-core"))
-    testImplementation(kotlin("test"))
+kotlin {
+    jvm()
+
+    // Phase 2 native targets - must match mutflow-core's target set exactly:
+    // a KMP library can only depend on another KMP library if the consumer's
+    // targets are a subset of the producer's. See mutflow-core's build file
+    // for why this exact pair (linux verified, mingw compile-proven).
+    linuxX64()
+    mingwX64()
+
+    sourceSets {
+        // Session/selection/shuffle logic is pure Kotlin and lives in commonMain;
+        // JVM-specific primitives (UUID, thread IDs, ConcurrentHashMap, system
+        // clocks) sit behind expect/actual functions - see MutFlowPlatform.kt /
+        // MutFlowPlatform.jvm.kt.
+        commonMain.dependencies {
+            api(project(":mutflow-core"))
+        }
+        // Phase 2: ProcessRun tests are pure common code (fake writers, no file
+        // IO) and live in commonTest with plain function names, so they run on
+        // every target. The pre-existing MutFlow tests stay in jvmTest: they
+        // use backtick-with-spaces test names, which Kotlin/Native does not
+        // support.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+        }
+    }
+}
+
+// The multiplatform plugin creates per-target test tasks (jvmTest) plus an
+// `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.
+// This alias keeps `./gradlew test` working across the whole build.
+tasks.register("test") {
+    dependsOn("jvmTest")
 }
 
 mavenPublishing {

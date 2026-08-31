@@ -8,6 +8,11 @@ dependencies {
     implementation(kotlin("gradle-plugin-api"))
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinVersion")}")
 
+    // Discovery/result file parsing for the native orchestration task. The
+    // serializers live in core so writer (native runtime) and reader (this
+    // plugin) stay in the same module; this resolves to core's JVM variant.
+    implementation(project(":mutflow-core"))
+
     testImplementation(kotlin("test"))
 }
 

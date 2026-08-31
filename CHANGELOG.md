@@ -1,4 +1,15 @@
 # Changelog
+## [1.2.0] - 2026-08-31
+### Added
+- **Kotlin Multiplatform support (experimental)** -- mutation testing for native targets, to our knowledge the first mutation testing tool for Kotlin/Native. Apply the same Gradle plugin, write plain kotlin-test tests in `commonTest` with the multiplatform `MutFlow.underTest {}` API, and run `mutflow<Target>Test` (or the `mutflowNativeTest` umbrella). One process per mutation, orchestrated by Gradle with exit-code inversion; production klibs and binaries stay instrumentation-free via a dedicated second test compilation. Initial targets: `linuxX64`, `mingwX64`. Configuration lives in the Gradle DSL (`maxMutationRuns`, `timeoutMs`, `verificationMode`). Timeout detection (both the in-process deadline and the orchestrator's hard process kill) and comment-based suppression are verified end-to-end on native; timed-out mutations fail the build with the affected line, same fail-loudly rule as the JVM. See the "Kotlin Multiplatform Support" README section and DESIGN-MULTIPLATFORM.md.
+- `mutflow-annotations`, `mutflow-core` and `mutflow-runtime` are now Kotlin Multiplatform modules (JVM behavior unchanged and regression-verified; JVM actuals are the previous implementations verbatim).
+- **The `jvm()` target of a Multiplatform project** now gets mutation testing too, via `mutflowJvmTest`. It uses the ordinary in-process JUnit path, so every mutation run appears in the IDE test tree exactly as in a plain `kotlin("jvm")` project. `commonTest` sources cannot name the JVM-only `@MutFlowTest` (they also compile for Native), so the compiler plugin synthesizes it onto the instrumented test compilation; nothing changes for hand-annotated `kotlin("jvm")` projects. The stock `jvmTest` task keeps running uninstrumented code.
+
+### Known limitations (multiplatform path)
+- No traps and no random selection strategies; mutations run in the deterministic most-likely-to-survive order.
+- With `maxMutationRuns` set, each target selects its own subset, so the JVM and native targets may test different mutations. Unlimited runs (the default) are unaffected.
+- The Gradle wiring is generic over native targets, so it is designed to work on any target where Kotlin/Native tests can run at all, but it is verified only on `linuxX64`. mingwX64 cross-compiles and has not yet been exercised on a Windows host; Apple targets need a macOS host to build at all, and simulator targets additionally need `SIMCTL_CHILD_`-prefixed environment variables, which is not implemented yet.
+
 
 ## [1.1.1] - 2026-08-27
 ### Fixed

@@ -23,6 +23,7 @@
 - [Verifying Production Artifacts](#verifying-production-artifacts)
 - [Mutation Operators](#mutation-operators)
 - [Features](#features)
+- [Kotlin Multiplatform Support (Experimental)](#kotlin-multiplatform-support-experimental)
 - [How Mutations Work](#how-mutations-work)
 - [Design Decisions](#design-decisions)
 - [Troubleshooting](#troubleshooting)
@@ -467,6 +468,137 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 **Extensibility**
 - **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), `FunctionBodyMutationOperator` (for function bodies), and `ThrowMutationOperator` (for throw statements) interfaces for adding new mutation types
+
+## Kotlin Multiplatform Support (Experimental)
+
+mutflow also runs on Kotlin/Native targets in Multiplatform projects. The Gradle
+wiring is generic over native targets rather than written per target, so it is
+designed to work on any target where Kotlin/Native tests can run at all. Within
+this project it is verified only on `linuxX64` (see Current limitations below).
+
+To our knowledge it is the first mutation testing tool for Kotlin/Native: traditional
+tools mutate JVM bytecode, which does not exist on Native, and recompiling per
+mutant is impractical with native compile times. mutflow's compile-once
+approach sidesteps both problems.
+
+### Setup
+
+Apply the same plugin in a KMP project:
+
+```kotlin
+plugins {
+    kotlin("multiplatform") version "2.4.0"
+    id("io.github.anschnapp.mutflow") version "<latest-version>"
+}
+
+kotlin {
+    jvm()
+    linuxX64()
+    // ... other targets
+}
+```
+
+Every target gets mutation testing. They differ only in how the runs are
+driven: the `jvm()` target uses the ordinary in-process JUnit path, native
+targets get one process per mutation from a Gradle task.
+
+Add one line to `gradle.properties` (the instrumented test compilation shares
+sources with the main compilation, which KGP warns about; this suppresses only
+that specific diagnostic):
+
+```properties
+kotlin.suppressGradlePluginWarnings=KotlinSourceSetDependsOnDefaultCompilationSourceSet
+```
+
+### Writing tests
+
+Tests are plain kotlin-test in `commonTest` with the same `underTest` API - no
+JUnit import, no annotation. The same file is the test suite for every target;
+on the `jvm()` target the compiler plugin synthesizes the `@MutFlowTest` that
+`commonTest` cannot name in source:
+
+```kotlin
+class CalculatorTest {
+    @Test
+    fun positiveNumber() {
+        val result = MutFlow.underTest { calculator.isPositive(5) }
+        assertTrue(result)
+    }
+}
+```
+
+### Running
+
+Mutation testing is a dedicated, opt-in task per target (plain `test`/`check`
+runs are untouched):
+
+```bash
+./gradlew mutflowJvmTest        # the jvm() target, in-process JUnit runs
+./gradlew mutflowLinuxX64Test   # one native target
+./gradlew mutflowNativeTest     # all native targets runnable on this host
+```
+
+`mutflowJvmTest` re-runs each test class once per mutation inside one JVM, so
+the IDE test tree shows every run - the same experience a plain
+`kotlin("jvm")` project gets. The native task instead runs the test binary
+once for discovery and then once per mutation, printing the same summary. A
+failing test suite during a mutation run means the mutation was killed;
+survivors fail the build either way.
+
+### Configuration
+
+In a multiplatform project the `@MutFlowTest` parameters live in the Gradle
+DSL, and apply to every target:
+
+```kotlin
+mutflow {
+    maxMutationRuns = 20        // default: unlimited (all mutations)
+    timeoutMs = 60_000L         // infinite-loop protection deadline
+    verificationMode = "STRICT" // STRICT | LENIENT | DISABLED
+}
+```
+
+There is no annotation to configure instead: the one on multiplatform test
+classes is generated, so the DSL is the configuration surface. (A plain
+`kotlin("jvm")` project keeps configuring `@MutFlowTest` directly.)
+
+`MUTFLOW_VERIFICATION_MODE` overrides the mode per run, like on the JVM.
+`@MutationTarget`, Gradle target patterns, `@SuppressMutations` and the
+comment-based suppression (`// mutflow:ignore`, `// mutflow:falsePositive`)
+work unchanged - they are compile-time and backend-neutral. Timed-out
+mutations (infinite loops) fail the build with the affected line, same
+fail-loudly rule as the JVM.
+
+### How it works
+
+The compiler plugin is backend-agnostic and runs unchanged. What differs is
+orchestration: kotlin-test on Native has no extension mechanism, so the run
+loop lives in the Gradle task - one process per mutation, activated via an
+environment variable, with the exit code deciding killed vs. survived. The
+`jvm()` target keeps the in-process JUnit loop; it only needs the compiler
+plugin to write `@MutFlowTest` into the bytecode, because `commonTest` sources
+must also compile for Native and cannot name a JVM-only annotation.
+Production klibs, jars and binaries stay clean: instrumentation only exists in
+a dedicated second test compilation. See
+[DESIGN-MULTIPLATFORM.md](DESIGN-MULTIPLATFORM.md) for the full architecture
+and [example-native/](example-native/) for a working project.
+
+### Current limitations
+
+- **Targets**: `linuxX64` and `mingwX64` for now. mingwX64 cross-compiles
+  from Linux but has not yet been exercised on a Windows host. macOS and
+  Apple simulator targets are planned (each target's mutation tests run on a
+  matching build host, as with all of KMP).
+- **No traps and no random selection strategies on Native yet**; mutations
+  run in the deterministic most-likely-to-survive order (fewest-touched
+  first), so `maxMutationRuns` caps runs where they matter most.
+- **`maxMutationRuns` selects per target**, so with a cap set the JVM and
+  native targets may test different subsets. Unlimited runs (the default)
+  are unaffected.
+- **No IDE test-tree integration on Native**: results arrive as Gradle output
+  plus the summary. Recommended workflow in KMP projects: develop against the
+  `jvm()` target for interactive feedback, run native mutation verification in
+  CI.
 
 ## How Mutations Work
 
