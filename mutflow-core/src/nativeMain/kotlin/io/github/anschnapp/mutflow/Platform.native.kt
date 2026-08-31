@@ -10,7 +10,7 @@ package io.github.anschnapp.mutflow
 // the design's process-per-mutation model means one process = one session,
 // and the kotlin-test runner executes tests sequentially on a single thread.
 // The whole "concurrency" problem class does not exist here, so the actuals
-// collapse to plain implementations (DESIGN-KOTLIN-NATIVE.md calls this out
+// collapse to plain implementations (DESIGN-MULTIPLATFORM.md calls this out
 // as a simplification, not a workaround).
 //
 // `platform.posix.*` is the C POSIX API exposed to Kotlin/Native via the

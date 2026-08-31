@@ -31,7 +31,7 @@ import org.jetbrains.kotlin.name.FqName
  *
  * This is what lets a Kotlin Multiplatform project use the ordinary in-process
  * JUnit path on its `jvm()` target while the same `commonTest` sources also
- * compile for Native. See DESIGN-KOTLIN-NATIVE.md, Phase 4.
+ * compile for Native. See DESIGN-MULTIPLATFORM.md, Phase 4.
  *
  * Scope of the scan is the whole FILE, not the individual class: a test class
  * frequently delegates its `MutFlow.underTest {}` call to a helper declared

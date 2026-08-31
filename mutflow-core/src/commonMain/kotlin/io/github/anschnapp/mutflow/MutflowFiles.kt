@@ -2,7 +2,7 @@ package io.github.anschnapp.mutflow
 
 /**
  * Serialization of the discovery/result files used by the Native
- * orchestration path (DESIGN-KOTLIN-NATIVE.md).
+ * orchestration path (DESIGN-MULTIPLATFORM.md).
  *
  * On Native, one process = one run: the Gradle orchestrator launches the test
  * binary once for discovery and once per mutation, and these files are how

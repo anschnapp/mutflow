@@ -1,5 +1,0 @@
-# Gradle build outputs of the spike (the spike itself is experimental and
-# lives only on the kotlin-native branch)
-build/
-.gradle/
-.kotlin/

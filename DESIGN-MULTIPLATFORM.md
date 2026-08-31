@@ -1,9 +1,13 @@
-# mutflow on Kotlin/Native - Design Proposal
+# mutflow on Kotlin Multiplatform and Native - Design
 
-> **Status: PROPOSAL / IN PROGRESS - nothing described here is shipped.**
+> **Status: IMPLEMENTED.** All four phases are done and verified end to end by the
+> `example-native/` project. Shipped in 1.2.0.
 >
 > **Phase 0 (spike) passed on 2026-07-04**: the existing compiler plugin works
 > unmodified on the Kotlin/Native backend. See [Phase 0 Spike Results](#phase-0-spike-results).
+>
+> **Phase 1 (KMP conversion) done on 2026-07-05**: mutflow-annotations/core/runtime
+> converted to Kotlin Multiplatform modules with the JVM output bit-identical to before.
 >
 > **Phase 2 (native runtime) done on 2026-07-05**: mutflow-annotations/core/runtime
 > build as native klibs (linuxX64 + mingwX64), `MutFlow.underTest {}` works in
@@ -16,14 +20,17 @@
 > orchestration tasks, and the `example-native/` KMP example project verified
 > end-to-end. See [Phase 3 Results](#phase-3-results).
 >
-> This document describes how mutflow will support Kotlin/Native targets. It is a delta
-> document: it only covers what differs from the main [DESIGN.md](DESIGN.md). Everything
-> not mentioned here (mutation operators, discovery model, selection strategies, traps,
-> suppression, verification modes, timeout detection) is shared and works as described there.
+> **Phase 4 (the JVM target of a KMP project) done**: a `jvm()` target inside a
+> multiplatform project runs the ordinary in-process JUnit loop through
+> `mutflowJvmTest`. See [Phase 4](#phase-4---the-jvm-target-of-a-kmp-project-done).
 >
-> No Native support will be shipped until there is a usable end-to-end setup, verified
-> by a working example project. The JVM path is not affected by this work and remains
-> the primary, stable way to use mutflow.
+> This document is a delta document: it only covers what differs from the main
+> [DESIGN.md](DESIGN.md). Everything not mentioned here (mutation operators, discovery
+> model, selection strategies, traps, suppression, verification modes, timeout
+> detection) is shared and works as described there.
+>
+> The JVM path is not affected by this work and remains the primary, stable way to
+> use mutflow.
 
 ## Motivation
 
@@ -249,10 +256,10 @@ JVM stays the flagship interactive experience; Native is the platform reach.
 
 ## Phase 0 Spike Results
 
-> Executed 2026-07-04 on the `kotlin-native` branch. The spike project lives in
-> `spike/` (a standalone Gradle build, not included in the root build, same pattern
-> as `example/`). It is throwaway code and will not be merged; only the findings
-> below are the deliverable.
+> Executed 2026-07-04 on the `kotlin-native` branch. The spike project lived in a
+> standalone `spike/` Gradle build. It was throwaway code and was deleted before the
+> merge, once `example-native/` covered the same ground as a maintained example; only
+> the findings below are the deliverable.
 
 **Verdict: PASSED. The existing `mutflow-compiler-plugin` (built against Kotlin
 2.4.0) transforms a Kotlin/Native `linuxX64` compilation completely unmodified.**
@@ -308,7 +315,7 @@ Findings to carry into later phases:
 > conversion.
 
 **Verdict: the real mutflow runtime works on Kotlin/Native.** The Phase 0 stub
-registry is gone; the reworked `spike/` consumes the genuine
+registry is gone; the reworked spike consumed the genuine
 `mutflow-annotations`/`mutflow-core`/`mutflow-runtime` klibs from mavenLocal and the
 unmodified compiler plugin, and tests use the multiplatform `MutFlow.underTest {}`
 exactly as sketched in "Test Authoring in commonTest".
@@ -331,7 +338,8 @@ What was built:
   discovery order. Result file: `touched` + `timedOut` flags per mutation run.
   Builders are pure string functions, unit-tested in commonTest on all targets.
 
-End-to-end verification against the reworked spike (linuxX64):
+End-to-end verification against the reworked spike (linuxX64), since superseded by
+`example-native/`:
 
 - Plain `test.kexe` run without env vars: green (inactive mode).
 - Discovery run: same 3 mutation points as Phase 0 and as the JVM path (relational

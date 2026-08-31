@@ -580,7 +580,7 @@ plugin to write `@MutFlowTest` into the bytecode, because `commonTest` sources
 must also compile for Native and cannot name a JVM-only annotation.
 Production klibs, jars and binaries stay clean: instrumentation only exists in
 a dedicated second test compilation. See
-[DESIGN-KOTLIN-NATIVE.md](DESIGN-KOTLIN-NATIVE.md) for the full architecture
+[DESIGN-MULTIPLATFORM.md](DESIGN-MULTIPLATFORM.md) for the full architecture
 and [example-native/](example-native/) for a working project.
 
 ### Current limitations

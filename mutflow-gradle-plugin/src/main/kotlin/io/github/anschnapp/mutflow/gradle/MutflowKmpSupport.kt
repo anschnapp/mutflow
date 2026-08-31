@@ -11,7 +11,7 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
 import org.jetbrains.kotlin.konan.target.HostManager
 
 /**
- * Kotlin Multiplatform wiring (Phases 3 and 4 of DESIGN-KOTLIN-NATIVE.md).
+ * Kotlin Multiplatform wiring (Phases 3 and 4 of DESIGN-MULTIPLATFORM.md).
  *
  * Both target kinds share the compilation model below and differ only in how
  * the mutation runs are driven: a native target gets one process per mutation

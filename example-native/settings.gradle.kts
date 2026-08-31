@@ -1,4 +1,4 @@
-// Standalone build, same pattern as example/ and spike/: running Gradle from
+// Standalone build, same pattern as example/: running Gradle from
 // this directory uses THIS settings file, the mutflow root build never sees
 // it. All mutflow artifacts (Gradle plugin included) come from mavenLocal,
 // exactly like for a real user - publish them first from the repo root:
