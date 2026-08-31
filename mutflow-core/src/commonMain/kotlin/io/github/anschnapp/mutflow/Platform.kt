@@ -11,8 +11,8 @@ package io.github.anschnapp.mutflow
 // The JVM actuals are the exact primitives the pre-KMP MutationRegistry used
 // (System.nanoTime, synchronized, Collections.synchronizedList,
 // ConcurrentHashMap.newKeySet), so JVM behavior is bit-identical.
-// Native actuals arrive in Phase 2, where they can be much simpler because the
-// per-process model has exactly one session and no parallel test classes.
+// The native actuals are much simpler, because the per-process model has
+// exactly one session and no parallel test classes.
 
 /**
  * Monotonic nanosecond clock used for mutation timeout deadlines.

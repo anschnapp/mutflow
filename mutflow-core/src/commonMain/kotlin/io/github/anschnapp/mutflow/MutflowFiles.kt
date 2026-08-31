@@ -11,11 +11,11 @@ package io.github.anschnapp.mutflow
  *
  * The JSON is hand-rolled on purpose: mutflow's runtime has zero external
  * dependencies today, and pulling in kotlinx.serialization just to write two
- * small fixed-schema files (parsed later by the Gradle plugin on the JVM,
- * Phase 3) would be a heavy trade. The builders are pure String functions so
+ * small fixed-schema files (parsed later by the Gradle plugin on the JVM)
+ * would be a heavy trade. The builders are pure String functions so
  * they can be unit-tested in commonTest without any file IO.
  *
- * Both formats carry a formatVersion so the Phase 3 parser can detect a
+ * Both formats carry a formatVersion so the parser can detect a
  * mismatch between the plugin and runtime versions instead of misreading.
  */
 object MutflowFiles {

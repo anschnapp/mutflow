@@ -13,9 +13,9 @@ package io.github.anschnapp.mutflow
 // facade class (Platform_jvmKt). At runtime one would shadow the other on the
 // classpath, producing NoSuchMethodError for the shadowed module's helpers.
 //
-// Native actuals arrive in Phase 2. On Native most of these collapse to
-// trivial implementations because one process hosts exactly one session
-// (no parallel test classes, no thread routing).
+// On Native most of these actuals collapse to trivial implementations,
+// because one process hosts exactly one session (no parallel test classes,
+// no thread routing).
 
 /**
  * Generates a unique value for a new [SessionId].

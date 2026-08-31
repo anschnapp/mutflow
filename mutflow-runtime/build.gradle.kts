@@ -1,6 +1,8 @@
 plugins {
-    // Switched from kotlin("jvm") to kotlin("multiplatform") for the Native effort.
-    // Phase 1 ships the JVM target only; native targets are added in Phase 2.
+    // Multiplatform rather than kotlin("jvm"): this module is consumed by both
+    // the JVM and the Kotlin/Native mutation paths. For JVM consumers nothing
+    // changes, the published root artifact carries Gradle module metadata that
+    // transparently redirects them to the -jvm variant.
     kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
@@ -8,7 +10,7 @@ plugins {
 kotlin {
     jvm()
 
-    // Phase 2 native targets - must match mutflow-core's target set exactly:
+    // Native targets, which must match mutflow-core's target set exactly:
     // a KMP library can only depend on another KMP library if the consumer's
     // targets are a subset of the producer's. See mutflow-core's build file
     // for why this exact pair (linux verified, mingw compile-proven).
@@ -23,7 +25,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":mutflow-core"))
         }
-        // Phase 2: ProcessRun tests are pure common code (fake writers, no file
+        // ProcessRun tests are pure common code (fake writers, no file
         // IO) and live in commonTest with plain function names, so they run on
         // every target. The pre-existing MutFlow tests stay in jvmTest: they
         // use backtick-with-spaces test names, which Kotlin/Native does not

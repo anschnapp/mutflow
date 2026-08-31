@@ -45,7 +45,7 @@ object MutationRegistry {
     /**
      * Called by compiler-injected code at each mutation point.
      *
-     * @param pointId Stable identifier for this mutation point (currently ClassName_N format, will be IR hash in Phase 2)
+     * @param pointId Stable identifier for this mutation point (ClassName_N format)
      * @param variantCount Number of mutation variants available at this point
      * @param sourceLocation Source file and line number (e.g., "Calculator.kt:5")
      * @param originalOperator The original operator (e.g., ">")
@@ -197,7 +197,7 @@ data class ActiveMutation(
 /**
  * Information about a discovered mutation point.
  *
- * @property pointId Stable identifier (currently ClassName_N format, will be IR hash in Phase 2)
+ * @property pointId Stable identifier (ClassName_N format)
  * @property variantCount Number of available variants
  * @property sourceLocation Source file and line number (e.g., "Calculator.kt:5")
  * @property originalOperator The original operator (e.g., ">")

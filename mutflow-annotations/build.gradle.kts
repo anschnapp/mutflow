@@ -1,8 +1,8 @@
 plugins {
-    // Switched from kotlin("jvm") to kotlin("multiplatform") for the Native effort.
-    // Phase 1 ships the JVM target only; native targets are added in Phase 2.
-    // For JVM consumers nothing changes: the published root artifact carries Gradle
-    // module metadata that transparently redirects them to the -jvm variant.
+    // Multiplatform rather than kotlin("jvm"): the annotations are resolved by
+    // the compiler plugin on every backend. For JVM consumers nothing changes:
+    // the published root artifact carries Gradle module metadata that
+    // transparently redirects them to the -jvm variant.
     kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
@@ -10,7 +10,7 @@ plugins {
 kotlin {
     jvm()
 
-    // Phase 2 native targets. linuxX64 is fully buildable and testable on the
+    // Native targets. linuxX64 is fully buildable and testable on the
     // Linux dev machine; mingwX64 (Windows) cross-compiles from Linux, which
     // gives compile-time proof without a Windows host (running its tests would
     // need one). Apple targets are deliberately absent: a macOS host is

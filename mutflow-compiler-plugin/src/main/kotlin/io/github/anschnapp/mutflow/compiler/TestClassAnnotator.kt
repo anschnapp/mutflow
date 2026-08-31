@@ -31,7 +31,7 @@ import org.jetbrains.kotlin.name.FqName
  *
  * This is what lets a Kotlin Multiplatform project use the ordinary in-process
  * JUnit path on its `jvm()` target while the same `commonTest` sources also
- * compile for Native. See DESIGN-MULTIPLATFORM.md, Phase 4.
+ * compile for Native. See DESIGN-MULTIPLATFORM.md.
  *
  * Scope of the scan is the whole FILE, not the individual class: a test class
  * frequently delegates its `MutFlow.underTest {}` call to a helper declared
@@ -151,7 +151,7 @@ class TestClassAnnotator(
         // List<IrConstructorCall>, and IrAnnotationImpl.fromSymbolOwner is the
         // factory. Every constructor parameter keeps its default value, which
         // is why the run-loop knobs come from the environment instead of from
-        // annotation arguments (Phase 4.4).
+        // annotation arguments.
         declaration.annotations = declaration.annotations + IrAnnotationImpl.fromSymbolOwner(
             annotationClass.owner.defaultType,
             constructor.symbol

@@ -20,8 +20,8 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * The Kotlin/Native mutation testing orchestrator (Phase 3 of
- * DESIGN-MULTIPLATFORM.md).
+ * The Kotlin/Native mutation testing orchestrator. See
+ * DESIGN-MULTIPLATFORM.md.
  *
  * One process = one run: this task launches the dedicated mutated test
  * binary once in discovery mode and then once per selected mutation,

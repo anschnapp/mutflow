@@ -7,7 +7,7 @@ package io.github.anschnapp.mutflow
  * On the JVM, JUnit re-runs a test class N times inside ONE process, so
  * MutFlow needs sessions, run counters, and thread-to-session routing to keep
  * those in-process runs apart. On Native there is no in-process re-run
- * mechanism at all; instead the Gradle orchestrator (Phase 3) launches the
+ * mechanism at all; instead the Gradle orchestrator launches the
  * test binary once per run and tells it what to do via environment variables:
  *
  *   MUTFLOW_DISCOVERY_FILE=<path>              -> Discovery mode
