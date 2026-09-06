@@ -70,5 +70,5 @@ mutflow {
 
 See [DESIGN-MULTIPLATFORM.md](../DESIGN-MULTIPLATFORM.md) for the full
 architecture, and the [Kotlin Multiplatform Support section of the main
-README](../README.md#kotlin-multiplatform-support-experimental) for setup and
+README](../README.md#kotlin-multiplatform-support) for setup and
 current limitations.

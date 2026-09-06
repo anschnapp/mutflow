@@ -23,7 +23,7 @@
 - [Verifying Production Artifacts](#verifying-production-artifacts)
 - [Mutation Operators](#mutation-operators)
 - [Features](#features)
-- [Kotlin Multiplatform Support (Experimental)](#kotlin-multiplatform-support-experimental)
+- [Kotlin Multiplatform Support](#kotlin-multiplatform-support)
 - [How Mutations Work](#how-mutations-work)
 - [Design Decisions](#design-decisions)
 - [Troubleshooting](#troubleshooting)
@@ -469,12 +469,17 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 **Extensibility**
 - **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), `FunctionBodyMutationOperator` (for function bodies), and `ThrowMutationOperator` (for throw statements) interfaces for adding new mutation types
 
-## Kotlin Multiplatform Support (Experimental)
+## Kotlin Multiplatform Support
 
-mutflow also runs on Kotlin/Native targets in Multiplatform projects. The Gradle
-wiring is generic over native targets rather than written per target, so it is
-designed to work on any target where Kotlin/Native tests can run at all. Within
-this project it is verified only on `linuxX64` (see Current limitations below).
+mutflow also runs on Kotlin/Native targets in Multiplatform projects. The
+published targets are `linuxX64` and `mingwX64`. The Gradle wiring is generic
+over native targets rather than written per target, so it is designed to work on
+any target where Kotlin/Native tests can run at all, but the published list is
+deliberately narrower than that: a target ships once its tests have been run
+somewhere, and covering every target Kotlin supports is not a goal here. Within
+this project the native path is verified on `linuxX64` (see Current limitations
+below, and [Trying an unpublished target](#trying-an-unpublished-target) if you
+need one that is not shipped).
 
 To our knowledge it is the first mutation testing tool for Kotlin/Native: traditional
 tools mutate JVM bytecode, which does not exist on Native, and recompiling per
@@ -602,6 +607,10 @@ and [example-native/](example-native/) for a working project.
   plus the summary. Recommended workflow in KMP projects: develop against the
   `jvm()` target for interactive feedback, run native mutation verification in
   CI.
+- **The multiplatform configuration surface is young**: `commonTest` sources
+  cannot name `@MutFlowTest`, so settings live in the Gradle DSL instead of on
+  the annotation. That split may still be revised. The `kotlin("jvm")` path is
+  unaffected.
 
 ### Trying an unpublished target
 
