@@ -10,18 +10,32 @@ plugins {
 kotlin {
     jvm()
 
-    // Native targets. linuxX64 is fully buildable and testable on the
-    // Linux dev machine; mingwX64 (Windows) cross-compiles from Linux, which
-    // gives compile-time proof without a Windows host (running its tests would
-    // need one). Apple targets are deliberately absent: a macOS host is
-    // required even to produce their klibs, so they follow once a Mac/CI
-    // is available - adding them is just more one-liners here.
+    // ---- Declared targets = published artifacts = supported targets ----
+    //
+    // This list is not a record of what we happened to test; it IS the support
+    // boundary. A Kotlin Multiplatform consumer can only depend on a library
+    // whose target set is a superset of its own, so a project declaring
+    // macosArm64() against a mutflow that does not publish macosArm64 gets a
+    // hard "no matching variant" resolution failure, not a degraded mutflow.
+    //
+    // All three KMP modules (annotations, core, runtime) must therefore
+    // declare the SAME set. The full reasoning - why exactly these two, and
+    // why Apple targets are absent - lives in mutflow-core/build.gradle.kts,
+    // which is the canonical copy of this comment.
     linuxX64()
     mingwX64()
 
     // Both annotations are pure Kotlin and live entirely in commonMain,
     // so there are no jvmMain sources and no dependencies here.
 }
+
+// Lets a developer add unpublished native targets locally without editing this
+// file, e.g. on a Mac:
+//   ./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64
+// Applied after the kotlin { } block above so the baseline targets exist first.
+// Every KMP module applies the same script and reads the same property, which
+// is what keeps their target sets identical.
+apply(from = rootProject.file("gradle/extra-native-targets.gradle.kts"))
 
 // The multiplatform plugin creates per-target test tasks (jvmTest) plus an
 // `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.

@@ -10,10 +10,20 @@ plugins {
 kotlin {
     jvm()
 
-    // Native targets, which must match mutflow-core's target set exactly:
-    // a KMP library can only depend on another KMP library if the consumer's
-    // targets are a subset of the producer's. See mutflow-core's build file
-    // for why this exact pair (linux verified, mingw compile-proven).
+    // ---- Declared targets = published artifacts = supported targets ----
+    //
+    // Must match mutflow-core's target set exactly: a KMP library can only
+    // depend on another KMP library whose targets are a superset of its own,
+    // and this module depends on core. The same rule one level up is why this
+    // list is also mutflow's support boundary for consumers rather than a note
+    // about what we happened to test - a project declaring a target we do not
+    // publish gets a hard resolution failure.
+    //
+    // See mutflow-core's build file for the canonical reasoning: why this
+    // exact pair (linux verified, mingw compile-proven), why Apple targets are
+    // a support-promise decision rather than a technical blocker (their klibs
+    // cross-compile from Linux fine; running their tests is what needs a Mac),
+    // and how to build an unpublished target locally.
     linuxX64()
     mingwX64()
 
@@ -38,6 +48,14 @@ kotlin {
         }
     }
 }
+
+// Lets a developer add unpublished native targets locally without editing this
+// file, e.g. on a Mac:
+//   ./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64
+// Applied after the kotlin { } block above so the baseline targets exist first.
+// Every KMP module applies the same script and reads the same property, which
+// is what keeps their target sets identical.
+apply(from = rootProject.file("gradle/extra-native-targets.gradle.kts"))
 
 // The multiplatform plugin creates per-target test tasks (jvmTest) plus an
 // `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.

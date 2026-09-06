@@ -10,12 +10,43 @@ plugins {
 kotlin {
     jvm()
 
-    // Native targets. linuxX64 is fully buildable and testable on the
-    // Linux dev machine; mingwX64 (Windows) cross-compiles from Linux, which
-    // gives compile-time proof without a Windows host (running its tests would
-    // need one). Apple targets are deliberately absent: a macOS host is
-    // required even to produce their klibs, so they follow once a Mac/CI is
-    // available - adding them is just more one-liners here.
+    // ---- Declared targets = published artifacts = supported targets ----
+    //
+    // CANONICAL COPY of this explanation; the other two KMP modules point here.
+    //
+    // This list is not a record of what we happened to test; it IS the support
+    // boundary, and that is a property of Kotlin Multiplatform rather than a
+    // policy of ours. KMP resolves a dependency per target variant, and a
+    // consumer may only depend on a library whose target set is a SUPERSET of
+    // its own. A project declaring macosArm64() against a mutflow that does
+    // not publish macosArm64 therefore gets a hard "no matching variant"
+    // resolution failure - not a degraded mutflow, not an untested one.
+    // Adding a target here is what makes it usable at all.
+    //
+    // Why exactly these two:
+    //   linuxX64  - built AND tested, on the dev machine and in CI.
+    //   mingwX64  - cross-compiles from Linux, which gives compile-time proof
+    //               that the posix code below is Windows-portable. Running its
+    //               tests would need a Windows host, so it is compile-proof
+    //               only (the same status KGP itself gives mingwX64Test).
+    //
+    // Apple targets are absent by choice, and the reason is narrower than the
+    // usual "you need a Mac". Verified on Kotlin 2.4 from the Linux dev
+    // machine: adding macosArm64 and iosSimulatorArm64 and running
+    // publishToMavenLocal produces real, complete .klib artifacts. Apple klib
+    // CROSS-COMPILATION needs no macOS host and no opt-in flag.
+    //
+    // What a Mac is still needed for is linking and RUNNING an Apple test
+    // binary - and for a mutation testing tool that is the whole product. The
+    // orchestrator's entire job is executing a test binary once per mutation,
+    // so a target nobody can run is a target nobody can verify. Declaring
+    // Apple targets would ship them at exactly the confidence level mingwX64
+    // has today: compile-proof, never executed. That is a support promise to
+    // make deliberately, not a side effect of adding a line here.
+    //
+    // A developer who wants such a target NOW - and who, on a Mac, can also
+    // run it - does not need to edit this file; see the apply(from = ...) at
+    // the bottom.
     //
     // The Kotlin Gradle plugin's default hierarchy template automatically
     // creates shared nativeMain/nativeTest source sets above these targets,
@@ -24,6 +55,11 @@ kotlin {
     // nativeMain only sees POSIX API that exists on BOTH linux and mingw -
     // a compile error there means a Windows portability problem was caught
     // early.
+    //
+    // The same mechanism is why adding an Apple target is genuinely just one
+    // more line here: appleMain sits under nativeMain in that template, so the
+    // actuals in src/nativeMain become the actuals for macosArm64 and friends
+    // with no new source set and no new code.
     linuxX64()
     mingwX64()
 
@@ -47,6 +83,15 @@ kotlin {
         }
     }
 }
+
+// Lets a developer add unpublished native targets locally without editing this
+// file, e.g. on a Mac:
+//   ./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64
+// Applied after the kotlin { } block above so the baseline targets exist first.
+// Every KMP module applies the same script and reads the same property, which
+// is what keeps their target sets identical - the invariant the subset rule
+// above depends on.
+apply(from = rootProject.file("gradle/extra-native-targets.gradle.kts"))
 
 // The multiplatform plugin creates per-target test tasks (jvmTest) plus an
 // `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.

@@ -587,8 +587,11 @@ and [example-native/](example-native/) for a working project.
 
 - **Targets**: `linuxX64` and `mingwX64` for now. mingwX64 cross-compiles
   from Linux but has not yet been exercised on a Windows host. macOS and
-  Apple simulator targets are planned (each target's mutation tests run on a
-  matching build host, as with all of KMP).
+  Apple simulator targets are not published yet - not for any code reason,
+  but because we have no Apple machine to run their tests on, and shipping a
+  mutation testing tool for a target whose tests we have never executed is a
+  promise we are not making yet. If you have a Mac, you can build them
+  yourself today - see [Trying an unpublished target](#trying-an-unpublished-target).
 - **No traps and no random selection strategies on Native yet**; mutations
   run in the deterministic most-likely-to-survive order (fewest-touched
   first), so `maxMutationRuns` caps runs where they matter most.
@@ -599,6 +602,56 @@ and [example-native/](example-native/) for a working project.
   plus the summary. Recommended workflow in KMP projects: develop against the
   `jvm()` target for interactive feedback, run native mutation verification in
   CI.
+
+### Trying an unpublished target
+
+The native targets mutflow publishes are the ones it supports, and that is a
+rule of Kotlin Multiplatform rather than a policy: a project can only depend on
+a KMP library whose target set is a superset of its own. Declaring
+`macosArm64()` against a mutflow that does not publish `macosArm64` gives you a
+"no matching variant" resolution failure, not a degraded mutflow.
+
+Nothing in mutflow's source is target-specific, though. The native
+implementations live in a shared `nativeMain` source set that every native
+target inherits, and the Gradle plugin is written generically over targets
+rather than per target. So you can build the artifacts for a target we do not
+publish, without editing any build file:
+
+```bash
+git clone https://github.com/anschnapp/mutflow && cd mutflow
+./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64
+```
+
+Pass a comma-separated list for several (`macosArm64,macosX64`). The name is
+the Kotlin target function name. All mutflow modules read the same property, so
+their target sets stay consistent automatically.
+
+Then consume it from your own project:
+
+```kotlin
+repositories {
+    mavenLocal()   // before mavenCentral()
+    mavenCentral()
+}
+```
+
+Use the same version the clone builds (`0.1.0-SNAPSHOT` by default, or pass
+`-PreleaseVersion=<something>`).
+
+What you get depends on the target:
+
+- **A target your machine can run** (`macosArm64` on an Apple Silicon Mac):
+  full mutation testing. The plugin registers `mutflowMacosArm64Test` and it
+  works exactly like `mutflowLinuxX64Test`.
+- **A target your machine can only build** (any simulator or device target, or
+  `macosArm64` from Linux - Apple klibs cross-compile fine): the instrumented
+  test binary is produced as compile proof, but no mutation task is registered,
+  since the orchestrator has to execute the binary to run mutations. This is
+  the same status `mingwX64` has on a Linux host.
+
+If you try a target this way and it works, please open an issue - a report from
+a machine we do not have is exactly what a target needs to move into the
+published set.
 
 ## How Mutations Work
 

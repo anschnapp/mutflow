@@ -8,7 +8,8 @@
 ### Known limitations (multiplatform path)
 - No traps and no random selection strategies; mutations run in the deterministic most-likely-to-survive order.
 - With `maxMutationRuns` set, each target selects its own subset, so the JVM and native targets may test different mutations. Unlimited runs (the default) are unaffected.
-- The Gradle wiring is generic over native targets, so it is designed to work on any target where Kotlin/Native tests can run at all, but it is verified only on `linuxX64`. mingwX64 cross-compiles and has not yet been exercised on a Windows host; Apple targets need a macOS host to build at all, and simulator targets additionally need `SIMCTL_CHILD_`-prefixed environment variables, which is not implemented yet.
+- The Gradle wiring is generic over native targets, so it is designed to work on any target where Kotlin/Native tests can run at all, but it is verified only on `linuxX64`. mingwX64 cross-compiles and has not yet been exercised on a Windows host. Apple targets are not published: their klibs cross-compile from Linux without a Mac, but running their tests does need one, and a mutation testing tool for a target whose tests have never been executed is not a promise worth making yet. Simulator targets additionally need `SIMCTL_CHILD_`-prefixed environment variables, which is not implemented.
+- Because Kotlin Multiplatform resolves dependencies per target variant, the published target set *is* the supported set: a project declaring a target mutflow does not publish gets a resolution failure rather than a degraded experience. To try an unpublished target, build mutflow yourself with `./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64` and consume it from `mavenLocal()` - no build-file edits needed. See "Trying an unpublished target" in the README.
 
 
 ## [1.1.1] - 2026-08-27

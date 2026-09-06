@@ -221,8 +221,8 @@ inherits the platform's own boundaries and covers everything inside them.
 |---|---|
 | `linuxX64` | **Done (Phase 2)**: runtime klibs build; unit tests and the end-to-end verification run on the Linux dev machine |
 | `mingwX64` | **Declared (Phase 2)**: klib cross-compiles from Linux, which proves the commonized posix API usage compiles for Windows; an actual test run needs a Windows host (CI, pre-release) |
-| `macosX64`, `macosArm64` | Planned: same model; a macOS host is required even to produce the klibs, so these wait for a Mac/CI (adding them is a build-file one-liner per module) |
-| Apple simulators (`iosSimulatorArm64`, `iosX64`, `watchosSimulatorArm64`, ...) | Planned: same model; env vars need the `SIMCTL_CHILD_` prefix to reach the simulated process |
+| `macosX64`, `macosArm64` | Planned: same model. **Not blocked on producing the klibs** - those cross-compile from Linux (see "Apple cross-compilation" below). Blocked on having a Mac to *run* the tests on, which is what would justify publishing them |
+| Apple simulators (`iosSimulatorArm64`, `iosX64`, `watchosSimulatorArm64`, ...) | Planned: klibs cross-compile like the macOS ones, but running needs more than a host - the orchestrator execs the test binary directly, and a simulator needs `simctl` with env vars carrying the `SIMCTL_CHILD_` prefix |
 | iOS/watchOS/tvOS device targets, Android Native | Out of scope: no standard Gradle test execution exists for these |
 | `jvm()` target **inside a KMP project** | **Done (Phase 4)**: `MutflowKmpSupport` creates `mutatedMain`/`mutatedTest` compilations for the target and registers a `mutflow<Target>Test` task that runs the ordinary in-process JUnit loop. The compiler plugin synthesizes `@MutFlowTest` onto test classes, since `commonTest` cannot name a JVM-only annotation. The stock `jvmTest` task stays a pass-through |
 | JS / Wasm (Node or browser) | Not part of this work. Node could reuse the pattern later; browser lacks env vars and file IO and needs a different design |
@@ -230,6 +230,44 @@ inherits the platform's own boundaries and covers everything inside them.
 
 As with all of KMP, each target's tests run only on a matching build host (Linux CI
 runs `linuxX64`, a macOS machine runs macOS and simulator targets).
+
+**Publishing a target is a support promise, not a build-file line.** In Kotlin
+Multiplatform, published and supported are the same thing: a consumer may only
+depend on a library whose target set is a superset of its own, so a project
+declaring a target mutflow does not publish gets a hard "no matching variant"
+resolution failure rather than a degraded experience. Adding a target to the
+list is therefore what makes it usable at all - and what commits us to it.
+
+**Apple cross-compilation (verified 2026-09-06, Kotlin 2.4).** An earlier
+version of this document claimed a macOS host is required even to produce Apple
+klibs. That is no longer true and may never have been on 2.4: adding
+`macosArm64` and `iosSimulatorArm64` to the three KMP modules and running
+`publishToMavenLocal` on the Linux dev machine produces complete, real `.klib`
+artifacts with no opt-in flag (KGP even generates an
+`exportCrossCompilationMetadataFor<Target>ApiElements` task for it). So the
+publish pipeline could ship Apple artifacts from `ubuntu-latest` today.
+
+What still needs a Mac is *linking and running* an Apple test binary - and for
+this tool that is the whole product, since the orchestrator's job is executing
+a test binary once per mutation. Shipping Apple targets now would mean shipping
+them at the confidence level `mingwX64` has: compile-proof, never executed.
+That is a deliberate call rather than a technical blocker, and it is the reason
+they are still absent.
+
+**Escape hatch for unpublished targets.** `gradle/extra-native-targets.gradle.kts`
+lets anyone add native targets without editing a build file:
+
+```bash
+./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64
+```
+
+All three KMP modules apply the same script and read the same property, so
+their target sets cannot drift apart - which is the invariant the subset rule
+above depends on. The script resolves a target name to KGP's zero-argument
+target function reflectively, so it needs no hardcoded list and picks up
+targets added by future Kotlin versions; it rejects non-native names, because
+mutflow's `expect`/`actual` set covers JVM and native only. Documented for
+users in the README under "Trying an unpublished target".
 
 ## UX Tradeoff
 
