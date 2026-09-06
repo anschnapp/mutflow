@@ -1,5 +1,5 @@
 # Changelog
-## [1.2.0] - 2026-08-31
+## [1.2.0] - 2026-09-06
 ### Added
 - **Kotlin Multiplatform support (experimental)** -- mutation testing for native targets, to our knowledge the first mutation testing tool for Kotlin/Native. Apply the same Gradle plugin, write plain kotlin-test tests in `commonTest` with the multiplatform `MutFlow.underTest {}` API, and run `mutflow<Target>Test` (or the `mutflowNativeTest` umbrella). One process per mutation, orchestrated by Gradle with exit-code inversion; production klibs and binaries stay instrumentation-free via a dedicated second test compilation. Initial targets: `linuxX64`, `mingwX64`. Configuration lives in the Gradle DSL (`maxMutationRuns`, `timeoutMs`, `verificationMode`). Timeout detection (both the in-process deadline and the orchestrator's hard process kill) and comment-based suppression are verified end-to-end on native; timed-out mutations fail the build with the affected line, same fail-loudly rule as the JVM. See the "Kotlin Multiplatform Support" README section and DESIGN-MULTIPLATFORM.md.
 - `mutflow-annotations`, `mutflow-core` and `mutflow-runtime` are now Kotlin Multiplatform modules (JVM behavior unchanged and regression-verified; JVM actuals are the previous implementations verbatim).
