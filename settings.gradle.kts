@@ -2,6 +2,9 @@ pluginManagement {
     val kotlinVersion: String by settings
     plugins {
         kotlin("jvm") version kotlinVersion
+        // Same artifact (kotlin-gradle-plugin) as kotlin("jvm"), just a different
+        // plugin id - used by the KMP modules (annotations, core, runtime).
+        kotlin("multiplatform") version kotlinVersion
     }
 }
 

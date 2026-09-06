@@ -2,6 +2,7 @@ package io.github.anschnapp.mutflow.compiler
 
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 
@@ -13,7 +14,14 @@ import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
  * 2. Transforms comparison operators into mutation-aware branches
  */
 class MutflowIrGenerationExtension(
-    private val targetPatterns: List<String> = emptyList()
+    private val targetPatterns: List<String> = emptyList(),
+    /**
+     * When set, test classes in files that use MutFlow.underTest get this
+     * annotation synthesized onto them, so a commonTest class can carry a
+     * JVM-only annotation it cannot name in source. See TestClassAnnotator.
+     */
+    private val annotateTestClasses: String? = null,
+    private val messageCollector: MessageCollector = MessageCollector.NONE
 ) : IrGenerationExtension {
 
     companion object {
@@ -35,5 +43,13 @@ class MutflowIrGenerationExtension(
         val transformer = MutflowIrTransformer(pluginContext, targetPatterns = targetPatterns)
         moduleFragment.transform(transformer, null)
         debug("  transformation complete")
+
+        if (annotateTestClasses != null) {
+            moduleFragment.transform(
+                TestClassAnnotator(pluginContext, annotateTestClasses, messageCollector),
+                null
+            )
+            debug("  test class annotation complete")
+        }
     }
 }

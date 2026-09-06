@@ -10,6 +10,7 @@ import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.plugin.KotlinCompilation
+import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import org.jetbrains.kotlin.gradle.plugin.KotlinCompilerPluginSupportPlugin
 import org.jetbrains.kotlin.gradle.plugin.SubpluginArtifact
 import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
@@ -17,6 +18,31 @@ import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
 abstract class MutflowExtension {
     abstract val enabled: Property<Boolean>
     abstract val targets: ListProperty<String>
+
+    // ---- Run-loop settings (Kotlin Multiplatform projects) ----
+    // A plain kotlin("jvm") project configures these per test class on
+    // @MutFlowTest. A multiplatform project cannot: its commonTest classes
+    // get that annotation synthesized by the compiler plugin, with default
+    // arguments. So the DSL is the configuration surface there, and it
+    // reaches both paths through the environment of the test task - the
+    // orchestrator on Native, the mutflowJvmTest task on the JVM.
+
+    /**
+     * Maximum number of mutation runs per target. The baseline discovery run
+     * always happens. Default: unlimited (test every discovered mutation).
+     */
+    abstract val maxMutationRuns: Property<Int>
+
+    /** Per-underTest-block mutation deadline in milliseconds (infinite loop protection). */
+    abstract val timeoutMs: Property<Long>
+
+    /**
+     * STRICT (default): surviving mutations fail the build.
+     * LENIENT: survivors are reported but do not fail.
+     * DISABLED: only the baseline run happens.
+     * The MUTFLOW_VERIFICATION_MODE environment variable overrides this.
+     */
+    abstract val verificationMode: Property<String>
 }
 
 /**
@@ -34,6 +60,14 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
 
     companion object {
         const val MUTATED_MAIN = "mutatedMain"
+
+        /**
+         * The annotation TestClassAnnotator synthesizes onto multiplatform
+         * test classes. Lives in mutflow-junit6, which is only on the
+         * mutatedTest classpath of a jvm() target - hence the string constant
+         * rather than a type reference.
+         */
+        const val MUTFLOW_TEST_ANNOTATION = "io.github.anschnapp.mutflow.junit.MutFlowTest"
         const val GROUP_ID = "io.github.anschnapp.mutflow"
         private const val DEBUG = false
 
@@ -54,6 +88,14 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
                 .orElse(true)
         )
         extension.targets.convention(emptyList())
+        extension.maxMutationRuns.convention(Int.MAX_VALUE)
+        extension.timeoutMs.convention(60_000L)
+        extension.verificationMode.convention("STRICT")
+
+        target.plugins.withId("org.jetbrains.kotlin.multiplatform") {
+            debug("  kotlin.multiplatform plugin detected, configuring native mutation testing...")
+            MutflowKmpSupport.configure(target, extension)
+        }
 
         target.plugins.withId("org.jetbrains.kotlin.jvm") {
             debug("  kotlin.jvm plugin detected, configuring...")
@@ -180,11 +222,26 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         val project = kotlinCompilation.target.project
         val extension = project.extensions.findByType(MutflowExtension::class.java)
         val enabled = extension?.enabled?.get() ?: true
-        val compilationName = kotlinCompilation.name
-        val isApplicable = enabled && compilationName == MUTATED_MAIN
-        debug("isApplicable(compilation='$compilationName', enabled=$enabled) -> $isApplicable")
+        val isApplicable = enabled &&
+            (kotlinCompilation.name == MUTATED_MAIN || isAnnotatableTestCompilation(kotlinCompilation))
+        debug("isApplicable(compilation='${kotlinCompilation.name}', enabled=$enabled) -> $isApplicable")
         return isApplicable
     }
+
+    /**
+     * The mutatedTest compilation of a multiplatform jvm() target, which needs
+     * the plugin purely to synthesize @MutFlowTest onto its test classes (no
+     * mutation happens in test code).
+     *
+     * Restricted to the JVM platform on purpose: a native mutatedTest has no
+     * JUnit on its classpath, so the annotation FQN would not resolve and the
+     * annotator would only produce a warning. A plain kotlin("jvm") project
+     * never reaches this branch either - it has no compilation by that name,
+     * and its test classes are hand-annotated.
+     */
+    private fun isAnnotatableTestCompilation(kotlinCompilation: KotlinCompilation<*>): Boolean =
+        kotlinCompilation.name == MutflowKmpSupport.MUTATED_TEST &&
+            kotlinCompilation.target.platformType == KotlinPlatformType.jvm
 
     override fun applyToCompilation(
         kotlinCompilation: KotlinCompilation<*>
@@ -194,8 +251,15 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         val extension = project.extensions.findByType(MutflowExtension::class.java)
         return project.provider {
             val options = mutableListOf<SubpluginOption>()
-            extension?.targets?.get()?.forEach { target ->
-                options.add(SubpluginOption("target", target))
+            if (isAnnotatableTestCompilation(kotlinCompilation)) {
+                // Annotate mode only. Passing no target patterns leaves the
+                // mutation transformer looking for @MutationTarget classes
+                // that test sources do not contain, so it is a no-op here.
+                options.add(SubpluginOption("annotateTestClasses", MUTFLOW_TEST_ANNOTATION))
+            } else {
+                extension?.targets?.get()?.forEach { target ->
+                    options.add(SubpluginOption("target", target))
+                }
             }
             options
         }

@@ -1,11 +1,67 @@
 plugins {
-    kotlin("jvm")
+    // Multiplatform rather than kotlin("jvm"): this module is consumed by both
+    // the JVM and the Kotlin/Native mutation paths. For JVM consumers nothing
+    // changes, the published root artifact carries Gradle module metadata that
+    // transparently redirects them to the -jvm variant.
+    kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
 }
 
-dependencies {
-    api(project(":mutflow-core"))
-    testImplementation(kotlin("test"))
+kotlin {
+    jvm()
+
+    // ---- Declared targets = published artifacts = supported targets ----
+    //
+    // Must match mutflow-core's target set exactly: a KMP library can only
+    // depend on another KMP library whose targets are a superset of its own,
+    // and this module depends on core. The same rule one level up is why this
+    // list is also mutflow's support boundary for consumers rather than a note
+    // about what we happened to test - a project declaring a target we do not
+    // publish gets a hard resolution failure.
+    //
+    // See mutflow-core's build file for the canonical reasoning: why this
+    // exact pair (linux verified, mingw compile-proven), why Apple targets are
+    // a support-promise decision rather than a technical blocker (their klibs
+    // cross-compile from Linux fine; running their tests is what needs a Mac),
+    // and how to build an unpublished target locally.
+    linuxX64()
+    mingwX64()
+
+    sourceSets {
+        // Session/selection/shuffle logic is pure Kotlin and lives in commonMain;
+        // JVM-specific primitives (UUID, thread IDs, ConcurrentHashMap, system
+        // clocks) sit behind expect/actual functions - see MutFlowPlatform.kt /
+        // MutFlowPlatform.jvm.kt.
+        commonMain.dependencies {
+            api(project(":mutflow-core"))
+        }
+        // ProcessRun tests are pure common code (fake writers, no file
+        // IO) and live in commonTest with plain function names, so they run on
+        // every target. The pre-existing MutFlow tests stay in jvmTest: they
+        // use backtick-with-spaces test names, which Kotlin/Native does not
+        // support.
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+        }
+    }
+}
+
+// Lets a developer add unpublished native targets locally without editing this
+// file, e.g. on a Mac:
+//   ./gradlew publishToMavenLocal -Pmutflow.extraNativeTargets=macosArm64
+// Applied after the kotlin { } block above so the baseline targets exist first.
+// Every KMP module applies the same script and reads the same property, which
+// is what keeps their target sets identical.
+apply(from = rootProject.file("gradle/extra-native-targets.gradle.kts"))
+
+// The multiplatform plugin creates per-target test tasks (jvmTest) plus an
+// `allTests` lifecycle task, but no plain `test` task like kotlin("jvm") did.
+// This alias keeps `./gradlew test` working across the whole build.
+tasks.register("test") {
+    dependsOn("jvmTest")
 }
 
 mavenPublishing {

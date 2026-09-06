@@ -46,9 +46,13 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             .map { it.getAnnotation(MutFlowTest::class.java) }
             .orElseThrow { IllegalStateException("@MutFlowTest annotation not found") }
 
-        val maxRuns = annotation.maxRuns
-
-        // Resolve effective verification mode: env var overrides annotation
+        // Environment overrides the annotation for every knob that has one.
+        // This is what makes a Kotlin Multiplatform project configurable: its
+        // @MutFlowTest is synthesized by the compiler plugin and therefore
+        // always carries default arguments, so the mutflow { } DSL reaches the
+        // run loop through the environment of the test task instead.
+        val maxRuns = resolveMaxRuns(annotation.maxRuns)
+        val timeoutMs = resolveTimeoutMs(annotation.timeoutMs)
         val effectiveMode = resolveVerificationMode(annotation.verificationMode)
 
         // Count test methods for partial run detection
@@ -64,7 +68,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             traps = annotation.traps.toList(),
             includeTargets = annotation.includeTargets.map { it.qualifiedName!! },
             excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
-            timeoutMs = annotation.timeoutMs,
+            timeoutMs = timeoutMs,
             verificationMode = effectiveMode
         )
 
@@ -203,6 +207,30 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             method.isAnnotationPresent(Test::class.java)
         }
     }
+
+    /**
+     * Reads an environment override, warning and falling back to the
+     * annotation value when it is set but unparseable. A silent fallback
+     * would turn a typo in a build script into a run that quietly ignores
+     * the setting.
+     */
+    private fun <T> resolveFromEnv(name: String, annotationValue: T, parse: (String) -> T?): T {
+        val envValue = System.getenv(name) ?: return annotationValue
+        val parsed = parse(envValue)
+        if (parsed == null) {
+            println("[mutflow] WARNING: Invalid $name value: '$envValue'. Falling back to annotation value: $annotationValue")
+            return annotationValue
+        }
+        return parsed
+    }
+
+    /** The MUTFLOW_MAX_RUNS environment variable takes precedence over the annotation value. */
+    private fun resolveMaxRuns(annotationValue: Int): Int =
+        resolveFromEnv("MUTFLOW_MAX_RUNS", annotationValue) { it.toIntOrNull()?.takeIf { n -> n > 0 } }
+
+    /** The MUTFLOW_TIMEOUT_MS environment variable takes precedence over the annotation value. */
+    private fun resolveTimeoutMs(annotationValue: Long): Long =
+        resolveFromEnv("MUTFLOW_TIMEOUT_MS", annotationValue) { it.toLongOrNull()?.takeIf { n -> n > 0 } }
 
     /**
      * Resolves the effective verification mode.
