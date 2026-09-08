@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.types.isBoolean
 import org.jetbrains.kotlin.ir.expressions.impl.IrBlockImpl
+import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrElseBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
@@ -396,6 +397,18 @@ class MutflowIrTransformer(
         val builder = DeclarationIrBuilder(pluginContext, fn.symbol)
         val checkCall = builder.irCall(checkTimeoutFn).also { call ->
             call.arguments[0] = builder.irGetObject(registryClass)
+        }
+
+        // A `for` loop is already lowered to a while loop whose body block must start with the
+        // loop-variable declarations (`val x = iterator.next()`): ForLoopsLowering pattern-matches
+        // them and fails with "No 'next' statement in for-loop" if anything precedes them.
+        // Insert the check after those declarations instead of wrapping the body.
+        val bodyBlock = body as? IrContainerExpression
+        if (loop.origin == IrStatementOrigin.FOR_LOOP_INNER_WHILE && bodyBlock != null) {
+            val insertAt = bodyBlock.statements.indexOfFirst { it !is IrVariable }
+                .let { if (it < 0) bodyBlock.statements.size else it }
+            bodyBlock.statements.add(insertAt, checkCall)
+            return
         }
 
         loop.body = IrBlockImpl(
