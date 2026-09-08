@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.*
@@ -701,8 +702,11 @@ class MutflowIrTransformer(
 
         val originalValue = original.value
 
-        // Use the function's return type for the when type
-        val blockType = containingFunction.returnType
+        // Type the when by the return's TARGET, not the enclosing function: a non-local return
+        // inside an inline lambda (`x?.let { return it }`) sits in a lambda whose return type is
+        // Nothing, and a Nothing-typed when would make the backend cast the value to Void.
+        val blockType = (original.returnTargetSymbol.owner as? IrFunction)?.returnType
+            ?: containingFunction.returnType
 
         // Helper to create a fresh check() call for each branch condition
         fun createCheckCall() = builder.irCall(checkFn).also { call ->
