@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
+import org.jetbrains.kotlin.config.MessageCollectorAccess
 
 /**
  * Entry point for the mutflow compiler plugin.
@@ -35,6 +36,10 @@ class MutflowCompilerPluginRegistrar : CompilerPluginRegistrar() {
 
     override val pluginId: String = "io.github.anschnapp.mutflow"
 
+    // Kotlin 2.4.20 marks MESSAGE_COLLECTOR_KEY with the MessageCollectorAccess
+    // opt-in. The IR transformers report from deep inside the tree walk, where
+    // only a MessageCollector is in scope, so we grab it here and pass it down.
+    @OptIn(MessageCollectorAccess::class)
     override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
         debug("registerExtensions() called!")
         debug("  configuration: $configuration")
