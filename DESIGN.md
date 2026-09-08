@@ -471,6 +471,8 @@ All loop types in Kotlin compile to `IrWhileLoop` or `IrDoWhileLoop` in IR:
 
 Higher-order function "loops" like `forEach` can't cause infinite loops from mutations because the loop control (`hasNext()`, counter) lives in the stdlib, not in the mutated code.
 
+**Where the check goes in a desugared `for` loop:** a `for` loop reaches the transformer as an `IrWhileLoop` with origin `FOR_LOOP_INNER_WHILE`, and its body block has to start with the loop-variable declarations (`val i = iterator.next()`) - `ForLoopsLowering` pattern-matches that shape later in the pipeline and fails with "No 'next' statement in for-loop" if anything precedes them. So for those loops the check is inserted after the leading `IrVariable` statements of the existing body instead of wrapping the body in a new block. `while` and `do-while` bodies are wrapped as shown above.
+
 **Configuration:**
 ```kotlin
 @MutFlowTest(timeoutMs = 60_000)  // default: 60 seconds, 0 to disable

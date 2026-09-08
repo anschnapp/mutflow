@@ -15,7 +15,7 @@ pluginManagement {
         // Must match the Kotlin version mutflow is built against
         // (../gradle.properties -> kotlinVersion): the compiler plugin runs
         // inside this Kotlin compiler process.
-        kotlin("multiplatform") version "2.4.0"
+        kotlin("multiplatform") version "2.4.20"
     }
 }
 

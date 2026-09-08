@@ -17,7 +17,7 @@ manually; the plugin adds them.
 ```kotlin
 // build.gradle.kts
 plugins {
-    kotlin("jvm") version "2.4.0"
+    kotlin("jvm") version "2.4.20"
     id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 ```
@@ -29,8 +29,8 @@ the Kotlin version it was built against and will not work with older Kotlin vers
 
 | mutflow     | Kotlin        |
 |-------------|---------------|
-| 1.1.0+      | 2.4.x         |
-| up to 1.0.3 | 2.2.x - 2.3.x |
+| 1.0.2+      | 2.4.x         |
+| up to 1.0.1 | 2.2.x - 2.3.x |
 
 A mismatch usually shows up as an obscure compiler failure such as `NoClassDefFoundError`
 during compilation. Check the Kotlin version first when that happens.

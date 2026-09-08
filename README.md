@@ -56,7 +56,7 @@ Add the mutflow Gradle plugin to your `build.gradle.kts`:
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "2.4.0"
+    kotlin("jvm") version "2.4.20"
     id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 ```
@@ -492,7 +492,7 @@ Apply the same plugin in a KMP project:
 
 ```kotlin
 plugins {
-    kotlin("multiplatform") version "2.4.0"
+    kotlin("multiplatform") version "2.4.20"
     id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 

@@ -1,4 +1,13 @@
 # Changelog
+## [1.2.1] - 2026-09-08
+### Fixed
+- Compiler crash on range `for` loops inside mutation targets. Kotlin lowers `for (i in 0 until n)` into a while loop whose body block has to start with the loop-variable declarations; `ForLoopsLowering` pattern-matches that shape and rejected the injected timeout check in front of them, failing the build with `Backend Internal error: ... No 'next' statement in for-loop`. For loops with `FOR_LOOP_INNER_WHILE` origin the check is now inserted after those declarations instead of wrapping the body. `while` and `do-while` loops are unchanged. (#19)
+- `ClassCastException` on non-local returns from inline lambdas. A `return` inside `x?.let { return it }` sits in a lambda whose return type is `Nothing`, and the `when` generated around the nullable-return mutation was typed by that lambda, so the backend cast the returned value to `Void` and threw `class java.lang.Integer cannot be cast to class java.lang.Void` at runtime, even with no mutation active. The `when` is now typed by the return's target function. (#20)
+
+### Contributors
+Thanks to @rikshot for both fixes, each shipped with a regression target in the sample module.
+
+
 ## [1.2.0] - 2026-09-06
 ### Added
 - **Kotlin Multiplatform support** -- mutation testing for native targets, to our knowledge the first mutation testing tool for Kotlin/Native. Apply the same Gradle plugin, write plain kotlin-test tests in `commonTest` with the multiplatform `MutFlow.underTest {}` API, and run `mutflow<Target>Test` (or the `mutflowNativeTest` umbrella). One process per mutation, orchestrated by Gradle with exit-code inversion; production klibs and binaries stay instrumentation-free via a dedicated second test compilation. Initial targets: `linuxX64`, `mingwX64`. Configuration lives in the Gradle DSL (`maxMutationRuns`, `timeoutMs`, `verificationMode`). Timeout detection (both the in-process deadline and the orchestrator's hard process kill) and comment-based suppression are verified end-to-end on native; timed-out mutations fail the build with the affected line, same fail-loudly rule as the JVM. See the "Kotlin Multiplatform Support" README section and DESIGN-MULTIPLATFORM.md.
