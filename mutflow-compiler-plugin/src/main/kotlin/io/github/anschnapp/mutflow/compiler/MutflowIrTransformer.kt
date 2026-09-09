@@ -174,7 +174,18 @@ class MutflowIrTransformer(
         } else {
             statement
         }
-        if (expression is IrCall) discardedCalls.add(expression)
+        // The discarded value can come from a level deeper: a branch result of an `if` or
+        // `when`, a `try`/`catch` result, the value of a block such as a safe call.
+        when (expression) {
+            is IrCall -> discardedCalls.add(expression)
+            is IrWhen -> expression.branches.forEach { recordDiscardedCall(it.result) }
+            is IrTry -> {
+                recordDiscardedCall(expression.tryResult)
+                expression.catches.forEach { recordDiscardedCall(it.result) }
+            }
+            is IrContainerExpression -> expression.statements.lastOrNull()?.let { recordDiscardedCall(it) }
+            else -> {}
+        }
     }
 
     override fun visitFile(declaration: IrFile): IrFile {

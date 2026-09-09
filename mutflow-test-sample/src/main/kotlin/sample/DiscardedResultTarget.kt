@@ -28,4 +28,31 @@ class DiscardedResultTarget {
     fun addAllDiscarded(xs: List<Int>) {
         xs.forEach { items.add(it) }
     }
+
+    /** `if` used as a statement: the call is a branch result, not a statement itself. */
+    fun addInIf(c: Boolean) {
+        if (c) items.add(1)
+    }
+
+    /** Subject `when` used as a statement: its branches sit inside a block holding the subject. */
+    fun addInWhen(c: Int) {
+        when (c) {
+            1 -> items.add(1)
+            else -> items.add(2)
+        }
+    }
+
+    /** Safe call as a statement: the call is the value of the generated SAFE_CALL block. */
+    fun addSafeCall(other: MutableList<Int>?) {
+        other?.add(1)
+    }
+
+    /** `try` used as a statement: both the try result and the catch result are discarded. */
+    fun addInTry(index: Int) {
+        try {
+            items.add(items[index])
+        } catch (e: IndexOutOfBoundsException) {
+            items.add(0)
+        }
+    }
 }

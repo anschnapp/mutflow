@@ -66,4 +66,34 @@ class DiscardedResultTargetTest {
         val mutations = discoveredMutations { target.addAllDiscarded(listOf(1, 2)) }
         assertEquals(emptyList(), mutations.inversions(), "Unit-coerced statement in a lambda body is discarded too")
     }
+
+    @Test
+    fun `discarded add in an if branch is not inverted`() {
+        val mutations = discoveredMutations { target.addInIf(true) }
+        assertEquals(emptyList(), mutations.inversions(), "A branch result of a statement if is discarded, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a when branch is not inverted`() {
+        val mutations = discoveredMutations {
+            target.addInWhen(1)
+            target.addInWhen(2)
+        }
+        assertEquals(emptyList(), mutations.inversions(), "Both when branch results are discarded, got $mutations")
+    }
+
+    @Test
+    fun `discarded add behind a safe call is not inverted`() {
+        val mutations = discoveredMutations { target.addSafeCall(mutableListOf()) }
+        assertEquals(emptyList(), mutations.inversions(), "The value of the safe call block is discarded, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in try and catch is not inverted`() {
+        val mutations = discoveredMutations {
+            target.addInTry(0) // list still empty: the catch branch runs
+            target.addInTry(0) // list now populated: the try branch runs
+        }
+        assertEquals(emptyList(), mutations.inversions(), "try and catch results are discarded, got $mutations")
+    }
 }
