@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Changed
+- Boolean inversion no longer mutates calls whose result is discarded (`list.add(x)` as a statement). Inverting an unused value is an equivalent mutant that no test can kill; in a run over 652 mutants these accounted for every "ignored" verdict. The inner expressions of such a call are still mutated (`rows.add(x > 0)` keeps its `>` mutations). (#21)
+
 ## [1.2.1] - 2026-09-08
 ### Fixed
 - Compiler crash on range `for` loops inside mutation targets. Kotlin lowers `for (i in 0 until n)` into a while loop whose body block has to start with the loop-variable declarations; `ForLoopsLowering` pattern-matches that shape and rejected the injected timeout check in front of them, failing the build with `Backend Internal error: ... No 'next' statement in for-loop`. For loops with `FOR_LOOP_INNER_WHILE` origin the check is now inserted after those declarations instead of wrapping the body. `while` and `do-while` loops are unchanged. (#19)

@@ -788,6 +788,8 @@ fun inheritedSelection(invertSelection: Boolean, parentSelected: Boolean): Boole
 | `invertSelection → !invertSelection` | `if (!invertSelection)` | Test with `invertSelection=true` should invert |
 | `parentSelected → !parentSelected` | `!(!parentSelected)` / `!parentSelected` | Test should verify both branches |
 
+**Discarded results are not inverted:** a boolean call whose value is thrown away, such as `list.add(x)` or `flow.tryEmit(value)` on its own line, gets no inversion point. The call and its arguments still run exactly the same, so the mutant would be equivalent and no test could kill it. Only the outermost call of a statement counts as discarded; in `rows.add(x > 0)` the `>` is still mutated.
+
 **Negation removal is implicit:** There is no separate "remove `!`" mutation. Adding `!` to the inner expression of `!expr` produces `!(!expr)`, which evaluates to `expr` - achieving the same effect. This simplification covers all boolean types uniformly without special-casing negation.
 
 These mutations catch tests that don't verify the polarity of boolean results. If your test calls a function but doesn't assert the actual boolean value, the inversion mutation will survive.

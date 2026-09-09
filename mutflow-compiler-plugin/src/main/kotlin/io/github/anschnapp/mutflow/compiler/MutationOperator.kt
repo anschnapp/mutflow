@@ -47,9 +47,15 @@ interface MutationOperator {
 
 /**
  * Context passed to mutation operators during variant generation.
+ *
+ * [resultUsed] is false when the call sits in statement position and its value is
+ * discarded (`list.add(x)` on its own line). A mutation that only changes the
+ * returned value of such a call is an equivalent mutant: the program behaves the
+ * same and no test can kill it.
  */
 data class MutationContext(
     val pluginContext: IrPluginContext,
     val builder: IrBuilderWithScope,
-    val containingFunction: IrSimpleFunction
+    val containingFunction: IrSimpleFunction,
+    val resultUsed: Boolean = true
 )
