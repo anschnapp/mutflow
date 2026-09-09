@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Added
+- **JUnit 4 integration**: the new `mutflow-junit4` artifact provides `@RunWith(MutFlowRunner::class)`, the JUnit 4 counterpart of `@MutFlowTest` (same run loop, same `MUTFLOW_*` environment overrides, same STRICT/LENIENT/DISABLED modes and partial-run detection). An optional `@MutFlowTest(wrapTestMethods = true)` wraps whole test methods so an existing suite needs no `MutFlow.underTest {}` calls, and the run loop (`MutFlowRun`) is reusable from runners with their own threading such as Robolectric. Depends on `mutflow-runtime` and `junit:junit` only; JUnit 6 users do not pick it up. (#22)
+
 ## [1.2.1] - 2026-09-08
 ### Fixed
 - Compiler crash on range `for` loops inside mutation targets. Kotlin lowers `for (i in 0 until n)` into a while loop whose body block has to start with the loop-variable declarations; `ForLoopsLowering` pattern-matches that shape and rejected the injected timeout check in front of them, failing the build with `Backend Internal error: ... No 'next' statement in for-loop`. For loops with `FOR_LOOP_INNER_WHILE` origin the check is now inserted after those declarations instead of wrapping the body. `while` and `do-while` loops are unchanged. (#19)
