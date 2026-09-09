@@ -173,6 +173,47 @@ The `@MutFlowTest` annotation handles everything:
 - **Mutation runs**: Each mutation is activated across all tests; if any test catches it (assertion fails), the mutation is killed and tests appear green
 - **Survivor detection**: If no test catches a mutation, `MutantSurvivedException` is thrown and the build fails
 
+### JUnit 4
+
+Projects still on JUnit 4, which includes every Android unit test suite, use the runner from the
+`mutflow-junit4` artifact instead of `@MutFlowTest`. Tests are written the same way:
+
+```kotlin
+dependencies {
+    testImplementation("io.github.anschnapp.mutflow:mutflow-junit4:<latest-version>")
+}
+```
+
+```kotlin
+@RunWith(MutFlowRunner::class)
+class CalculatorTest {
+    private val calculator = Calculator()
+
+    @Test
+    fun `isPositive returns true for positive numbers`() {
+        val result = MutFlow.underTest { calculator.isPositive(5) }
+        assertTrue(result)
+    }
+}
+```
+
+The runner performs the baseline run and one run per mutation, stops a mutation run at its first
+failing test, and reports each mutation run as a test named `Mutation: (Calculator.kt:7) > → >=`
+that fails when the mutant survives (STRICT) or timed out. The optional
+`@MutFlowTest(...)` annotation from the `junit4` package carries the same settings as the JUnit 6
+one, with the same `MUTFLOW_*` environment overrides. Partial runs (one test picked in the IDE)
+skip mutation testing as on JUnit 6.
+
+An existing suite can be mutation-tested without touching its tests: `@MutFlowTest(wrapTestMethods = true)`
+wraps every test method, including rules and `@Before`/`@After`, in `underTest`. Such tests must
+not call `MutFlow.underTest {}` themselves, as the blocks do not nest.
+
+The run loop is a plain class, `MutFlowRun`, so a runner with its own threading can reuse it. A
+Robolectric runner, whose test bodies execute on a sandbox thread where the thread-keyed
+`MutFlow.underTest` finds no session, is its `RobolectricTestRunner` with `methodBlock` passed
+through `MutFlowRun.wrap` and `run` through `MutFlowRun.run`; the sandbox must also be told not to
+load the `io.github.anschnapp.mutflow` package into its own class loader.
+
 ### Example Output
 
 ```
@@ -443,6 +484,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 **Core**
 - **JUnit 6 integration** - `@MutFlowTest` annotation for automatic multi-run orchestration
+- **JUnit 4 integration** - `@RunWith(MutFlowRunner::class)` from `mutflow-junit4`, same run loop and configuration; opt-in whole-method wrapping for suites that cannot call `MutFlow.underTest {}` (see [JUnit 4](#junit-4))
 - **K2 compiler plugin** - Transforms `@MutationTarget` classes (or Gradle-configured target patterns) with multiple mutation types
 - **Parameterless API** - Simple `MutFlow.underTest { }` when using JUnit extension
 - **Runs all mutations by default** - Zero-config: `@MutFlowTest` tests every discovered mutation
