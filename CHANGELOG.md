@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Added
+- `VerificationMode.ACCUMULATE` and the `mutflowReport` Gradle task: a merged verdict across test classes. A single test class cannot tell whether a survivor is a real gap when other classes exercise the same production code. In `ACCUMULATE` mode no class judges; each writes every mutation it reached with its verdict to `build/mutflow/results/<TestClass>.json` (same dependency-free JSON writer as the native path, format in `MutflowFiles`), and `mutflowReport` (`mutflowJvmReport` for a multiplatform `jvm()` target) merges them: killed by any class wins, a timeout counts as killed, a mutant survives only if no class that reached it killed it. It writes `build/reports/mutflow/mutation-report.md` with survivors grouped by production class and the test classes that reached them, and fails the build on survivors unless `mutflow { failOnSurvivors = false }`. Plain JVM projects gain a `mutflowTest` task, the explicit mutation testing job driven by the `mutflow { }` DSL; in `ACCUMULATE` mode the ordinary `test` task runs the baseline only. (#24)
+
 ## [1.2.2] - 2026-09-10
 ### Fixed
 - Boolean inversion no longer mutates calls whose result is discarded (`list.add(x)` as a statement). Inverting an unused value is an equivalent mutant that no test can kill; in a run over 652 mutants these accounted for every "ignored" verdict. The inner expressions of such a call are still mutated (`rows.add(x > 0)` keeps its `>` mutations). (#21)

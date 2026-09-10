@@ -27,7 +27,9 @@ class MutFlowSession internal constructor(
     private val includeTargets: List<String> = emptyList(),
     private val excludeTargets: List<String> = emptyList(),
     private val timeoutMs: Long = 60_000,
-    private val verificationMode: VerificationMode = VerificationMode.STRICT
+    private val verificationMode: VerificationMode = VerificationMode.STRICT,
+    private val testClassName: String = "",
+    private val resultsDirectory: String? = null
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -523,6 +525,55 @@ class MutFlowSession internal constructor(
     }
 
     /**
+     * Every mutation this session could have selected - the discovered points
+     * that pass the target filter - with the verdict this test class gave it.
+     * Mutations never activated (run cap, partial run) are [MutationStatus.UNTESTED].
+     * This is what the ACCUMULATE results file contains.
+     */
+    fun collectResults(): List<MutationRecord> {
+        val records = mutableListOf<MutationRecord>()
+        for ((pointId, variantCount) in discoveredPoints.entries.sortedBy { it.key }) {
+            if (!isPointIncluded(pointId)) continue
+            for (variantIndex in 0 until variantCount) {
+                val mutation = Mutation(pointId, variantIndex)
+                val result = mutationResults[mutation]
+                records.add(
+                    MutationRecord(
+                        pointId = pointId,
+                        variantIndex = variantIndex,
+                        displayName = getDisplayName(mutation),
+                        status = when (result) {
+                            is MutationResult.Killed -> MutationStatus.KILLED
+                            MutationResult.Survived -> MutationStatus.SURVIVED
+                            MutationResult.TimedOut -> MutationStatus.TIMED_OUT
+                            null -> MutationStatus.UNTESTED
+                        },
+                        killedBy = (result as? MutationResult.Killed)?.testNames?.sorted().orEmpty()
+                    )
+                )
+            }
+        }
+        return records
+    }
+
+    /**
+     * In [VerificationMode.ACCUMULATE], writes [collectResults] as
+     * `<resultsDirectory>/<testClassName>.json` for the Gradle report task to
+     * merge. A no-op in every other mode.
+     */
+    fun writeResults() {
+        if (verificationMode != VerificationMode.ACCUMULATE) return
+        if (testClassName.isEmpty()) {
+            println("[mutflow] WARNING: ACCUMULATE mode needs the test class name to write its results file; nothing written")
+            return
+        }
+        val directory = resultsDirectory ?: DEFAULT_RESULTS_DIRECTORY
+        val fileName = "$testClassName.json"
+        writeResultsFile(directory, fileName, MutflowFiles.buildSessionResultsJson(testClassName, collectResults()))
+        println("[mutflow] Results written to $directory/$fileName")
+    }
+
+    /**
      * Prints a summary of mutation testing results.
      */
     fun printSummary() {
@@ -592,6 +643,15 @@ class MutFlowSession internal constructor(
      */
     internal fun setSeed(seed: Long) {
         sessionSeed = seed
+    }
+
+    companion object {
+        /**
+         * Where ACCUMULATE results go when nothing says otherwise: relative to
+         * the working directory, which under Gradle is the project directory.
+         * The Gradle plugin sets MUTFLOW_RESULTS_DIR explicitly instead.
+         */
+        const val DEFAULT_RESULTS_DIRECTORY = "build/mutflow/results"
     }
 }
 
