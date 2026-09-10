@@ -53,3 +53,34 @@ internal expect fun generateSeed(): Long
  * work without any orchestrator).
  */
 internal expect fun currentProcessRun(): ProcessRun?
+
+/**
+ * Reads an environment variable, or null if unset. Backs the `MUTFLOW_*`
+ * overrides that common code resolves itself (see [TestBudget.fromEnvironment]).
+ */
+internal expect fun environmentVariable(name: String): String?
+
+/**
+ * A pending interruption of the thread that scheduled it; see [scheduleInterrupt].
+ */
+internal interface TestInterrupt {
+    /**
+     * Cancels the interruption. Returns whether it had already fired, in which
+     * case the calling thread's interrupt status is cleared so nothing leaks
+     * into the next test.
+     */
+    fun cancel(): Boolean
+}
+
+/**
+ * Schedules an interruption of the calling thread [delayMs] from now, unless
+ * cancelled first. Because interrupted code may swallow the interrupt and keep
+ * waiting, the interruption repeats until [cancel]; if the thread has still not
+ * returned [graceMs] after the first interrupt, [onAbandoned] runs on the
+ * watchdog thread (a grace of 0 disables that).
+ *
+ * JVM: a daemon watchdog thread and `Thread.interrupt()`. Native: never fires -
+ * the test process is single-threaded and one process hosts one run, so the
+ * Gradle orchestrator's hard process timeout plays this role there.
+ */
+internal expect fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt

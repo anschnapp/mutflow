@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.6.0]
+### Added
+- Per-test wall-clock budget for mutations that hang outside loops. The loop guard only sees loops in mutated code; a mutation that makes the code under test wait forever (a flow that never emits, a latch never released) parked the test thread and hung the build. Every test now gets a budget during mutation runs, `testBudgetFactor` times its own baseline duration plus `testBudgetSlackMs` (default 3× + 1 s); a test exceeding it is interrupted and reported as timed out, like a loop timeout. An interrupted test that still has not returned after `testBudgetGraceMs` abandons the run with a diagnostic (the JVM exits), since such a thread cannot be stopped and holds the lock every later run needs. The budget lives in `MutFlowSession.runTest`, so any test framework integration can enforce it; the JUnit 6 extension wraps each test method. New `@MutFlowTest` parameters, `mutflow { }` DSL properties for the `jvm()` target, and `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS`, `MUTFLOW_TEST_BUDGET_GRACE_MS` overrides. (#23)
+- `MutationTimedOutException` gained a `cause`, carrying whatever an interrupted test threw.
+
 ## [1.5.0]
 ### Added
 - Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name, or, for the parts of a `@file:JvmMultifileClass` facade, the part class name (`com.example.Utils__StringUtilsKt`), since every part numbers its points from zero and ids on the shared facade name would collide. Classes declared in the file stay targets of their own. (#33)
