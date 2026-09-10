@@ -155,9 +155,15 @@ abstract class MutflowNativeTest : DefaultTask() {
         // the configured value (handy for one-off CI or local overrides).
         val fromEnv = System.getenv("MUTFLOW_VERIFICATION_MODE")
         val mode = (fromEnv ?: verificationMode.get()).uppercase()
+        if (mode == "ACCUMULATE") {
+            // One binary runs every test class per mutation, so the verdict
+            // here is already the merged one ACCUMULATE exists to produce.
+            logger.lifecycle("[mutflow] Verification mode ACCUMULATE has no separate meaning on native; judging as STRICT")
+            return "STRICT"
+        }
         if (mode !in setOf("STRICT", "LENIENT", "DISABLED")) {
             throw GradleException(
-                "mutflow: invalid verification mode '$mode' (expected STRICT, LENIENT or DISABLED)"
+                "mutflow: invalid verification mode '$mode' (expected STRICT, LENIENT, DISABLED or ACCUMULATE)"
             )
         }
         return mode

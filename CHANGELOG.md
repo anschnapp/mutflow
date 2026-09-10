@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Added
+- `VerificationMode.ACCUMULATE` and the `mutflowReport` Gradle task: a merged verdict across test classes. A single test class cannot tell whether a survivor is a real gap when other classes exercise the same production code. In `ACCUMULATE` mode no class judges; each writes every mutation it reached with its verdict to `build/mutflow/results/<TestClass>.json` (same dependency-free JSON writer as the native path, format in `MutflowFiles`), and `mutflowReport` (`mutflowJvmReport` for a multiplatform `jvm()` target) merges them: killed by any class wins, a timeout counts as killed, a mutant survives only if no class that reached it killed it. It writes `build/reports/mutflow/mutation-report.md` with survivors grouped by production class and the test classes that reached them, and fails the build on survivors unless `mutflow { failOnSurvivors = false }`. Plain JVM projects gain a `mutflowTest` task, the explicit mutation testing job driven by the `mutflow { }` DSL; in `ACCUMULATE` mode the ordinary `test` task runs the baseline only. (#24)
+
 ## [1.2.1] - 2026-09-08
 ### Fixed
 - Compiler crash on range `for` loops inside mutation targets. Kotlin lowers `for (i in 0 until n)` into a while loop whose body block has to start with the loop-variable declarations; `ForLoopsLowering` pattern-matches that shape and rejected the injected timeout check in front of them, failing the build with `Backend Internal error: ... No 'next' statement in for-loop`. For loops with `FOR_LOOP_INNER_WHILE` origin the check is now inserted after those declarations instead of wrapping the body. `while` and `do-while` loops are unchanged. (#19)

@@ -40,9 +40,17 @@ abstract class MutflowExtension {
      * STRICT (default): surviving mutations fail the build.
      * LENIENT: survivors are reported but do not fail.
      * DISABLED: only the baseline run happens.
+     * ACCUMULATE: no test class judges; the mutation test task writes each
+     * class's results and the report task (`mutflowReport` for a plain JVM
+     * project, `mutflowJvmReport` for a multiplatform jvm() target) merges
+     * them across classes and gives the verdict. In a plain JVM project the
+     * ordinary `test` task then runs the baseline only.
      * The MUTFLOW_VERIFICATION_MODE environment variable overrides this.
      */
     abstract val verificationMode: Property<String>
+
+    /** Whether the ACCUMULATE report task fails the build on surviving mutations. */
+    abstract val failOnSurvivors: Property<Boolean>
 }
 
 /**
@@ -91,6 +99,7 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         extension.maxMutationRuns.convention(Int.MAX_VALUE)
         extension.timeoutMs.convention(60_000L)
         extension.verificationMode.convention("STRICT")
+        extension.failOnSurvivors.convention(true)
 
         target.plugins.withId("org.jetbrains.kotlin.multiplatform") {
             debug("  kotlin.multiplatform plugin detected, configuring native mutation testing...")
@@ -104,6 +113,7 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
                     debug("  mutflow is enabled, configuring source sets and dependencies")
                     configureSourceSets(target)
                     addDependencies(target)
+                    configureMutationTestTask(target, extension)
                 } else {
                     debug("  mutflow is disabled, skipping configuration")
                     // Add annotations and test dependencies so code still compiles
@@ -183,6 +193,45 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
             testTask.classpath = project.files(mutatedMain.output.classesDirs) + testTask.classpath
             debug("  configured test task '${testTask.name}' to use mutatedMain classes first")
         }
+    }
+
+    /**
+     * The explicit mutation testing job of a plain JVM project: a second Test
+     * task over the same test classes, configured by the mutflow { } DSL
+     * through the environment (an ambient variable still wins, as everywhere).
+     * The stock `test` task is left to its annotations, except in ACCUMULATE
+     * mode: per-class verdicts are meaningless there, so `test` runs the
+     * baseline only and `mutflowReport` judges.
+     */
+    private fun configureMutationTestTask(project: Project, extension: MutflowExtension) {
+        val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
+        val testSourceSet = sourceSets.getByName("test")
+        val mode = (System.getenv("MUTFLOW_VERIFICATION_MODE") ?: extension.verificationMode.get()).uppercase()
+
+        val mutflowTest = project.tasks.register("mutflowTest", Test::class.java) { task ->
+            task.group = "verification"
+            task.description = "Runs mutflow mutation testing with the mutflow { } settings"
+            task.testClassesDirs = testSourceSet.output.classesDirs
+            // Appended, not assigned: the withType(Test) hook in configureSourceSets
+            // prepends the mutatedMain classes, and it may run before this action.
+            task.classpath += testSourceSet.runtimeClasspath
+            task.useJUnitPlatform()
+            task.environment("MUTFLOW_VERIFICATION_MODE", mode)
+            task.inputs.property("mutflow.verificationMode", mode)
+        }
+        if (mode == "ACCUMULATE") {
+            project.tasks.named("test", Test::class.java) { task ->
+                task.environment("MUTFLOW_VERIFICATION_MODE", "DISABLED")
+                task.inputs.property("mutflow.verificationMode", "DISABLED")
+            }
+        }
+        MutflowAccumulate.wire(
+            project = project,
+            extension = extension,
+            testTask = mutflowTest,
+            reportTaskName = "mutflowReport",
+            resultsDirectory = project.layout.buildDirectory.dir("mutflow/results")
+        )
     }
 
     private fun addDependencies(project: Project) {
