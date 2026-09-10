@@ -60,6 +60,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
         val expectedTestCount = countTestMethods(testClass)
 
         // Create session for this test class
+        val resultsDirectory = System.getenv("MUTFLOW_RESULTS_DIR")?.takeIf { it.isNotBlank() }
         val sessionId = MutFlow.createSession(
             selection = Selection.MostLikelyStable,
             shuffle = Shuffle.PerChange,
@@ -69,7 +70,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             includeTargets = annotation.includeTargets.map { it.qualifiedName!! },
             excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
             timeoutMs = timeoutMs,
-            verificationMode = effectiveMode
+            verificationMode = effectiveMode,
+            testClassName = testClass.name,
+            resultsDirectory = resultsDirectory
         )
 
         // DISABLED mode: only run baseline, skip all mutation runs
@@ -83,6 +86,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
 
         if (effectiveMode == VerificationMode.LENIENT) {
             println("[mutflow] Verification mode: LENIENT - surviving mutations will not cause test failure")
+        }
+        if (effectiveMode == VerificationMode.ACCUMULATE) {
+            println("[mutflow] Verification mode: ACCUMULATE - results are written for the merged report; nothing fails here")
         }
 
         // Generate invocation contexts lazily
@@ -157,10 +163,12 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             throw throwable
                         } else if (throwable is MutationTimedOutException) {
                             // Timeout: mark as timed out and fail the test
-                            // so the user notices and can add // mutflow:ignore
+                            // so the user notices and can add // mutflow:ignore.
+                            // Except in ACCUMULATE mode, where the merged report
+                            // lists timeouts and no test class judges anything.
                             val session = MutFlow.getSession(sessionId)
                             session?.markTestTimedOut()
-                            throw throwable
+                            if (session?.getVerificationMode() != VerificationMode.ACCUMULATE) throw throwable
                         } else {
                             // Mutation run: failure means mutation was killed (success!)
                             val session = MutFlow.getSession(sessionId)
@@ -176,11 +184,15 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             if (session.didMutationSurvive()) {
                                 val survivedMutation = session.getActiveMutation()!!
                                 val displayName = session.getDisplayName(survivedMutation)
-                                if (session.getVerificationMode() == VerificationMode.STRICT) {
-                                    MutFlow.endRun(sessionId)
-                                    throw MutantSurvivedException(survivedMutation, displayName)
-                                } else {
-                                    println("[mutflow] Mutation survived (lenient): $displayName")
+                                when (session.getVerificationMode()) {
+                                    VerificationMode.STRICT -> {
+                                        MutFlow.endRun(sessionId)
+                                        throw MutantSurvivedException(survivedMutation, displayName)
+                                    }
+                                    VerificationMode.ACCUMULATE ->
+                                        println("[mutflow] Mutation survived in this class (accumulate): $displayName")
+                                    else ->
+                                        println("[mutflow] Mutation survived (lenient): $displayName")
                                 }
                             }
                         }
