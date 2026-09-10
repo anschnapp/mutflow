@@ -1,5 +1,6 @@
 package io.github.anschnapp.mutflow.junit
 
+import io.github.anschnapp.mutflow.TestBudget
 import io.github.anschnapp.mutflow.VerificationMode
 import org.junit.jupiter.api.ClassTemplate
 import org.junit.jupiter.api.extension.ExtendWith
@@ -54,6 +55,17 @@ import kotlin.reflect.KClass
  *                         LENIENT: survivors are reported but don't fail.
  *                         DISABLED: mutation runs are skipped entirely.
  *                         Can be overridden globally via the MUTFLOW_VERIFICATION_MODE environment variable.
+ * @param testBudgetFactor Wall-clock budget for each test during mutation runs, as a multiple of what the
+ *                         same test took in the baseline run. Catches mutations that make the code under
+ *                         test wait forever, which the loop-based timeout cannot see. 0 disables the budget.
+ *                         Overridden by MUTFLOW_TEST_BUDGET_FACTOR. See [TestBudget].
+ * @param testBudgetSlackMs Fixed allowance added to the scaled baseline duration. Overridden by
+ *                          MUTFLOW_TEST_BUDGET_SLACK_MS.
+ * @param baselineTimeoutMs Absolute limit for a test in the baseline run, where no reference exists yet.
+ *                          0 disables it. Overridden by MUTFLOW_BASELINE_TIMEOUT_MS.
+ * @param testBudgetGraceMs How long an interrupted test may keep running before the run is abandoned
+ *                          (the test JVM exits with a diagnostic). 0 never abandons. Overridden by
+ *                          MUTFLOW_TEST_BUDGET_GRACE_MS.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
@@ -65,5 +77,9 @@ annotation class MutFlowTest(
     val includeTargets: Array<KClass<*>> = [],
     val excludeTargets: Array<KClass<*>> = [],
     val timeoutMs: Long = 60_000,
-    val verificationMode: VerificationMode = VerificationMode.STRICT
+    val verificationMode: VerificationMode = VerificationMode.STRICT,
+    val testBudgetFactor: Int = TestBudget.DEFAULT_FACTOR,
+    val testBudgetSlackMs: Long = TestBudget.DEFAULT_SLACK_MS,
+    val baselineTimeoutMs: Long = TestBudget.DEFAULT_BASELINE_TIMEOUT_MS,
+    val testBudgetGraceMs: Long = TestBudget.DEFAULT_GRACE_MS
 )

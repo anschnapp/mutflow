@@ -1,4 +1,9 @@
 # Changelog
+## [Unreleased]
+### Added
+- Per-test wall-clock budget for mutations that hang outside loops. The loop guard only sees loops in mutated code; a mutation that makes the code under test wait forever (a flow that never emits, a latch never released) parked the test thread and hung the build. Every test now gets a budget during mutation runs, `testBudgetFactor` times its own baseline duration plus `testBudgetSlackMs` (default 3× + 1 s); a test exceeding it is interrupted and reported as timed out, like a loop timeout. An interrupted test that still has not returned after `testBudgetGraceMs` abandons the run with a diagnostic (the JVM exits), since such a thread cannot be stopped and holds the lock every later run needs. The budget lives in `MutFlowSession.runTest`, so any test framework integration can enforce it; the JUnit 6 extension wraps each test method. New `@MutFlowTest` parameters, `mutflow { }` DSL properties for the `jvm()` target, and `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS`, `MUTFLOW_TEST_BUDGET_GRACE_MS` overrides. (#23)
+- `MutationTimedOutException` gained a `cause`, carrying whatever an interrupted test threw.
+
 ## [1.2.1] - 2026-09-08
 ### Fixed
 - Compiler crash on range `for` loops inside mutation targets. Kotlin lowers `for (i in 0 until n)` into a while loop whose body block has to start with the loop-variable declarations; `ForLoopsLowering` pattern-matches that shape and rejected the injected timeout check in front of them, failing the build with `Backend Internal error: ... No 'next' statement in for-loop`. For loops with `FOR_LOOP_INNER_WHILE` origin the check is now inserted after those declarations instead of wrapping the body. `while` and `do-while` loops are unchanged. (#19)

@@ -48,6 +48,17 @@ internal actual fun generateSeed(): Long = Random.nextLong()
 @OptIn(ExperimentalForeignApi::class)
 private fun envVar(name: String): String? = getenv(name)?.toKString()
 
+internal actual fun environmentVariable(name: String): String? = envVar(name)
+
+// Nothing to interrupt: the kotlin-test runner is single-threaded, and a hung
+// mutation run is a hung process that the Gradle orchestrator kills after its
+// hard timeout (MutflowNativeTest), which is the native form of this budget.
+private object NoInterrupt : TestInterrupt {
+    override fun cancel(): Boolean = false
+}
+
+internal actual fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt = NoInterrupt
+
 private const val DEFAULT_TIMEOUT_MS = 60_000L
 
 // Resolved once, at the first underTest call. `by lazy` instead of eager

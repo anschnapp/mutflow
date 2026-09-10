@@ -2,6 +2,10 @@ package io.github.anschnapp.mutflow
 
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 // JVM actuals for Platform.kt - verbatim the primitives the pre-KMP
 // MutFlow / MutFlowSession used, so the JVM path behaves identically.
@@ -39,3 +43,60 @@ private val inactiveRun: ProcessRun? by lazy {
 }
 
 internal actual fun currentProcessRun(): ProcessRun? = inactiveRun
+
+internal actual fun environmentVariable(name: String): String? = System.getenv(name)
+
+// One daemon thread for every budget in the JVM: a scheduled task per test is
+// cheap, and daemon means a forgotten handle can never keep the JVM alive.
+private val watchdog: ScheduledExecutorService by lazy {
+    Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "mutflow-watchdog").apply { isDaemon = true }
+    }
+}
+
+// How often the interrupt is repeated while waiting for the test to return.
+private const val REPEAT_INTERVAL_MS = 100L
+
+internal actual fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt =
+    JvmTestInterrupt(Thread.currentThread(), graceMs, onAbandoned).also { it.schedule(delayMs) }
+
+private class JvmTestInterrupt(
+    private val target: Thread,
+    private val graceMs: Long,
+    private val onAbandoned: () -> Unit
+) : TestInterrupt {
+    private val lock = Any()
+    private var cancelled = false
+    private var fired = false
+    private var firstInterruptNanos = 0L
+    private var pending: ScheduledFuture<*>? = null
+
+    fun schedule(delayMs: Long) {
+        synchronized(lock) {
+            if (!cancelled) pending = watchdog.schedule(::fire, delayMs, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun fire() {
+        val abandoned = synchronized(lock) {
+            if (cancelled) return
+            if (!fired) {
+                fired = true
+                firstInterruptNanos = System.nanoTime()
+            }
+            target.interrupt()
+            val sinceFirstMs = (System.nanoTime() - firstInterruptNanos) / 1_000_000
+            graceMs > 0 && sinceFirstMs >= graceMs
+        }
+        if (abandoned) onAbandoned() else schedule(REPEAT_INTERVAL_MS)
+    }
+
+    // Interrupting and cancelling happen under the same lock, so once cancel()
+    // returns no interrupt can arrive late and hit the next test.
+    override fun cancel(): Boolean = synchronized(lock) {
+        cancelled = true
+        pending?.cancel(false)
+        if (fired && Thread.currentThread() === target) Thread.interrupted()
+        fired
+    }
+}

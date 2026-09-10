@@ -225,7 +225,11 @@ data class SessionResult(
 )
 
 /**
- * Thrown when a mutation run exceeds its timeout deadline.
- * Indicates the mutation likely causes an infinite loop.
+ * Thrown when a mutation run exceeds a time limit: the loop-guard deadline
+ * ([MutationRegistry.checkTimeout], an infinite loop) or a test's wall-clock
+ * budget (`MutFlowSession.runTest`, code waiting forever). [cause] carries
+ * whatever the interrupted test threw, if anything.
  */
-class MutationTimedOutException(message: String) : RuntimeException(message)
+class MutationTimedOutException(message: String, cause: Throwable?) : RuntimeException(message, cause) {
+    constructor(message: String) : this(message, null)
+}
