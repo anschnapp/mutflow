@@ -84,3 +84,9 @@ internal interface TestInterrupt {
  * Gradle orchestrator's hard process timeout plays this role there.
  */
 internal expect fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt
+
+/**
+ * Ends the process with [status]. `kotlin.system.exitProcess` exists on the
+ * JVM and on Native but not in the common stdlib, hence the indirection.
+ */
+internal expect fun terminateProcess(status: Int): Nothing

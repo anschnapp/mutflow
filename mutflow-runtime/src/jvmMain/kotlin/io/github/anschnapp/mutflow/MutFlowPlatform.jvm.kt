@@ -100,3 +100,5 @@ private class JvmTestInterrupt(
         fired
     }
 }
+
+internal actual fun terminateProcess(status: Int): Nothing = kotlin.system.exitProcess(status)

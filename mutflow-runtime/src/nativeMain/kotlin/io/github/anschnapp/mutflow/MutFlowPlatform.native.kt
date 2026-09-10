@@ -105,3 +105,5 @@ private val processRun: ProcessRun by lazy {
 }
 
 internal actual fun currentProcessRun(): ProcessRun? = processRun
+
+internal actual fun terminateProcess(status: Int): Nothing = kotlin.system.exitProcess(status)

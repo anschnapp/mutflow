@@ -1,7 +1,6 @@
 package io.github.anschnapp.mutflow
 
 import kotlin.random.Random
-import kotlin.system.exitProcess
 import kotlin.time.TimeSource
 
 /**
@@ -357,7 +356,7 @@ class MutFlowSession internal constructor(
     // nothing else can free a thread that ignores interruption.
     internal var onTestAbandoned: (message: String) -> Unit = { message ->
         println(message)
-        exitProcess(1)
+        terminateProcess(1)
     }
 
     /**
