@@ -261,6 +261,26 @@ class CalculatorTest { ... }
 
 The timeout check is nearly free: a single `System.nanoTime()` comparison per loop iteration during mutation runs, and an instant null-check return during baseline or production execution.
 
+### Test Budget (Hangs Outside Loops)
+
+The loop check only sees loops inside mutated code. A mutation can also make the code under test wait forever without looping - a flow that never emits, a latch that is never released, a future that never completes - and park the test thread. For that, every test gets a **wall-clock budget** during mutation runs, derived from the test's own baseline duration:
+
+```
+budget = baseline duration × testBudgetFactor + testBudgetSlackMs     (default: 3× + 1 s)
+```
+
+- A test that exceeds its budget is **interrupted** and fails with `MutationTimedOutException`, like a loop timeout; the mutation shows as `⏱` in the summary.
+- The budget is relative on purpose: a fixed limit is too tight for slow suites or too loose to be useful, while three times what the same test took a moment ago in the same JVM is both.
+- If the interrupted test still has not returned after `testBudgetGraceMs` (default 10 s), the run is **abandoned**: the test JVM exits with a diagnostic naming the test and the mutation. A thread that ignores interruption cannot be stopped, and it holds the lock every later mutation run needs, so the alternative is a build that hangs until CI kills it.
+- During the baseline run, where no reference exists yet, `baselineTimeoutMs` (default 60 s) applies instead.
+
+```kotlin
+@MutFlowTest(testBudgetFactor = 5, testBudgetSlackMs = 2_000)  // roomier budget
+@MutFlowTest(testBudgetFactor = 0)                             // budget off, loop check only
+```
+
+The `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override the annotation values. The budget covers the test method itself (not `@BeforeEach`/`@AfterEach`), on the JVM only: a hung Kotlin/Native run is a hung process, which the Gradle orchestrator's process timeout already kills.
+
 ### Traps (Pinning Mutations)
 
 When a mutation survives, you can **trap** it to run it first every time while you fix the test gap:
@@ -462,6 +482,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 **Robustness**
 - **Timeout detection** - Mutations that cause infinite loops (e.g., flipping `<` in a loop condition) are automatically detected and reported. Compiler-injected `checkTimeout()` at the top of every loop body ensures even tight loops are caught. Test fails with actionable guidance to add `// mutflow:ignore`
+- **Test budget** - Mutations that make the code under test wait forever outside any loop (a flow that never emits, a latch never released) are caught by a per-test wall-clock budget derived from the test's own baseline duration; the test is interrupted and reported as timed out
 - **Partial run detection** - Automatically skips mutation testing when running single tests from IDE (prevents false positives)
 - **Parallel test safe** - Mutation test classes can run alongside other tests in parallel; `underTest {}` blocks serialize automatically via a synchronized lock, without using `ThreadLocal` (keeping the door open for coroutine/reactive support)
 - **Session-based architecture** - Clean lifecycle, no leaked global state
@@ -560,6 +581,10 @@ mutflow {
     maxMutationRuns = 20        // default: unlimited (all mutations)
     timeoutMs = 60_000L         // infinite-loop protection deadline
     verificationMode = "STRICT" // STRICT | LENIENT | DISABLED
+    testBudgetFactor = 3        // per-test wall-clock budget, × baseline duration (jvm() target; 0 = off)
+    testBudgetSlackMs = 1_000L  // fixed allowance on top
+    baselineTimeoutMs = 60_000L // absolute limit during the baseline run
+    testBudgetGraceMs = 10_000L // interrupted test still running this long: abandon the run
 }
 ```
 

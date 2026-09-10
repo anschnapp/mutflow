@@ -1,6 +1,7 @@
 package io.github.anschnapp.mutflow
 
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 /**
  * Identifier for [MutFlowSession] instances.
@@ -27,7 +28,8 @@ class MutFlowSession internal constructor(
     private val includeTargets: List<String> = emptyList(),
     private val excludeTargets: List<String> = emptyList(),
     private val timeoutMs: Long = 60_000,
-    private val verificationMode: VerificationMode = VerificationMode.STRICT
+    private val verificationMode: VerificationMode = VerificationMode.STRICT,
+    private val testBudget: TestBudget = TestBudget()
 ) {
     // Discovered points with their variant counts (built during baseline)
     private val discoveredPoints = mutableMapOf<String, Int>() // pointId -> variantCount
@@ -343,6 +345,82 @@ class MutFlowSession internal constructor(
         }
         return result
     }
+
+    // ==================== Per-test wall-clock budget ====================
+
+    // What each test took in the baseline run, summed over its runTest calls.
+    private val baselineDurationsMs = threadSafeMutableMapOf<String, Long>()
+
+    // What happens when an interrupted test still has not returned after the
+    // grace period. Replaceable for tests; the default ends the JVM, as
+    // nothing else can free a thread that ignores interruption.
+    internal var onTestAbandoned: (message: String) -> Unit = { message ->
+        println(message)
+        terminateProcess(1)
+    }
+
+    /**
+     * Runs one test's body under the session's [TestBudget].
+     *
+     * Call it from the test framework integration around each test, on the
+     * thread that executes the test. During the baseline run it measures the
+     * test; during a mutation run it interrupts the test once it exceeds
+     * `factor` times that measurement plus `slackMs`, and reports the excess
+     * as a [MutationTimedOutException], which the integrations already treat
+     * as a timed-out mutation. See [TestBudget] for why the loop guard alone
+     * is not enough.
+     *
+     * @param testId Identifies the test across runs (a method name, a display
+     *   name); it must be the same in the baseline and the mutation runs.
+     */
+    fun <T> runTest(testId: String, block: () -> T): T {
+        val run = currentRun
+            ?: error("No run active. Call startRun() before runTest().")
+        val limitMs = if (run == 0) {
+            testBudget.limitForBaseline()
+        } else {
+            testBudget.limitForMutationRun(baselineDurationsMs[testId])
+        }
+        val mutationName = activeMutation?.let(::getDisplayName)
+        val interrupt = if (limitMs > 0) {
+            scheduleInterrupt(limitMs, testBudget.graceMs) {
+                onTestAbandoned(abandonedMessage(testId, mutationName, limitMs))
+            }
+        } else {
+            null
+        }
+
+        val start = TimeSource.Monotonic.markNow()
+        val outcome = runCatching(block)
+        val expired = interrupt?.cancel() ?: false
+        if (run == 0) {
+            val elapsedMs = start.elapsedNow().inWholeMilliseconds
+            baselineDurationsMs[testId] = (baselineDurationsMs[testId] ?: 0L) + elapsedMs
+        }
+        if (expired) {
+            throw MutationTimedOutException(timedOutMessage(testId, mutationName, limitMs), outcome.exceptionOrNull())
+        }
+        return outcome.getOrThrow()
+    }
+
+    private fun timedOutMessage(testId: String, mutationName: String?, limitMs: Long): String = buildString {
+        append("Test '").append(testId).append("' exceeded its wall-clock budget of ").append(limitMs).append(" ms")
+        if (mutationName != null) {
+            append(" with mutation ").append(mutationName).append(" active.\n")
+            append("The mutation likely makes the code under test wait forever. ")
+            append("If the mutant is equivalent, add a // mutflow:ignore comment on the affected line.")
+        } else {
+            append(" in the baseline run (MUTFLOW_BASELINE_TIMEOUT_MS).")
+        }
+    }
+
+    private fun abandonedMessage(testId: String, mutationName: String?, limitMs: Long): String =
+        "[mutflow] ABORT: test '$testId' has not returned ${testBudget.graceMs} ms after being interrupted " +
+            "for exceeding its $limitMs ms budget" +
+            (if (mutationName != null) " with mutation $mutationName active" else "") +
+            ". The thread cannot be stopped and holds the lock every later mutation run needs, " +
+            "so the test JVM exits now. Add // mutflow:ignore on the affected line, or raise " +
+            "MUTFLOW_TEST_BUDGET_GRACE_MS if the test only needed longer to notice the interrupt."
 
     private fun selectMutation(run: Int): Mutation? {
         val untestedMutations = buildUntestedMutations()

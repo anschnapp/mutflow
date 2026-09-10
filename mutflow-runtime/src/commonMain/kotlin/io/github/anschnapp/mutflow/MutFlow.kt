@@ -46,6 +46,7 @@ object MutFlow {
      * @param maxRuns Maximum number of runs
      * @param expectedTestCount Number of test methods in the class (for partial run detection)
      * @param traps Mutations to test first, by display name (e.g., "(Calculator.kt:8) > → >=")
+     * @param testBudget Wall-clock budget per test in mutation runs, enforced by [MutFlowSession.runTest]
      * @return The session ID
      */
     fun createSession(
@@ -57,7 +58,8 @@ object MutFlow {
         includeTargets: List<String> = emptyList(),
         excludeTargets: List<String> = emptyList(),
         timeoutMs: Long = 60_000,
-        verificationMode: VerificationMode = VerificationMode.STRICT
+        verificationMode: VerificationMode = VerificationMode.STRICT,
+        testBudget: TestBudget = TestBudget()
     ): SessionId {
         val id = SessionId(randomSessionIdValue())
         val session = MutFlowSession(
@@ -70,7 +72,8 @@ object MutFlow {
             includeTargets = includeTargets,
             excludeTargets = excludeTargets,
             timeoutMs = timeoutMs,
-            verificationMode = verificationMode
+            verificationMode = verificationMode,
+            testBudget = testBudget
         )
         sessions[id] = session
         return id

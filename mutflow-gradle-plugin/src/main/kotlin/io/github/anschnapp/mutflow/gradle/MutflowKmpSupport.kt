@@ -185,6 +185,17 @@ internal object MutflowKmpSupport {
             task.environment("MUTFLOW_TIMEOUT_MS", extension.timeoutMs.get().toString())
             val mode = System.getenv("MUTFLOW_VERIFICATION_MODE") ?: extension.verificationMode.get()
             task.environment("MUTFLOW_VERIFICATION_MODE", mode)
+            // The runtime applies ambient MUTFLOW_TEST_BUDGET_* variables itself, so
+            // these are set only when the environment does not already carry them.
+            val budget = mapOf(
+                "MUTFLOW_TEST_BUDGET_FACTOR" to extension.testBudgetFactor.get(),
+                "MUTFLOW_TEST_BUDGET_SLACK_MS" to extension.testBudgetSlackMs.get(),
+                "MUTFLOW_BASELINE_TIMEOUT_MS" to extension.baselineTimeoutMs.get(),
+                "MUTFLOW_TEST_BUDGET_GRACE_MS" to extension.testBudgetGraceMs.get()
+            )
+            budget.forEach { (name, value) ->
+                task.environment(name, System.getenv(name) ?: value.toString())
+            }
 
             // Gradle's Test task does not treat environment variables as
             // inputs, so without these the task stays UP-TO-DATE after a
@@ -194,6 +205,7 @@ internal object MutflowKmpSupport {
             task.inputs.property("mutflow.maxRuns", maxRuns)
             task.inputs.property("mutflow.timeoutMs", extension.timeoutMs.get())
             task.inputs.property("mutflow.verificationMode", mode)
+            task.inputs.property("mutflow.testBudget", budget.values.joinToString(","))
 
             task.onlyIf("mutflow is disabled") { extension.enabled.get() }
         }
