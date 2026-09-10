@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.types.isBoolean
+import org.jetbrains.kotlin.ir.types.isUnit
 import org.jetbrains.kotlin.ir.expressions.impl.IrBlockImpl
 import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
@@ -143,6 +144,49 @@ class MutflowIrTransformer(
 
     // Compiled target patterns from Gradle config (glob-style → regex)
     private val compiledTargetPatterns: List<Regex> = compileTargetPatterns(targetPatterns)
+
+    /**
+     * Calls that sit in statement position with their value discarded. Recorded while
+     * entering a block, before its statements are transformed, so the identity of the
+     * original call still matches when [visitCall] reaches it. Only the outermost call
+     * of a statement is discarded: in `rows.add(x > 0)` the `>` result is used by `add`.
+     */
+    private val discardedCalls: MutableSet<IrCall> =
+        java.util.Collections.newSetFromMap(java.util.IdentityHashMap())
+
+    override fun visitBlockBody(body: IrBlockBody): IrBody {
+        body.statements.forEach { recordDiscardedCall(it) }
+        return super.visitBlockBody(body)
+    }
+
+    override fun visitContainerExpression(expression: IrContainerExpression): IrExpression {
+        // The last statement is the block's value unless the block itself is Unit.
+        val statements = expression.statements
+        statements.forEachIndexed { index, statement ->
+            if (index < statements.lastIndex || expression.type.isUnit()) recordDiscardedCall(statement)
+        }
+        return super.visitContainerExpression(expression)
+    }
+
+    private fun recordDiscardedCall(statement: IrStatement) {
+        val expression = if (statement is IrTypeOperatorCall && statement.operator == IrTypeOperator.IMPLICIT_COERCION_TO_UNIT) {
+            statement.argument
+        } else {
+            statement
+        }
+        // The discarded value can come from a level deeper: a branch result of an `if` or
+        // `when`, a `try`/`catch` result, the value of a block such as a safe call.
+        when (expression) {
+            is IrCall -> discardedCalls.add(expression)
+            is IrWhen -> expression.branches.forEach { recordDiscardedCall(it.result) }
+            is IrTry -> {
+                recordDiscardedCall(expression.tryResult)
+                expression.catches.forEach { recordDiscardedCall(it.result) }
+            }
+            is IrContainerExpression -> expression.statements.lastOrNull()?.let { recordDiscardedCall(it) }
+            else -> {}
+        }
+    }
 
     override fun visitFile(declaration: IrFile): IrFile {
         debug("visitFile: ${declaration.fileEntry.name}")
@@ -487,7 +531,7 @@ class MutflowIrTransformer(
         }
 
         val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
-        val context = MutationContext(pluginContext, builder, containingFunction)
+        val context = MutationContext(pluginContext, builder, containingFunction, resultUsed = original !in discardedCalls)
 
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {

@@ -18,6 +18,8 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  * Excludes:
  * - `not()` calls (would create redundant double-negation mutation points)
  * - Calls with EXCLEQ origin (handled by EqualitySwapOperator)
+ * - Calls whose result is discarded (`list.add(x)` as a statement): inverting
+ *   an unused value changes nothing observable, so the mutant would be equivalent
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
 class BooleanInversionOperator : MutationOperator {
@@ -35,6 +37,7 @@ class BooleanInversionOperator : MutationOperator {
     }
 
     override fun variants(call: IrCall, context: MutationContext): List<MutationOperator.Variant> {
+        if (!context.resultUsed) return emptyList()
         val name = call.symbol.owner.name.asString()
 
         return listOf(
