@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Fixed
+- Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.
+
 ## [1.2.2] - 2026-09-10
 ### Fixed
 - Boolean inversion no longer mutates calls whose result is discarded (`list.add(x)` as a statement). Inverting an unused value is an equivalent mutant that no test can kill; in a run over 652 mutants these accounted for every "ignored" verdict. The inner expressions of such a call are still mutated (`rows.add(x > 0)` keeps its `>` mutations). (#21)
