@@ -46,6 +46,8 @@ object MutFlow {
      * @param maxRuns Maximum number of runs
      * @param expectedTestCount Number of test methods in the class (for partial run detection)
      * @param traps Mutations to test first, by display name (e.g., "(Calculator.kt:8) > → >=")
+     * @param testClassName Name of the test class, used to name its results file in ACCUMULATE mode
+     * @param resultsDirectory Where ACCUMULATE mode writes the results file; null for the default
      * @return The session ID
      */
     fun createSession(
@@ -57,7 +59,9 @@ object MutFlow {
         includeTargets: List<String> = emptyList(),
         excludeTargets: List<String> = emptyList(),
         timeoutMs: Long = 60_000,
-        verificationMode: VerificationMode = VerificationMode.STRICT
+        verificationMode: VerificationMode = VerificationMode.STRICT,
+        testClassName: String = "",
+        resultsDirectory: String? = null
     ): SessionId {
         val id = SessionId(randomSessionIdValue())
         val session = MutFlowSession(
@@ -70,7 +74,9 @@ object MutFlow {
             includeTargets = includeTargets,
             excludeTargets = excludeTargets,
             timeoutMs = timeoutMs,
-            verificationMode = verificationMode
+            verificationMode = verificationMode,
+            testClassName = testClassName,
+            resultsDirectory = resultsDirectory
         )
         sessions[id] = session
         return id
@@ -81,8 +87,9 @@ object MutFlow {
      * Called by JUnit extension when a @MutFlowTest class finishes.
      */
     fun closeSession(sessionId: SessionId) {
-        val session = sessions.remove(sessionId)
-        session?.printSummary()
+        val session = sessions.remove(sessionId) ?: return
+        session.printSummary()
+        session.writeResults()
     }
 
     /**
@@ -427,7 +434,17 @@ enum class VerificationMode {
      * Mutation runs are skipped entirely — only the baseline (regular tests) runs.
      * Useful for fast feedback when mutation testing is not needed.
      */
-    DISABLED
+    DISABLED,
+
+    /**
+     * Mutations run, but no test class judges them: each class writes what it
+     * saw to a results file (see [MutFlow.closeSession]), and the Gradle
+     * `mutflowReport` task merges those across classes and gives the verdict.
+     * A mutant that survives one class but is killed by another is killed.
+     * Use it when several test classes exercise the same production code, so a
+     * single class cannot know whether a survivor is a real gap.
+     */
+    ACCUMULATE
 }
 
 /**

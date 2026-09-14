@@ -39,3 +39,9 @@ private val inactiveRun: ProcessRun? by lazy {
 }
 
 internal actual fun currentProcessRun(): ProcessRun? = inactiveRun
+
+internal actual fun writeResultsFile(directory: String, fileName: String, content: String) {
+    val dir = java.io.File(directory)
+    dir.mkdirs()
+    java.io.File(dir, fileName).writeText(content)
+}

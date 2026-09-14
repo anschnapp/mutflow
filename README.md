@@ -294,15 +294,17 @@ Traps run in the order provided, regardless of selection strategy. After all tra
 By default, mutflow uses **strict** verification: surviving mutations fail the build. You can change this behavior per test class or globally.
 
 ```kotlin
-@MutFlowTest(verificationMode = VerificationMode.STRICT)   // default — survivors fail the build
-@MutFlowTest(verificationMode = VerificationMode.LENIENT)  // survivors are reported but don't fail
-@MutFlowTest(verificationMode = VerificationMode.DISABLED) // mutation runs are skipped entirely
+@MutFlowTest(verificationMode = VerificationMode.STRICT)     // default — survivors fail the build
+@MutFlowTest(verificationMode = VerificationMode.LENIENT)    // survivors are reported but don't fail
+@MutFlowTest(verificationMode = VerificationMode.DISABLED)   // mutation runs are skipped entirely
+@MutFlowTest(verificationMode = VerificationMode.ACCUMULATE) // results are written for a merged verdict, see below
 ```
 
 **When to use each mode:**
 - `STRICT` — Default. Use for CI pipelines where mutation coverage must be maintained.
 - `LENIENT` — Use when building up test coverage incrementally. Mutations still run and are reported in the summary, but survivors don't break the build. This lets you focus on writing regular tests first and address surviving mutations later.
 - `DISABLED` — Use when you only want fast feedback from regular tests. Only the baseline runs — no mutations are tested at all.
+- `ACCUMULATE` — Use when several test classes exercise the same production code. No class judges; the verdict comes from the `mutflowReport` task, which merges every class's results. See [Accumulate Mode](#accumulate-mode-merged-verdicts-across-test-classes).
 
 **Environment variable override:**
 
@@ -323,7 +325,30 @@ Or for a gradual adoption workflow:
 MUTFLOW_VERIFICATION_MODE=LENIENT ./gradlew test
 ```
 
-The environment variable accepts `STRICT`, `LENIENT`, or `DISABLED` (case-insensitive). Invalid values produce a warning and fall back to the annotation value.
+The environment variable accepts `STRICT`, `LENIENT`, `DISABLED` or `ACCUMULATE` (case-insensitive). Invalid values produce a warning and fall back to the annotation value.
+
+### Accumulate Mode (Merged Verdicts Across Test Classes)
+
+A test class can only report what *it* saw. When a production class is exercised by several test classes - a view model by its own test and by every screen test that drives it - a mutant surviving one of them means nothing until every class that reached it has spoken: another class may kill it. `ACCUMULATE` moves the verdict out of the test class and into Gradle:
+
+1. Each test class runs its mutations as usual but **fails on nothing**. When it finishes, it writes every mutation it reached with its own verdict (killed and by which tests, survived, timed out, untested) to `build/mutflow/results/<TestClass>.json`. The JSON is written by the same dependency-free writer the Kotlin/Native path uses.
+2. The **`mutflowReport`** task merges those files. Killed by any class wins; a timeout in any class counts as killed (the mutant changed behaviour observably); a mutant survives only if no class that reached it killed it. It prints a summary, writes `build/reports/mutflow/mutation-report.md` (survivors grouped by production class with the test classes that reached each one, timeouts, a per-class score table) and fails the build on survivors.
+
+```kotlin
+mutflow {
+    verificationMode = "ACCUMULATE"   // moves mutation testing out of `test` and into `mutflowTest`
+    failOnSurvivors = true            // whether mutflowReport fails the build (default true)
+}
+```
+
+```bash
+./gradlew mutflowReport   # runs mutflowTest, then merges and judges
+./gradlew test            # baseline only in ACCUMULATE mode: no mutations, no per-class verdicts
+```
+
+`mutflowTest` is a second `Test` task over the same test classes, configured by the `mutflow { }` DSL through the environment; the ordinary `test` task stays with its annotations, except that in `ACCUMULATE` mode it runs the baseline only, since per-class verdicts are meaningless there. Configure `mutflowTest` like any `Test` task (`tasks.named<Test>("mutflowTest") { ... }`) if `test` carries JVM arguments or system properties the mutation run needs too. Without the Gradle plugin, `MUTFLOW_VERIFICATION_MODE=ACCUMULATE` and `MUTFLOW_RESULTS_DIR` do the same for the runtime, and the results files can be merged by any tool.
+
+Mutations are matched across classes by mutation point and variant, which is stable as long as every class ran against the same compiled code - true within one Gradle invocation, which is the precondition of this mode.
 
 ### Suppressing Mutations
 
@@ -454,7 +479,8 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 - **Mutation result tracking** - Killed mutations show as PASSED (exception swallowed), survivors fail the build
 
 **Control**
-- **Verification mode** - `STRICT` (default, survivors fail), `LENIENT` (survivors reported only), `DISABLED` (skip mutations). Configurable per annotation or globally via `MUTFLOW_VERIFICATION_MODE` env var
+- **Verification mode** - `STRICT` (default, survivors fail), `LENIENT` (survivors reported only), `DISABLED` (skip mutations), `ACCUMULATE` (merged verdict across test classes). Configurable per annotation or globally via `MUTFLOW_VERIFICATION_MODE` env var
+- **Merged report across test classes** - `ACCUMULATE` mode plus the `mutflowReport` Gradle task: a mutant survives only if no test class that reached it killed it, with a markdown report of survivors per production class and which classes reached them
 - **`@SuppressMutations`** - Skip mutations on specific classes or functions
 - **Comment-based line suppression** - `// mutflow:ignore` and `// mutflow:falsePositive` to skip individual lines (zero production overhead)
 - **Target filtering** - `includeTargets`/`excludeTargets` to scope mutations by class in integration tests
@@ -559,9 +585,12 @@ DSL, and apply to every target:
 mutflow {
     maxMutationRuns = 20        // default: unlimited (all mutations)
     timeoutMs = 60_000L         // infinite-loop protection deadline
-    verificationMode = "STRICT" // STRICT | LENIENT | DISABLED
+    verificationMode = "STRICT" // STRICT | LENIENT | DISABLED | ACCUMULATE
+    failOnSurvivors = true      // ACCUMULATE only: whether mutflowJvmReport fails the build
 }
 ```
+
+`ACCUMULATE` applies to the `jvm()` target: `mutflowJvmTest` writes per-class results and `mutflowJvmReport` merges them (see [Accumulate Mode](#accumulate-mode-merged-verdicts-across-test-classes)). A native test binary already runs every test class per mutation, so its verdict is the merged one to begin with; the native orchestrator treats `ACCUMULATE` as `STRICT`.
 
 There is no annotation to configure instead: the one on multiplatform test
 classes is generated, so the DSL is the configuration surface. (A plain

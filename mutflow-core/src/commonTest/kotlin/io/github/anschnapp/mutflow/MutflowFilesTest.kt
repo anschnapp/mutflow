@@ -115,6 +115,56 @@ class MutflowFilesTest {
     }
 
     @Test
+    fun sessionResultsJsonListsEveryRecord() {
+        val json = MutflowFiles.buildSessionResultsJson(
+            testClass = "sample.CalculatorTest",
+            records = listOf(
+                MutationRecord("sample.Calculator_0", 0, "(Calculator.kt:5) > → >=", MutationStatus.KILLED, listOf("a", "b")),
+                MutationRecord("sample.Calculator_0", 1, "(Calculator.kt:5) > → <", MutationStatus.SURVIVED)
+            )
+        )
+
+        val expected = "{\"formatVersion\":1,\"testClass\":\"sample.CalculatorTest\",\"mutations\":[\n" +
+            "{\"pointId\":\"sample.Calculator_0\",\"variantIndex\":0,\"displayName\":\"(Calculator.kt:5) > → >=\"," +
+            "\"status\":\"KILLED\",\"killedBy\":[\"a\",\"b\"]},\n" +
+            "{\"pointId\":\"sample.Calculator_0\",\"variantIndex\":1,\"displayName\":\"(Calculator.kt:5) > → <\"," +
+            "\"status\":\"SURVIVED\",\"killedBy\":[]}\n" +
+            "]}\n"
+        assertEquals(expected, json)
+    }
+
+    @Test
+    fun sessionResultsJsonRoundTripsThroughParser() {
+        val records = listOf(
+            MutationRecord("sample.Calculator_0", 0, "(Calculator.kt:5) > → >=", MutationStatus.KILLED, listOf("t1")),
+            MutationRecord("sample.Calculator_0", 1, "(Calculator.kt:5) > → <", MutationStatus.SURVIVED),
+            MutationRecord("sample.Loop_2", 0, "(Loop.kt:9) < → <=", MutationStatus.TIMED_OUT),
+            MutationRecord("sample.Loop_3", 0, "(Loop.kt:11) \"x\" → \"\"", MutationStatus.UNTESTED)
+        )
+
+        val parsed = MutflowFiles.parseSessionResultsJson(
+            MutflowFiles.buildSessionResultsJson("sample.LoopTest", records)
+        )
+
+        assertEquals(SessionResultsContent("sample.LoopTest", records), parsed)
+    }
+
+    @Test
+    fun emptySessionResultsJsonRoundTripsThroughParser() {
+        val json = MutflowFiles.buildSessionResultsJson("sample.EmptyTest", emptyList())
+        assertEquals("{\"formatVersion\":1,\"testClass\":\"sample.EmptyTest\",\"mutations\":[]}\n", json)
+        assertEquals(SessionResultsContent("sample.EmptyTest", emptyList()), MutflowFiles.parseSessionResultsJson(json))
+    }
+
+    @Test
+    fun parserRejectsUnknownMutationStatus() {
+        val json = "{\"formatVersion\":1,\"testClass\":\"t\",\"mutations\":[" +
+            "{\"pointId\":\"p\",\"variantIndex\":0,\"displayName\":\"d\",\"status\":\"MAYBE\",\"killedBy\":[]}]}"
+        val error = assertFailsWith<MutflowFileFormatException> { MutflowFiles.parseSessionResultsJson(json) }
+        assertTrue("MAYBE" in error.message!!, error.message)
+    }
+
+    @Test
     fun parserRejectsUnknownFormatVersion() {
         val json = "{\"formatVersion\":99,\"points\":[]}"
         val e = assertFailsWith<MutflowFileFormatException> {

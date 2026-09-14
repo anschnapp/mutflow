@@ -157,8 +157,8 @@ internal object MutflowKmpSupport {
             }
         }
 
-        val taskName = "mutflow${target.name.replaceFirstChar { it.uppercaseChar() }}Test"
-        project.tasks.register(taskName, Test::class.java) { task ->
+        val capitalized = target.name.replaceFirstChar { it.uppercaseChar() }
+        val mutationTest = project.tasks.register("mutflow${capitalized}Test", Test::class.java) { task ->
             task.group = "verification"
             task.description = "Runs mutflow mutation testing for the '${target.name}' target"
             task.testClassesDirs = mutatedTest.output.classesDirs
@@ -197,6 +197,14 @@ internal object MutflowKmpSupport {
 
             task.onlyIf("mutflow is disabled") { extension.enabled.get() }
         }
+
+        MutflowAccumulate.wire(
+            project = project,
+            extension = extension,
+            testTask = mutationTest,
+            reportTaskName = "mutflow${capitalized}Report",
+            resultsDirectory = project.layout.buildDirectory.dir("mutflow/${target.name}/results")
+        )
     }
 
     private fun configureNativeTarget(
