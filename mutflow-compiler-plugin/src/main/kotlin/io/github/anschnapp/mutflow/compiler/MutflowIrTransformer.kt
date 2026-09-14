@@ -131,6 +131,17 @@ class MutflowIrTransformer(
     private var currentFunction: IrSimpleFunction? = null
     private var isInMutationTarget = false
     private var isInSuppressedScope = false
+
+    // Matched by name, not by the IrDeclarationOrigin constants: the value class ones were
+    // renamed between Kotlin 2.4.10 and 2.4.20, and a constant that does not exist in the
+    // compiler running the plugin is a NoSuchMethodError at compile time.
+    private val generatedMemberOriginNames = setOf(
+        "GENERATED_DATA_CLASS_MEMBER",
+        "GENERATED_INLINE_CLASS_MEMBER",
+        "GENERATED_SINGLE_FIELD_VALUE_CLASS_MEMBER",
+        "GENERATED_FULL_VALUE_CLASS_MEMBER",
+        "GENERATED_MULTI_FIELD_VALUE_CLASS_MEMBER"
+    )
     private var mutationPointCounter = 0
 
     // Tracks how many times the same (lineNumber, originalOperator) pair has been seen
@@ -244,6 +255,15 @@ class MutflowIrTransformer(
 
         // Check for @SuppressMutations on the function
         if (isInMutationTarget && declaration.hasAnnotation(suppressMutationsFqName)) {
+            isInSuppressedScope = true
+        }
+
+        // Compiler-generated members of data and value classes (equals, hashCode, toString,
+        // copy, componentN) hold no logic of the author's, so their mutants are noise. They
+        // are also where instrumentation blows up: the generated equals of a wide data class
+        // compares every property, and one mutation switch per comparison pushes the method
+        // past the JVM's 64 KB limit ("Method too large").
+        if (isInMutationTarget && declaration.origin.name in generatedMemberOriginNames) {
             isInSuppressedScope = true
         }
 

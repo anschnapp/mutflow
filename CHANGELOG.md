@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Fixed
+- Compiler-generated members of data and value classes (`equals`, `hashCode`, `toString`, `copy`, `componentN`) are no longer mutated. They hold no logic of the author's, so their mutants were noise, and instrumenting the generated `equals` of a wide data class failed the build with `MethodTooLargeException`: one mutation switch per property comparison pushes the method past the JVM's 64 KB limit. Traps pinned on such mutations no longer resolve.
+
 ## [1.2.2] - 2026-09-10
 ### Fixed
 - Boolean inversion no longer mutates calls whose result is discarded (`list.add(x)` as a statement). Inverting an unused value is an equivalent mutant that no test can kill; in a run over 652 mutants these accounted for every "ignored" verdict. The inner expressions of such a call are still mutated (`rows.add(x > 0)` keeps its `>` mutations). (#21)
