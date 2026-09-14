@@ -868,6 +868,40 @@ class MutflowIrTransformer(
         val builder = DeclarationIrBuilder(pluginContext, containingFunction.symbol)
         val context = MutationContext(pluginContext, builder, containingFunction)
 
+        // `a && b` / `a || b` chains are left-associative, so the condition of this when is
+        // the whole instrumented chain before it. A variant copies that condition, and the
+        // else branch keeps the original: every level doubles the levels beneath it, and a
+        // ten-term chain is a thousand copies of the first term, past the JVM's 64 KB method
+        // limit. Evaluating the condition once into a temporary keeps it a single copy; the
+        // operand order is unchanged, since `a` runs first in both operators either way.
+        val hoistedCondition = if (original.origin == IrStatementOrigin.ANDAND || original.origin == IrStatementOrigin.OROR) {
+            original.branches.firstOrNull()
+        } else {
+            null
+        }
+        if (hoistedCondition != null) {
+            return builder.irBlock(resultType = pluginContext.irBuiltIns.booleanType) {
+                val left = irTemporary(hoistedCondition.condition, nameHint = "left").also {
+                    it.parent = containingFunction
+                }
+                hoistedCondition.condition = irGet(left)
+                +buildWhenSwitch(original, containingFunction, operator, remainingOperators, builder, context)
+            }
+        }
+        return buildWhenSwitch(original, containingFunction, operator, remainingOperators, builder, context)
+    }
+
+    private fun buildWhenSwitch(
+        original: IrWhen,
+        containingFunction: IrSimpleFunction,
+        operator: WhenMutationOperator,
+        remainingOperators: List<WhenMutationOperator>,
+        builder: DeclarationIrBuilder,
+        context: MutationContext
+    ): IrExpression {
+        val checkFn = checkFunction ?: return original
+        val registryClass = mutationRegistryClass ?: return original
+
         val variants = operator.variants(original, context)
         if (variants.isEmpty()) {
             return transformWhenWithOperators(original, containingFunction, remainingOperators)

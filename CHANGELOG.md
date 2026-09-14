@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Fixed
+- Instrumenting a long `&&`/`||` chain no longer grows exponentially. The chain is left-associative, so each level's condition is the whole instrumented chain beneath it, and the `&&`/`||` swap copied that condition into its variant while the else branch kept the original: every level doubled the levels below. Ten comparisons in a hand-written `equals` failed the build with `MethodTooLargeException`; sixteen ran the compiler out of memory. The condition is now evaluated once into a temporary, which keeps the operand order and makes the instrumented size linear.
+
 ## [1.3.1]
 ### Fixed
 - Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.
