@@ -59,6 +59,12 @@ object MutFlow {
         timeoutMs: Long = 60_000,
         verificationMode: VerificationMode = VerificationMode.STRICT
     ): SessionId {
+        check(sessions.isEmpty()) {
+            "A mutflow session is already open. Mutations are activated in the process-global " +
+                "MutationRegistry, so only one test class at a time can be under mutation. " +
+                "Disable parallel test execution for this task (JUnit parallel execution, or a " +
+                "parallel JUnit 4 suite runner)."
+        }
         val id = SessionId(randomSessionIdValue())
         val session = MutFlowSession(
             id = id,

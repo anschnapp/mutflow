@@ -599,4 +599,34 @@ class MutFlowTest {
 
         MutFlow.closeSession(sessionId)
     }
+
+    // ==================== Session overlap guard ====================
+
+    @Test
+    fun `createSession rejects a second session while one is open`() {
+        val sessionId = newSession()
+
+        val error = assertFailsWith<IllegalStateException> { newSession() }
+        assertTrue(
+            error.message!!.contains("already open"),
+            "Expected a message about an open session, got: ${error.message}"
+        )
+
+        MutFlow.closeSession(sessionId)
+    }
+
+    @Test
+    fun `createSession succeeds again once the previous session is closed`() {
+        MutFlow.closeSession(newSession())
+
+        val second = newSession()
+
+        MutFlow.closeSession(second)
+    }
+
+    private fun newSession(): SessionId = MutFlow.createSession(
+        selection = Selection.MostLikelyStable,
+        shuffle = Shuffle.PerChange,
+        maxRuns = 1
+    )
 }
