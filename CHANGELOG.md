@@ -1,4 +1,8 @@
 # Changelog
+## [Unreleased]
+### Added
+- **JUnit 4 integration**: the new `mutflow-junit4` artifact provides `@RunWith(MutFlowRunner::class)`, the JUnit 4 counterpart of `@MutFlowTest` (same run loop, same `MUTFLOW_*` environment overrides, same STRICT/LENIENT/DISABLED modes and partial-run detection). An optional `@MutFlowTest(wrapTestMethods = true)` wraps whole test methods so an existing suite needs no `MutFlow.underTest {}` calls, and the run loop (`MutFlowRun`) is reusable from runners with their own threading such as Robolectric. Depends on `mutflow-runtime` and `junit:junit` only; JUnit 6 users do not pick it up. (#22)
+
 ## [1.2.2] - 2026-09-10
 ### Fixed
 - Boolean inversion no longer mutates calls whose result is discarded (`list.add(x)` as a statement). Inverting an unused value is an equivalent mutant that no test can kill; in a run over 652 mutants these accounted for every "ignored" verdict. The inner expressions of such a call are still mutated (`rows.add(x > 0)` keeps its `>` mutations). (#21)

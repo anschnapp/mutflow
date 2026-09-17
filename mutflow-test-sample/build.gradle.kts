@@ -14,6 +14,8 @@ dependencies {
     kotlinCompilerPluginClasspath(project(":mutflow-compiler-plugin"))
 
     testImplementation(project(":mutflow-junit6"))
+    testImplementation(project(":mutflow-junit4"))
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:${property("junitVersion")}")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:${property("junitVersion")}")
 }
