@@ -1,7 +1,17 @@
 # Changelog
-## [Unreleased]
+## [1.3.1
 ### Fixed
 - Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.
+
+## [1.3.0]
+### Added
+- **JUnit 4 integration**: the new `mutflow-junit4` artifact provides `@RunWith(MutFlowRunner::class)`, the JUnit 4 counterpart of `@MutFlowTest` (same run loop, same `MUTFLOW_*` environment overrides, same STRICT/LENIENT/DISABLED modes and partial-run detection). An optional `@MutFlowTest(wrapTestMethods = true)` wraps whole test methods so an existing suite needs no `MutFlow.underTest {}` calls, and the run loop (`MutFlowRun`) is reusable from runners with their own threading such as Robolectric. Depends on `mutflow-runtime` and `junit:junit` only; JUnit 6 users do not pick it up. The Gradle plugin does not wire this artifact up yet, so declare `mutflow-junit4` and the vintage engine yourself for now; plugin support is planned. (#22, #26)
+
+### Changed
+- Opening a mutflow session while another one is open now fails immediately instead of producing meaningless verdicts. Mutations are activated in the process-global `MutationRegistry`, so two overlapping sessions in one JVM mutate each other's runs. Sequential execution is unaffected, including test tasks that mix JUnit 4 and JUnit 6 mutflow classes; only parallel execution inside a single JVM is.
+
+### Contributors
+Thanks to @rikshot for the JUnit 4 integration, a fine piece of engineering. JUnit 4 still carries an enormous number of suites, especially Android and Robolectric.
 
 ## [1.2.2] - 2026-09-10
 ### Fixed
