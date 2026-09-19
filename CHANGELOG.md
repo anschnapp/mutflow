@@ -1,5 +1,5 @@
 # Changelog
-## [1.3.1
+## [1.3.1]
 ### Fixed
 - Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.
 
