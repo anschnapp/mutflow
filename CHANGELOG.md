@@ -1,4 +1,8 @@
 # Changelog
+## [1.3.1
+### Fixed
+- Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.
+
 ## [1.3.0]
 ### Added
 - **JUnit 4 integration**: the new `mutflow-junit4` artifact provides `@RunWith(MutFlowRunner::class)`, the JUnit 4 counterpart of `@MutFlowTest` (same run loop, same `MUTFLOW_*` environment overrides, same STRICT/LENIENT/DISABLED modes and partial-run detection). An optional `@MutFlowTest(wrapTestMethods = true)` wraps whole test methods so an existing suite needs no `MutFlow.underTest {}` calls, and the run loop (`MutFlowRun`) is reusable from runners with their own threading such as Robolectric. Depends on `mutflow-runtime` and `junit:junit` only; JUnit 6 users do not pick it up. The Gradle plugin does not wire this artifact up yet, so declare `mutflow-junit4` and the vintage engine yourself for now; plugin support is planned. (#22, #26)

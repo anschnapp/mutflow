@@ -444,14 +444,22 @@ class MutflowIrTransformer(
             call.arguments[0] = builder.irGetObject(registryClass)
         }
 
-        // A `for` loop is already lowered to a while loop whose body block must start with the
-        // loop-variable declarations (`val x = iterator.next()`): ForLoopsLowering pattern-matches
-        // them and fails with "No 'next' statement in for-loop" if anything precedes them.
-        // Insert the check after those declarations instead of wrapping the body.
+        // A block body keeps its own scope: the check goes inside it, never around it.
+        // Wrapping would push the body's declarations into an inner scope, and a do-while
+        // condition may read one of them (`do { val next = it.next() } while (next != null)`),
+        // which then fails in codegen with "No mapping for symbol".
         val bodyBlock = body as? IrContainerExpression
-        if (loop.origin == IrStatementOrigin.FOR_LOOP_INNER_WHILE && bodyBlock != null) {
-            val insertAt = bodyBlock.statements.indexOfFirst { it !is IrVariable }
-                .let { if (it < 0) bodyBlock.statements.size else it }
+        if (bodyBlock != null) {
+            // A `for` loop is lowered to a while loop whose body block must start with the
+            // loop-variable declarations (`val x = iterator.next()`): ForLoopsLowering
+            // pattern-matches them and fails with "No 'next' statement in for-loop" if
+            // anything precedes them, so the check goes after those declarations.
+            val insertAt = if (loop.origin == IrStatementOrigin.FOR_LOOP_INNER_WHILE) {
+                bodyBlock.statements.indexOfFirst { it !is IrVariable }
+                    .let { if (it < 0) bodyBlock.statements.size else it }
+            } else {
+                0
+            }
             bodyBlock.statements.add(insertAt, checkCall)
             return
         }
