@@ -2,6 +2,8 @@
 ## [Unreleased]
 ### Fixed
 - Compiler-generated members of data and value classes (`equals`, `hashCode`, `toString`, `copy`, `componentN`) are no longer mutated. They hold no logic of the author's, so their mutants were noise, and instrumenting the generated `equals` of a wide data class failed the build with `MethodTooLargeException`: one mutation switch per property comparison pushes the method past the JVM's 64 KB limit. Traps pinned on such mutations no longer resolve.
+- Default property accessors are no longer mutated. The `return field` getter the compiler writes for a plain `val flag: Boolean` collected a boolean-return mutant whose display name pointed at the property's declaration line, so a survivor read as a `return` on a line with no return on it, and no test could kill it. A property with an author-written `get()` body keeps all of its mutations.
+- Members generated for `by` delegation are no longer mutated. Their whole body is a forward to the delegate, and the mutant was reported on the class header line.
 
 ## [1.2.2] - 2026-09-10
 ### Fixed
