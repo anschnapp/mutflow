@@ -203,8 +203,9 @@ The runner performs the baseline run and one run per mutation, stops a mutation 
 failing test, and reports each mutation run as a test named `Mutation: (Calculator.kt:7) > → >=`
 that fails when the mutant survives (STRICT) or timed out. The optional
 `@MutFlowTest(...)` annotation from the `junit4` package carries the same settings as the JUnit 6
-one, with the same `MUTFLOW_*` environment overrides. Partial runs (one test picked in the IDE)
-skip mutation testing as on JUnit 6.
+one, with the same `MUTFLOW_*` environment overrides, and every test method runs under the same
+[wall-clock budget](#test-budget-hangs-outside-loops), rules and `@Before`/`@After` excluded.
+Partial runs (one test picked in the IDE) skip mutation testing as on JUnit 6.
 
 An existing suite can be mutation-tested without touching its tests: `@MutFlowTest(wrapTestMethods = true)`
 wraps every test method, including rules and `@Before`/`@After`, in `underTest`. Such tests must
@@ -213,8 +214,9 @@ not call `MutFlow.underTest {}` themselves, as the blocks do not nest.
 The run loop is a plain class, `MutFlowRun`, so a runner with its own threading can reuse it. A
 Robolectric runner, whose test bodies execute on a sandbox thread where the thread-keyed
 `MutFlow.underTest` finds no session, is its `RobolectricTestRunner` with `methodBlock` passed
-through `MutFlowRun.wrap` and `run` through `MutFlowRun.run`; the sandbox must also be told not to
-load the `io.github.anschnapp.mutflow` package into its own class loader.
+through `MutFlowRun.wrap`, `methodInvoker` through `MutFlowRun.budget` and `run` through
+`MutFlowRun.run`; the sandbox must also be told not to load the `io.github.anschnapp.mutflow`
+package into its own class loader.
 
 ### Example Output
 
@@ -322,7 +324,7 @@ budget = baseline duration × testBudgetFactor + testBudgetSlackMs     (default:
 @MutFlowTest(testBudgetFactor = 0)                             // budget off, loop check only
 ```
 
-The `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override the annotation values. The budget covers the test method itself (not `@BeforeEach`/`@AfterEach`), on the JVM only: a hung Kotlin/Native run is a hung process, which the Gradle orchestrator's process timeout already kills.
+The `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override the annotation values. The budget covers the test method itself (not `@BeforeEach`/`@AfterEach`; on JUnit 4 not rules or `@Before`/`@After`), on the JVM only: a hung Kotlin/Native run is a hung process, which the Gradle orchestrator's process timeout already kills.
 
 ### Traps (Pinning Mutations)
 
