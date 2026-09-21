@@ -25,6 +25,8 @@ tasks.withType<KotlinCompilationTask<*>>().configureEach {
     compilerOptions {
         val pluginJarPath = compilerPluginJar.get().outputs.files.singleFile.absolutePath
         freeCompilerArgs.add("-Xplugin=$pluginJarPath")
+        // The pattern route to a file's top-level declarations; PatternTopLevelTarget.kt carries no annotation.
+        freeCompilerArgs.addAll("-P", "plugin:io.github.anschnapp.mutflow:target=sample.PatternTopLevelTargetKt")
     }
 }
 
