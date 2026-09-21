@@ -108,6 +108,8 @@ mutflow {
 
 Both can be combined freely. If a class matches either mechanism, it will be mutated. The Gradle config is useful when you prefer not to annotate production code with test-related annotations.
 
+**Top-level functions and properties** belong to no class. They are targeted through the file: `@file:MutationTarget` at the top of the file, or a pattern naming the file's facade class, which is the file name with a `Kt` suffix (`com.example.StringUtilsKt` for `StringUtils.kt`) or the `@file:JvmName` name when the file declares one. The classes declared in such a file are not included; each is a target of its own, as a nested class is not covered by its outer class.
+
 ### Disabling Mutation Testing
 
 You can completely disable mutation testing without removing the plugin. When disabled, no compiler plugin is registered and no extra compilation happens - zero overhead.

@@ -1,4 +1,11 @@
 # Changelog
+## [Unreleased]
+### Added
+- Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name. Classes declared in the file stay targets of their own.
+
+### Fixed
+- Mutation ids restart from zero after a nested mutation target. Entering a target class reset the point counter and did not restore it, so a class with a nested `@MutationTarget` class numbered the points after the nested class from zero again, colliding with the ones before it. The counter and the per-line occurrence table are now restored when the nested target is left.
+
 ## [1.3.1]
 ### Fixed
 - Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.

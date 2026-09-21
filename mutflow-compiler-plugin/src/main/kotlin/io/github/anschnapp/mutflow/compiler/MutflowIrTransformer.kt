@@ -26,7 +26,9 @@ import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
+import org.jetbrains.kotlin.load.kotlin.PackagePartClassUtils
 import org.jetbrains.kotlin.name.Name
+import java.io.File
 
 /**
  * IR transformer that injects mutation points into @MutationTarget classes.
@@ -101,10 +103,19 @@ class MutflowIrTransformer(
                 .replace("\u0000", ".*")   // ** matches any depth
             Regex("^$regex$")
         }
+
+        /**
+         * The class the JVM backend puts a file's top-level declarations into: the `@file:JvmName`
+         * name when there is one, otherwise the file name with a `Kt` suffix (`string-utils.kt`
+         * becomes `String_utilsKt`, as the backend does it). Target patterns name this class.
+         */
+        fun facadeClassName(fileName: String, jvmName: String?): String =
+            jvmName ?: PackagePartClassUtils.getFilePartShortName(File(fileName).name)
     }
 
     private val mutationTargetFqName = FqName("io.github.anschnapp.mutflow.MutationTarget")
     private val suppressMutationsFqName = FqName("io.github.anschnapp.mutflow.SuppressMutations")
+    private val jvmNameFqName = FqName("kotlin.jvm.JvmName")
     private val mutationRegistryFqName = FqName("io.github.anschnapp.mutflow.MutationRegistry")
 
     private val mutationRegistryClass: IrClassSymbol? by lazy {
@@ -128,6 +139,7 @@ class MutflowIrTransformer(
     // State tracking during transformation
     private var currentFile: IrFile? = null
     private var currentClass: IrClass? = null
+    private var currentFacadeFqName: String? = null
     private var currentFunction: IrSimpleFunction? = null
     private var isInMutationTarget = false
     private var isInSuppressedScope = false
@@ -191,10 +203,40 @@ class MutflowIrTransformer(
     override fun visitFile(declaration: IrFile): IrFile {
         debug("visitFile: ${declaration.fileEntry.name}")
         val previousFile = currentFile
+        val previousFacadeFqName = currentFacadeFqName
+        val wasMutationTarget = isInMutationTarget
+        val previousSuppressedLines = suppressedLines
         currentFile = declaration
+
+        // Top-level functions and properties sit directly in the file, not in any class, so a
+        // target entered through visitClass never covers them. They are targeted through the
+        // file: `@file:MutationTarget`, or a pattern naming the facade class the backend compiles
+        // them into. The classes declared in the file are not part of it; each is its own target,
+        // exactly as a nested class is not covered by its outer class.
+        val facadeFqName = facadeFqName(declaration)
+        currentFacadeFqName = facadeFqName
+        isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName) || matchesTargetPattern(facadeFqName)
+        debug("  facade: $facadeFqName, isInMutationTarget: $isInMutationTarget")
+        if (isInMutationTarget) {
+            mutationPointCounter = 0
+            lineOperatorOccurrences.clear()
+            suppressedLines = parseSuppressedLines(declaration.fileEntry.name)
+            debug("  -> WILL TRANSFORM the top-level declarations of this file!")
+        }
+
         val result = super.visitFile(declaration)
+
         currentFile = previousFile
+        currentFacadeFqName = previousFacadeFqName
+        isInMutationTarget = wasMutationTarget
+        suppressedLines = previousSuppressedLines
         return result
+    }
+
+    private fun facadeFqName(file: IrFile): String {
+        val jvmName = file.getAnnotation(jvmNameFqName)?.arguments?.firstOrNull()?.let { (it as? IrConst)?.value as? String }
+        val shortName = facadeClassName(file.fileEntry.name, jvmName)
+        return if (file.packageFqName.isRoot) shortName else "${file.packageFqName.asString()}.$shortName"
     }
 
     override fun visitClass(declaration: IrClass): IrStatement {
@@ -205,9 +247,14 @@ class MutflowIrTransformer(
         val wasSuppressed = isInSuppressedScope
         val previousSuppressedLines = suppressedLines
         val previousClass = currentClass
+        // A target nested in another (a class in a targeted file, a nested target class) starts
+        // its own numbering; the enclosing target's must resume where it left off, or the points
+        // after the nested one collide with those before it.
+        val previousPointCounter = mutationPointCounter
+        val previousLineOperatorOccurrences = lineOperatorOccurrences.toMap()
 
         isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName)
-                || matchesTargetPattern(declaration)
+                || matchesTargetPattern(declaration.fqNameWhenAvailable?.asString())
         currentClass = declaration
 
         debug("  isInMutationTarget: $isInMutationTarget")
@@ -232,6 +279,9 @@ class MutflowIrTransformer(
         isInSuppressedScope = wasSuppressed
         suppressedLines = previousSuppressedLines
         currentClass = previousClass
+        mutationPointCounter = previousPointCounter
+        lineOperatorOccurrences.clear()
+        lineOperatorOccurrences.putAll(previousLineOperatorOccurrences)
 
         return result
     }
@@ -1022,14 +1072,13 @@ class MutflowIrTransformer(
      * Supports glob-style patterns: exact match, single-segment wildcard (*), and
      * multi-segment wildcard (**).
      */
-    private fun matchesTargetPattern(declaration: IrClass): Boolean {
-        if (compiledTargetPatterns.isEmpty()) return false
-        val fqName = declaration.fqNameWhenAvailable?.asString() ?: return false
+    private fun matchesTargetPattern(fqName: String?): Boolean {
+        if (compiledTargetPatterns.isEmpty() || fqName == null) return false
         return compiledTargetPatterns.any { it.matches(fqName) }
     }
 
     private fun generatePointId(): String {
-        val className = currentClass?.fqNameWhenAvailable?.asString() ?: "unknown"
+        val className = currentClass?.fqNameWhenAvailable?.asString() ?: currentFacadeFqName ?: "unknown"
         return "${className}_${mutationPointCounter++}"
     }
 
