@@ -1,4 +1,10 @@
 # Changelog
+## [Unreleased]
+### Fixed
+- Compiler-generated members of data and value classes (`equals`, `hashCode`, `toString`, `copy`, `componentN`) are no longer mutated. They hold no logic of the author's, so their mutants were noise, and instrumenting the generated `equals` of a wide data class failed the build with `MethodTooLargeException`: one mutation switch per property comparison pushes the method past the JVM's 64 KB limit. Traps pinned on such mutations no longer resolve.
+- Default property accessors are no longer mutated. The `return field` getter the compiler writes for a plain `val flag: Boolean` collected a boolean-return mutant whose display name pointed at the property's declaration line, so a survivor read as a `return` on a line with no return on it, and no test could kill it. A property with an author-written `get()` body keeps all of its mutations.
+- Members generated for `by` delegation are no longer mutated. Their whole body is a forward to the delegate, and the mutant was reported on the class header line.
+
 ## [1.3.1]
 ### Fixed
 - Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.

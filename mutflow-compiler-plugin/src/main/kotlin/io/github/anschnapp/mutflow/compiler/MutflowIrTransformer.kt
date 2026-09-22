@@ -131,6 +131,24 @@ class MutflowIrTransformer(
     private var currentFunction: IrSimpleFunction? = null
     private var isInMutationTarget = false
     private var isInSuppressedScope = false
+
+    // Origins of members the compiler writes for the author, in any class. Matched by name,
+    // not by the IrDeclarationOrigin constants: the value class ones were renamed between
+    // Kotlin 2.4.10 and 2.4.20, and a constant that does not exist in the compiler running
+    // the plugin is a NoSuchMethodError at compile time.
+    //
+    // An author-written member never carries one of these origins. `equals` spelled out by
+    // hand is DEFINED, and so is a property with its own `get() = ...` body, so overriding
+    // a generated member brings its mutations back.
+    private val compilerGeneratedOriginNames = setOf(
+        "GENERATED_DATA_CLASS_MEMBER",
+        "GENERATED_INLINE_CLASS_MEMBER",
+        "GENERATED_SINGLE_FIELD_VALUE_CLASS_MEMBER",
+        "GENERATED_FULL_VALUE_CLASS_MEMBER",
+        "GENERATED_MULTI_FIELD_VALUE_CLASS_MEMBER",
+        "DEFAULT_PROPERTY_ACCESSOR",
+        "DELEGATED_MEMBER"
+    )
     private var mutationPointCounter = 0
 
     // Tracks how many times the same (lineNumber, originalOperator) pair has been seen
@@ -244,6 +262,16 @@ class MutflowIrTransformer(
 
         // Check for @SuppressMutations on the function
         if (isInMutationTarget && declaration.hasAnnotation(suppressMutationsFqName)) {
+            isInSuppressedScope = true
+        }
+
+        // Members the compiler wrote, not the author: data/value class members, the
+        // `return field` getter behind a plain property, `by` delegation forwarders.
+        // Their mutants land on a declaration line with no such code on it, so no test
+        // can kill them, and selection serves least-touched points first, so the noise
+        // eats the run budget. The generated equals of a wide data class is also where
+        // one switch per property comparison breaks the JVM's 64 KB method limit.
+        if (isInMutationTarget && declaration.origin.name in compilerGeneratedOriginNames) {
             isInSuppressedScope = true
         }
 
