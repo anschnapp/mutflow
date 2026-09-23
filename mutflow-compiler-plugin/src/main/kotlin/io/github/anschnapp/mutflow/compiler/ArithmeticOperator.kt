@@ -35,7 +35,7 @@ import org.jetbrains.kotlin.name.Name
  * ```
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class ArithmeticOperator : MutationOperator {
+class ArithmeticOperator : MutationOperator<IrCall> {
 
     companion object {
         private val SUPPORTED_ORIGINS = setOf(
@@ -47,11 +47,11 @@ class ArithmeticOperator : MutationOperator {
         )
     }
 
-    override fun matches(call: IrCall): Boolean {
-        return call.origin in SUPPORTED_ORIGINS
+    override fun matches(node: IrCall): Boolean {
+        return node.origin in SUPPORTED_ORIGINS
     }
 
-    override fun originalDescription(call: IrCall): String {
+    private fun originalDescription(call: IrCall): String {
         return when (call.origin) {
             IrStatementOrigin.PLUS -> "+"
             IrStatementOrigin.MINUS -> "-"
@@ -62,13 +62,15 @@ class ArithmeticOperator : MutationOperator {
         }
     }
 
-    override fun variants(call: IrCall, context: MutationContext): List<MutationOperator.Variant> {
-        val left = call.arguments[0] ?: return emptyList()
-        val right = call.arguments[1] ?: return emptyList()
-
-        val leftType = left.type
-        val rightType = right.type
-        val resultType = call.type
+    /**
+     * Mutates over the operands: `a + b + c` is `(a + b) + c`, so a variant that copied its
+     * left operand would copy the whole instrumented chain beneath it, doubling the code per
+     * term. Both operands are always evaluated, so they can be hoisted instead.
+     */
+    override fun mutation(node: IrCall, context: MutationContext): Mutation? {
+        val left = node.arguments[0] ?: return null
+        val right = node.arguments[1] ?: return null
+        val resultType = node.type
 
         // For arithmetic operations, we can look up the replacement function
         // by examining the original call's symbol and finding the equivalent
@@ -76,14 +78,13 @@ class ArithmeticOperator : MutationOperator {
         //
         // The original call symbol tells us which overload is being used,
         // so we find the same overload for the replacement operator.
-        val originalSymbol = call.symbol
+        val originalSymbol = node.symbol
         val originalFunctionName = originalSymbol.owner.name.asString()
-        val dispatchReceiver = call.dispatchReceiver
 
         // Get the class that declares this function
         val declaringClassId = originalSymbol.owner.parent.let { parent ->
             (parent as? org.jetbrains.kotlin.ir.declarations.IrClass)?.classId
-        } ?: return emptyList()
+        } ?: return null
 
         // Find the replacement function with same parameter signature
         fun findFunction(name: String): IrSimpleFunctionSymbol? {
@@ -94,81 +95,48 @@ class ArithmeticOperator : MutationOperator {
             return context.pluginContext.referenceFunctions(callableId).firstOrNull()
         }
 
-        val plusFn = findFunction("plus")
-        val minusFn = findFunction("minus")
-        val timesFn = findFunction("times")
-        val divFn = findFunction("div")
+        fun swapTo(description: String, fn: IrSimpleFunctionSymbol) =
+            Mutation.OverOperands.Variant(description) { operands ->
+                context.builder.irCall(fn).also {
+                    it.arguments[0] = operands[0]
+                    it.arguments[1] = operands[1]
+                }
+            }
 
-        return when (call.origin) {
-            IrStatementOrigin.PLUS -> {
-                // + → -
-                listOfNotNull(
-                    minusFn?.let { fn ->
-                        MutationOperator.Variant("-") {
-                            context.builder.irCall(fn).also {
-                                it.arguments[0] = left.deepCopyWithSymbols()
-                                it.arguments[1] = right.deepCopyWithSymbols()
-                            }
-                        }
-                    }
-                )
+        val variant = when (node.origin) {
+            // + → -
+            IrStatementOrigin.PLUS -> findFunction("minus")?.let { swapTo("-", it) }
+            // - → +
+            IrStatementOrigin.MINUS -> findFunction("plus")?.let { swapTo("+", it) }
+            // * → / with safe division to avoid div-by-zero
+            IrStatementOrigin.MUL -> findFunction("div")?.let { fn ->
+                Mutation.OverOperands.Variant("/") { operands ->
+                    createSafeDivision(node, operands, fn, resultType, context)
+                }
             }
-            IrStatementOrigin.MINUS -> {
-                // - → +
-                listOfNotNull(
-                    plusFn?.let { fn ->
-                        MutationOperator.Variant("+") {
-                            context.builder.irCall(fn).also {
-                                it.arguments[0] = left.deepCopyWithSymbols()
-                                it.arguments[1] = right.deepCopyWithSymbols()
-                            }
-                        }
-                    }
-                )
-            }
-            IrStatementOrigin.MUL -> {
-                // * → / with safe division to avoid div-by-zero
-                listOfNotNull(
-                    divFn?.let { fn ->
-                        MutationOperator.Variant("/") {
-                            createSafeDivision(left, right, fn, resultType, context)
-                        }
-                    }
-                )
-            }
-            IrStatementOrigin.DIV -> {
-                // / → *
-                listOfNotNull(
-                    timesFn?.let { fn ->
-                        MutationOperator.Variant("*") {
-                            context.builder.irCall(fn).also {
-                                it.arguments[0] = left.deepCopyWithSymbols()
-                                it.arguments[1] = right.deepCopyWithSymbols()
-                            }
-                        }
-                    }
-                )
-            }
-            IrStatementOrigin.PERC -> {
-                // % → /
-                listOfNotNull(
-                    divFn?.let { fn ->
-                        MutationOperator.Variant("/") {
-                            context.builder.irCall(fn).also {
-                                it.arguments[0] = left.deepCopyWithSymbols()
-                                it.arguments[1] = right.deepCopyWithSymbols()
-                            }
-                        }
-                    }
-                )
-            }
-            else -> emptyList()
-        }
+            // / → *
+            IrStatementOrigin.DIV -> findFunction("times")?.let { swapTo("*", it) }
+            // % → /
+            IrStatementOrigin.PERC -> findFunction("div")?.let { swapTo("/", it) }
+            else -> null
+        } ?: return null
+
+        return Mutation.OverOperands(
+            originalDescription = originalDescription(node),
+            operands = listOf(left, right),
+            original = { operands ->
+                node.arguments[0] = operands[0]
+                node.arguments[1] = operands[1]
+                node
+            },
+            variants = listOf(variant)
+        )
     }
 
     /**
      * Creates a safe division expression that avoids division by zero.
      *
+     * The operands are already evaluated once, so reading them repeatedly is free.
      * Generates:
      * ```
      * when {
@@ -179,68 +147,54 @@ class ArithmeticOperator : MutationOperator {
      * ```
      */
     private fun createSafeDivision(
-        left: IrExpression,
-        right: IrExpression,
+        original: IrCall,
+        operands: Operands,
         divFn: IrSimpleFunctionSymbol,
         resultType: IrType,
         context: MutationContext
     ): IrExpression {
         val builder = context.builder
 
-        return builder.irBlock(resultType = resultType) {
-            // Evaluate left and right once, store in temporaries
-            val leftVar = irTemporary(left.deepCopyWithSymbols(), nameHint = "left").also {
-                it.parent = context.containingFunction
-            }
-            val rightVar = irTemporary(right.deepCopyWithSymbols(), nameHint = "right").also {
-                it.parent = context.containingFunction
-            }
+        val zero = createZeroConstant(resultType)
+        val one = createOneConstant(resultType)
 
-            val zero = createZeroConstant(resultType)
-            val one = createOneConstant(resultType)
+        fun divide(dividend: Int, divisor: Int) = builder.irCall(divFn).also {
+            it.arguments[0] = operands[dividend]
+            it.arguments[1] = operands[divisor]
+        }
 
-            if (zero == null || one == null) {
-                // Fallback: just do the division (shouldn't happen for numeric types)
-                +builder.irCall(divFn).also {
-                    it.arguments[0] = irGet(leftVar)
-                    it.arguments[1] = irGet(rightVar)
-                }
-            } else {
-                +IrWhenImpl(
-                    startOffset = left.startOffset,
-                    endOffset = right.endOffset,
-                    type = resultType,
-                    origin = null
-                ).apply {
-                    // Branch 1: b != 0 -> a / b
-                    branches += IrBranchImpl(
-                        startOffset = left.startOffset,
-                        endOffset = right.endOffset,
-                        condition = builder.irNotEquals(irGet(rightVar), zero.deepCopyWithSymbols()),
-                        result = builder.irCall(divFn).also {
-                            it.arguments[0] = irGet(leftVar)
-                            it.arguments[1] = irGet(rightVar)
-                        }
-                    )
-                    // Branch 2: a != 0 -> b / a (b is 0, so 0 / a = 0)
-                    branches += IrBranchImpl(
-                        startOffset = left.startOffset,
-                        endOffset = right.endOffset,
-                        condition = builder.irNotEquals(irGet(leftVar), zero.deepCopyWithSymbols()),
-                        result = builder.irCall(divFn).also {
-                            it.arguments[0] = irGet(rightVar)
-                            it.arguments[1] = irGet(leftVar)
-                        }
-                    )
-                    // Else: both are 0 -> return 1
-                    branches += IrElseBranchImpl(
-                        startOffset = left.startOffset,
-                        endOffset = right.endOffset,
-                        condition = builder.irTrue(),
-                        result = one.deepCopyWithSymbols()
-                    )
-                }
-            }
+        if (zero == null || one == null) {
+            // Fallback: just do the division (shouldn't happen for numeric types)
+            return divide(0, 1)
+        }
+
+        return IrWhenImpl(
+            startOffset = original.startOffset,
+            endOffset = original.endOffset,
+            type = resultType,
+            origin = null
+        ).apply {
+            // Branch 1: b != 0 -> a / b
+            branches += IrBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irNotEquals(operands[1], zero.deepCopyWithSymbols()),
+                result = divide(0, 1)
+            )
+            // Branch 2: a != 0 -> b / a (b is 0, so 0 / a = 0)
+            branches += IrBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irNotEquals(operands[0], zero.deepCopyWithSymbols()),
+                result = divide(1, 0)
+            )
+            // Else: both are 0 -> return 1
+            branches += IrElseBranchImpl(
+                startOffset = original.startOffset,
+                endOffset = original.endOffset,
+                condition = builder.irTrue(),
+                result = one
+            )
         }
     }
 

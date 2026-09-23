@@ -54,35 +54,91 @@ class Calculator {
 @MutationTarget
 class Calculator {
     fun isPositive(x: Int): Boolean {
-        // Compiler injects nested when expressions for multiple mutation types
-        return when (MutationRegistry.check(
-            pointId = "sample.Calculator_0",
-            variantCount = 2,
-            sourceLocation = "Calculator.kt:4",
-            originalOperator = ">",
-            variantOperators = ">=,<",
-            occurrenceOnLine = 1
-        )) {
-            0 -> x >= 0  // operator mutation: include equality
-            1 -> x < 0   // operator mutation: direction flip
-            else -> when (MutationRegistry.check(
+        return run {
+            // one check() per mutation point, before anything else runs
+            val mutflowVariant0 = MutationRegistry.check(
+                pointId = "sample.Calculator_0",
+                variantCount = 2,
+                sourceLocation = "Calculator.kt:4",
+                originalOperator = ">",
+                variantOperators = ">=,<",
+                occurrenceOnLine = 1
+            )
+            val mutflowVariant1 = MutationRegistry.check(
                 pointId = "sample.Calculator_1",
                 variantCount = 2,
                 sourceLocation = "Calculator.kt:4",
                 originalOperator = "0",
                 variantOperators = "1,-1",
                 occurrenceOnLine = 1
-            )) {
-                0 -> x > 1   // constant mutation: increment
-                1 -> x > -1  // constant mutation: decrement
-                else -> x > 0  // original
+            )
+            when {
+                mutflowVariant0 == 0 -> x >= 0  // operator mutation: include equality
+                mutflowVariant0 == 1 -> x < 0   // operator mutation: direction flip
+                mutflowVariant1 == 0 -> x > 1   // constant mutation: increment
+                mutflowVariant1 == 1 -> x > -1  // constant mutation: decrement
+                else -> x > 0                   // original
             }
         }
     }
 }
 ```
 
-This nested structure is generated recursively by the compiler plugin. Each matching `MutationOperator` wraps the expression, with the `else` branch feeding into the next operator. Since only one mutation is active at runtime, there's no complexity - the active mutation's branch executes, all others fall through to original.
+The plugin works bottom-up, so by the time a node is instrumented its operands already are. Two operators match `x > 0` here, the relational one and the constant boundary one, and both share one `when`. `x` and `0` are cheap to read, so they are simply restated in every branch. An operand like `f()` would be evaluated once into a temporary instead (see the next section). Since only one mutation is active at runtime, there's no complexity - the active mutation's branch executes, all others fall through to the original.
+
+### How a Mutation Is Emitted: Three Shapes
+
+The idea of mutant schemata leaves one choice open: how the original and its variants sit next to each other in the emitted code. At runtime it makes no difference, only one path runs. It does decide how large the compiled method gets.
+
+The obvious way is a `when` with the original in `else` and a standalone copy of the node in every variant branch. That breaks down on chains. In `f1() + f2() + f3()` the left operand of the second `+` is the first `+`, already instrumented. A variant that copies its operand copies the whole switch inside it, so each term doubles the code: a 16-term sum ends up with 98 302 leaf operands instead of 16 and fails with `MethodTooLargeException`, and a 16-term `&&` chain runs the compiler out of heap.
+
+So every mutation has to answer one question: **where do the node's operands live, if the original and the variants all need them?**
+
+```
+                Does a variant reuse the node's operands?
+                  │                                   │
+                  no                                  yes
+                  │                                   │
+                  ▼                                   ▼
+               Replace                 Is every operand always evaluated?
+     true, false, null, {}, !flag            │                     │
+                                             yes                   no
+                                             │                     │
+                                             ▼                     ▼
+                                       OverOperands              Fused
+                                 + - * / %  > >=  == !=         &&  ||
+                                   !isValid()  throw
+```
+
+- **Replace**: the variant has nothing to do with the operands (a constant, an empty body, a negated variable). Nothing to share means nothing to copy, so the plain switch is fine:
+  ```kotlin
+  // return isAdult(age)
+  return when {
+      check(p) == 0 -> true
+      check(p) == 1 -> false
+      else -> isAdult(age)
+  }
+  ```
+- **OverOperands**: every operand always runs, whichever variant is active. So each one is evaluated once, into a temporary, and the original and every variant are built over reads of it:
+  ```kotlin
+  // f1() + f2()
+  run {
+      val v = check(p)
+      val o1 = f1()
+      val o2 = f2()
+      when { v == 0 -> o1 - o2; else -> o1 + o2 }
+  }
+  ```
+- **Fused**: the right operand of `&&` and `||` may never run (`user != null && user.isAdmin`), so it can't be hoisted. Instead one expression is both the original and the mutant, steered by a flag:
+  ```kotlin
+  // a && b         (for a || b the flag is negated)
+  run {
+      val active = check(p) == 0
+      when { (a != active) -> b; else -> active }   // active = false: a && b, true: a || b
+  }
+  ```
+
+Each operator answers the question itself by returning one of the three subtypes of the sealed `Mutation` from `MutationOperator<T>.mutation()`. The transformer only knows how to emit the three shapes. Because no shape copies its operands, every mutated node adds one block around children that each appear exactly once, and the emitted code grows linearly with the source. Every operand is still evaluated exactly once and in source order, and `b` in `a && b` is skipped exactly when the active operator would skip it.
 
 ### Runtime Discovery Model
 
@@ -556,12 +612,11 @@ The environment variable override is intentional: it allows the same test code t
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
 │                           │  and Gradle-configured target classes│
 │                           │  Injects MutationRegistry.check()   │
-│                           │  Five operator interfaces:          │
-│                           │    MutationOperator (IrCall nodes)  │
-│                           │    ReturnMutationOperator (IrReturn)│
-│                           │    FunctionBodyMutationOperator     │
-│                           │    WhenMutationOperator (IrWhen)    │
-│                           │    ThrowMutationOperator (IrThrow)  │
+│                           │  MutationOperator<T> per node kind: │
+│                           │    IrCall, IrReturn, IrWhen,        │
+│                           │    IrThrow, IrGetValue, functions   │
+│                           │  Mutation kinds (how it's emitted): │
+│                           │    Replace, OverOperands, Fused     │
 │                           │  RelationalComparisonOperator:      │
 │                           │    handles >, <, >=, <= operators   │
 │                           │  ConstantBoundaryOperator:          │
@@ -786,7 +841,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 ### Limitations
 - **Not exhaustive per session**: Each session tests a small fixed number of mutations (3-8), not all. Coverage grows over many builds.
-- **Bytecode bloat**: Injected branches increase class size (64KB method limit is a risk)
+- **Bytecode bloat**: Injected branches increase class size. Growth is linear in the source (see [the three shapes](#how-a-mutation-is-emitted-three-shapes)), so only a method that is already close to the JVM's 64KB limit can be pushed over it
 - **Coverage interference**: Extra branches affect coverage reports (may need separate non-mutated build)
 - **Debugging complexity**: Stack traces through mutated code can be confusing
 - **Equivalent mutants**: Some mutations produce identical behavior (noise)
@@ -823,12 +878,12 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - K2 compiler plugin with extensible mutation operator mechanism
 - `MutflowCommandLineProcessor` receives target patterns from Gradle plugin via `SubpluginOption`
 - Target pattern matching: glob-style patterns (`*`, `**`) compiled to regex for FQN matching
-- Five operator interfaces for different IR node types:
-  - `MutationOperator` - for `IrCall` nodes (comparison operators, etc.)
-  - `ReturnMutationOperator` - for `IrReturn` nodes (return statement mutations)
-  - `FunctionBodyMutationOperator` - for function declarations (body-level mutations)
-  - `WhenMutationOperator` - for `IrWhen` nodes (boolean logic operators)
-  - `ThrowMutationOperator` - for `IrThrow` nodes (exception type mutations)
+- One operator interface, `MutationOperator<T>`, parameterized by the IR node kind it mutates: `IrCall` (comparisons, arithmetic, etc.), `IrReturn` (return values), `IrWhen` (boolean logic), `IrThrow` (exception types), `IrGetValue` (boolean variables) and `IrSimpleFunction` (function bodies)
+- An operator returns a `Mutation`, whose kind decides how the transformer emits the original next to the variants (see [How a Mutation Is Emitted: Three Shapes](#how-a-mutation-is-emitted-three-shapes) for why):
+  - `Replace` - variants that stand on their own: `when { check(...) == 0 -> <variant>; else -> <original> }`, with check() inline in each branch and no temporaries. For variants that are constants, an empty body or a negated leaf (return values, function bodies, boolean variables), where there is nothing to share with the original.
+  - `OverOperands` - check() and then the node's operands are evaluated once into temporaries, and the original and every variant are rebuilt over reads of them. For strictly evaluated nodes (arithmetic, comparisons, constant boundaries, `==`/`!=`, boolean calls, exception constructors). Equality and boolean inversion take the whole boolean call as their one operand and negate it. Constants and reads of parameters and `val`s are restated instead of hoisted. Several such mutations of one node (`x > 0` has a relational and a constant boundary one) share the same temporaries.
+  - `Fused` - one expression that is the original while the mutation is inactive and the mutant while it is active, steered by `val mutflowActive = check(...) == 0`. For `&&` and `||`, whose right operand is evaluated lazily and so cannot be hoisted.
+  - Every kind keeps the instrumented code linear in the size of the source and evaluates each operand exactly once, in source order, whichever variant is active.
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
   - Each operator produces 2 variants: boundary mutation + direction flip
 - `ConstantBoundaryOperator` mutates numeric constants in comparisons
@@ -851,8 +906,8 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - `%` → `/` (1 variant)
   - Safe division for `*` → `/`: when b=0, computes b/a; when both are 0, returns 1
 - `EqualitySwapOperator` swaps equality operators
-  - `==` → `!=` (1 variant: wraps EQEQ intrinsic with `Boolean.not()`)
-  - `!=` → `==` (1 variant: unwraps the `not()` wrapper to expose the inner EQEQ call)
+  - `==` → `!=` (1 variant: wraps the evaluated EQEQ intrinsic with `Boolean.not()`)
+  - `!=` → `==` (1 variant: drops the `not()` wrapper around the evaluated EQEQ call)
   - In K2 IR, `==` is a single EQEQ intrinsic; `!=` is `not(EQEQ(a, b))` - two calls both with EXCLEQ origin
   - Matches EQEQ calls with EQEQ origin for `==`, and `not()` calls with EXCLEQ origin for `!=`
   - Avoids double-matching the inner EQEQ of `!=` expressions (which would create spurious mutation points)
@@ -862,16 +917,16 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Matches boolean-returning `IrCall` nodes with null or `GET_PROPERTY` origin (function calls and property accesses)
   - Excludes `not()` calls (would create redundant double-negation points) and EXCLEQ origin (handled by EqualitySwapOperator)
   - The "remove negation" case (`!expr` → `expr`) is implicitly covered: adding `!` to the inner expression of `!expr` produces `!(!expr)` = `expr`
-- Boolean variable/parameter inversion is handled directly by `MutflowIrTransformer.visitGetValue`
+- `BooleanVariableInversionOperator` negates boolean variable and parameter reads
   - `varName` → `!varName` (1 variant: wraps boolean `IrGetValue` in `Boolean.not()`)
-  - Not an operator interface - `IrGetValue` is a leaf node, handled inline with a single mutation point
 - `BooleanLogicOperator` swaps boolean logic operators
-  - `&&` → `||` (1 variant: swaps branch results to short-circuit true)
-  - `||` → `&&` (1 variant: swaps branch results to short-circuit false)
+  - `&&` → `||` (1 variant)
+  - `||` → `&&` (1 variant)
   - In K2 IR (2.3.0+), `&&` and `||` are lowered to `IrWhen` expressions with ANDAND/OROR origins
   - `&&`: `when(ANDAND) { a -> b; else -> false }` - if first is true, evaluate second
   - `||`: `when(OROR) { a -> true; else -> b }` - if first is true, short-circuit true
-  - Mutation swaps branch results: ANDAND replaces `b` with `true` and `false` with `b` (and vice versa for OROR)
+  - Fused mutation: `when { (a != selectsOr) -> b; else -> selectsOr }`, where `selectsOr` is the mutation flag for `&&` and its negation for `||`. Each operand appears once and `b` is only reached where the active operator would evaluate it, so short-circuiting holds for the mutant too
+  - `a` is emitted as `a!!`: `!=` accepts a null, so a platform-typed Java `Boolean` that is null would pass as a value where the unmutated `a && b` throws a NullPointerException. The `!!` restores that exception; for a Kotlin `Boolean` it is a no-op
 - `VoidFunctionBodyOperator` removes entire function bodies of Unit/void functions
   - Produces 1 variant: empty body (all side effects removed)
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
@@ -881,7 +936,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Produces 1 variant: the paired sibling exception (e.g. `IllegalArgumentException` → `IllegalStateException`)
   - Only matches `throw` of a direct constructor call; `val e = ...; throw e` is not matched
   - Pairs are chosen so neither type is a subtype of the other, otherwise a `catch` of the supertype would still match and the mutant would be equivalent
-  - Constructor arguments are copied by position onto a matching constructor of the target type
+  - Constructor arguments are evaluated once and passed by position to a matching constructor of the target type
   - Catches tests that assert something threw without asserting what
   - Synthetic throws are not a concern at this phase: `!!`, `TODO()`, `require`/`check` and exhaustive `when` are still `IrCall` nodes when IR plugin extensions run
 - Recursive operator application: multiple operators can match the same expression
@@ -981,14 +1036,16 @@ The goal is that **all tests appear green when mutations are properly killed**. 
 // Before (in @MutationTarget class)
 fun isPositive(x: Int) = x > 0
 
-// After compiler plugin (nested mutations for operator AND constant)
-fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<", 1)) {
-    0 -> x >= 0   // operator: boundary (include equality)
-    1 -> x < 0    // operator: direction flip
-    else -> when (MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1", 1)) {
-        0 -> x > 1    // constant: increment
-        1 -> x > -1   // constant: decrement
-        else -> x > 0 // original
+// After compiler plugin (operator AND constant mutations share one when)
+fun isPositive(x: Int) = run {
+    val mutflowVariant0 = MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<", 1)
+    val mutflowVariant1 = MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1", 1)
+    when {
+        mutflowVariant0 == 0 -> x >= 0  // operator: boundary (include equality)
+        mutflowVariant0 == 1 -> x < 0   // operator: direction flip
+        mutflowVariant1 == 0 -> x > 1   // constant: increment
+        mutflowVariant1 == 1 -> x > -1  // constant: decrement
+        else -> x > 0                   // original
     }
 }
 ```

@@ -1,10 +1,25 @@
 # Changelog
-## [Unreleased]
+
+## [1.4.0]
 ### Added
 - Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name. Classes declared in the file stay targets of their own.
 
+### Changed
+- The compiler plugin's five internal operator interfaces are replaced by one, `MutationOperator<T>`, parameterized by IR node kind. An operator returns a `Mutation` whose kind (`Replace`, `OverOperands` or `Fused`) decides how the original and its variants are emitted, so that choice is made once per kind instead of by every operator. Boolean variable inversion, previously hand-built in the transformer, is now the `BooleanVariableInversionOperator`.
+
 ### Fixed
+- Long boolean chains no longer blow up the size of the instrumented code. A mutation point kept the original expression beside a mutated copy of it, and the operands of `a && b` are themselves already instrumented `when` expressions, so every term doubled everything before it: a ten-term chain passed the JVM's 64 KB method limit with `MethodTooLargeException`, and a sixteen-term one exhausted the compiler's heap while copying. `&&` and `||` are now instrumented in a fused form, `when { (left != selectsOr) -> b; else -> selectsOr }`, where a single boolean selects the operator and the mutation flag supplies it. Neither operand is duplicated, so the instrumented size is linear in the length of the chain and no longer depends on whether the source associates to the left (`a && b && c`) or to the right (`a && (b && c)`, or any mix of `&&` and `||`). Short-circuiting, mutation point ids, counts and metadata are unchanged. (#34)
+- Long arithmetic chains no longer blow up the size of the instrumented code, the same growth as for boolean chains: an arithmetic variant copied both operands, and the left operand of `a + b + c` is the already instrumented `a + b`, so a twelve-term sum failed with `MethodTooLargeException`. Arithmetic is strictly evaluated, so its operands are now evaluated once into temporaries that the original and the variant both read, and a sixteen-term sum takes 734 bytes of bytecode. Relational, constant boundary, equality, boolean inversion and exception type mutations are emitted the same way and no longer copy their operands either. Mutation point ids, counts and metadata are unchanged. (#34)
 - Mutation ids restart from zero after a nested mutation target. Entering a target class reset the point counter and did not restore it, so a class with a nested `@MutationTarget` class numbered the points after the nested class from zero again, colliding with the ones before it. The counter and the per-line occurrence table are now restored when the nested target is left.
+
+### Contributors
+Thanks to @rikshot for finding and diagnosing the exponential growth of boolean chains, and for the left-associative regression target (#31).
+
+## [1.3.2]
+### Fixed
+- Compiler-generated members of data and value classes (`equals`, `hashCode`, `toString`, `copy`, `componentN`) are no longer mutated. They hold no logic of the author's, so their mutants were noise, and instrumenting the generated `equals` of a wide data class failed the build with `MethodTooLargeException`: one mutation switch per property comparison pushes the method past the JVM's 64 KB limit. Traps pinned on such mutations no longer resolve.
+- Default property accessors are no longer mutated. The `return field` getter the compiler writes for a plain `val flag: Boolean` collected a boolean-return mutant whose display name pointed at the property's declaration line, so a survivor read as a `return` on a line with no return on it, and no test could kill it. A property with an author-written `get()` body keeps all of its mutations.
+- Members generated for `by` delegation are no longer mutated. Their whole body is a forward to the delegate, and the mutant was reported on the class header line.
 
 ## [1.3.1]
 ### Fixed

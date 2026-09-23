@@ -511,7 +511,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 - **Session-based architecture** - Clean lifecycle, no leaked global state
 
 **Extensibility**
-- **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), `FunctionBodyMutationOperator` (for function bodies), and `ThrowMutationOperator` (for throw statements) interfaces for adding new mutation types
+- **Extensible architecture** - one generic `MutationOperator<T>` interface, parameterized by the IR node kind it mutates (calls, returns, boolean logic, throw statements, boolean variables, function bodies), for adding new mutation types. An operator says what to mutate and picks how it is emitted (`Replace`, `OverOperands` or `Fused`), which keeps the instrumented code linear in the size of the source
 
 ## Kotlin Multiplatform Support
 
@@ -982,6 +982,16 @@ Pairs are chosen so that neither type is a subtype of the other. A swap to a sub
 Constructor arguments are copied by position onto a matching constructor of the target type, so `throw IllegalArgumentException(message, cause)` mutates to `IllegalStateException(message, cause)`.
 
 **Note:** Only a `throw` of a direct constructor call is mutated. `val e = IllegalStateException(); throw e` is not, since the thrown expression is a variable read rather than a constructor call. Constructs that eventually become throws (`!!`, `TODO()`, `require`/`check`, exhaustive `when` without `else`) are never mutated by this operator either, because they are still ordinary calls at the point where the compiler plugin runs.
+
+### How Mutations Become Code
+
+All mutations are compiled in at once and one is switched on per run. For each mutation the plugin asks one question: where do the node's operands live, if the original and the variants all need them? The answer picks one of three shapes:
+
+- **Replace** - the variant doesn't use the operands (`true`, `null`, an empty body), so it simply replaces the node.
+- **OverOperands** - every operand always runs (`+`, `>`, `==`, ...), so each one is evaluated once and the original and all variants are built over that value.
+- **Fused** - the right side of `&&`/`||` may be skipped, so one expression acts as both original and mutant.
+
+No shape copies its operands, so long chains like `a + b + c + ...` or `a && b && c && ...` compile to code that grows linearly, and every operand is evaluated once, in source order. See [DESIGN.md](DESIGN.md#how-a-mutation-is-emitted-three-shapes) for details.
 
 ## Design Decisions
 

@@ -1,19 +1,16 @@
 package io.github.anschnapp.mutflow.compiler
 
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
-import org.jetbrains.kotlin.ir.builders.IrBuilder
 import org.jetbrains.kotlin.ir.builders.irCall
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
-import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrThrow
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.util.constructors
-import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
@@ -26,15 +23,12 @@ import org.jetbrains.kotlin.name.FqName
  * (e.g. `IllegalStateException`) instead. Sibling pairs are chosen so that
  * neither type is a subtype of the other — both extend `RuntimeException`.
  *
- * The operator matches on `IrThrow` nodes and produces a
- * `MutationOperator.Variant` that replaces the thrown expression
- * with a call to the sibling exception's constructor, copying constructor
- * arguments by position.
- *
- * @see ThrowMutationOperator for the interface contract
+ * The operator matches on `IrThrow` nodes and mutates over the constructor
+ * arguments: they are evaluated once, and the original constructor call and the
+ * sibling exception's constructor call both take them by position.
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class ExceptionTypeSwapOperator : ThrowMutationOperator {
+class ExceptionTypeSwapOperator : MutationOperator<IrThrow> {
 
     /**
      * Maps source exception FQNs to sibling replacement FQNs.
@@ -61,7 +55,8 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
         )
     }
 
-    override fun matches(throwExpr: IrThrow): Boolean {
+    override fun matches(node: IrThrow): Boolean {
+        val throwExpr = node
         // Precautionary guard against throws that have no source span: a missing
         // or zero-width offset means the node was synthesized rather than written
         // by a developer, and mutating it would be meaningless.
@@ -91,40 +86,50 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
         return thrownExpr is IrConstructorCall
     }
 
-    override fun originalDescription(throwExpr: IrThrow): String {
-        val thrownExpr = throwExpr.value as? IrConstructorCall ?: return "?"
+    private fun originalDescription(thrownExpr: IrConstructorCall): String {
         val constructedType = thrownExpr.symbol.owner.returnType
         val classSymbol = constructedType.classOrNull ?: return "?"
         return classSymbol.owner.fqNameWhenAvailable?.asString()?.substringAfterLast('.') ?: "?"
     }
 
-    override fun variants(throwExpr: IrThrow, context: MutationContext): List<MutationOperator.Variant> {
-        val thrownExpr = throwExpr.value as? IrConstructorCall ?: return emptyList()
+    override fun mutation(node: IrThrow, context: MutationContext): Mutation? {
+        val thrownExpr = node.value as? IrConstructorCall ?: return null
         val sourceType = thrownExpr.symbol.owner.returnType
-        val sourceSymbol = sourceType.classOrNull ?: return emptyList()
-        val (_, targetFqName) = findSwapPair(sourceSymbol, context) ?: return emptyList()
+        val sourceSymbol = sourceType.classOrNull ?: return null
+        val (_, targetFqName) = findSwapPair(sourceSymbol, context) ?: return null
 
         val targetClassId = ClassId.topLevel(FqName(targetFqName))
-        val targetClassSymbol = context.pluginContext.referenceClass(targetClassId) ?: return emptyList()
+        val targetClassSymbol = context.pluginContext.referenceClass(targetClassId) ?: return null
         val targetClass = targetClassSymbol.owner
 
-        val matchingConstructor = findMatchingConstructor(thrownExpr, targetClass) ?: return emptyList()
+        val matchingConstructor = findMatchingConstructor(thrownExpr, targetClass) ?: return null
 
         val targetShortName = targetFqName.substringAfterLast('.')
 
-        return listOf(
-            // Just the target type: the display name is assembled as
-            // "(file:line) <original> → <variant>", so repeating the source type
-            // here would render as "ISE → ISE → IAE".
-            MutationOperator.Variant(
-                description = targetShortName
-            ) {
-                buildVariantCall(
-                    builder = context.builder,
-                    original = thrownExpr,
-                    targetConstructor = matchingConstructor
-                )
-            }
+        // Exception constructors have no dispatch or extension receivers, so value-parameter
+        // indices map directly to argument list positions. Omitted (defaulted) arguments stay
+        // omitted in both calls.
+        val argumentIndices = thrownExpr.symbol.owner.parameters.indices.filter { thrownExpr.arguments[it] != null }
+
+        return Mutation.OverOperands(
+            originalDescription = originalDescription(thrownExpr),
+            operands = argumentIndices.map { thrownExpr.arguments[it]!! },
+            original = { operands ->
+                argumentIndices.forEachIndexed { operand, index -> thrownExpr.arguments[index] = operands[operand] }
+                thrownExpr
+            },
+            variants = listOf(
+                // Just the target type: the display name is assembled as
+                // "(file:line) <original> → <variant>", so repeating the source type
+                // here would render as "ISE → ISE → IAE".
+                Mutation.OverOperands.Variant(targetShortName) { operands ->
+                    // irCall(IrConstructorSymbol) creates a constructor call with the
+                    // return type computed from the constructor's class.
+                    context.builder.irCall(matchingConstructor.symbol).also { call ->
+                        argumentIndices.forEachIndexed { operand, index -> call.arguments[index] = operands[operand] }
+                    }
+                }
+            )
         )
     }
 
@@ -166,32 +171,5 @@ class ExceptionTypeSwapOperator : ThrowMutationOperator {
                 targetParamTypes.size == sourceParamTypes.size &&
                     targetParamTypes.zip(sourceParamTypes).all { (target, source) -> target.classifierOrNull == source.classifierOrNull }
             }
-    }
-
-    /**
-     * Builds the replacement [IrConstructorCall] for the target exception class,
-     * copying argument expressions from the original call.
-     */
-    private fun buildVariantCall(
-        builder: IrBuilder,
-        original: IrConstructorCall,
-        targetConstructor: IrConstructor
-    ): IrExpression {
-        // irCall(IrConstructorSymbol) creates a constructor call with the
-        // return type computed from the constructor's class.
-        val newCall = builder.irCall(targetConstructor.symbol)
-
-        // Copy constructor arguments by position. Exception constructors have
-        // no dispatch or extension receivers, so value-parameter indices map
-        // directly to argument list positions.
-        val sourceParams = original.symbol.owner.parameters
-        sourceParams.forEachIndexed { index, _ ->
-            val arg = original.arguments[index]
-            if (arg != null) {
-                newCall.arguments[index] = arg.deepCopyWithSymbols()
-            }
-        }
-
-        return newCall
     }
 }
