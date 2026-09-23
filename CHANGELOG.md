@@ -1,4 +1,15 @@
 # Changelog
+## [1.4.0]
+### Changed
+- The compiler plugin's five internal operator interfaces are replaced by one, `MutationOperator<T>`, parameterized by IR node kind. An operator returns a `Mutation` whose kind (`Replace`, `OverOperands` or `Fused`) decides how the original and its variants are emitted, so that choice is made once per kind instead of by every operator. Boolean variable inversion, previously hand-built in the transformer, is now the `BooleanVariableInversionOperator`.
+
+### Fixed
+- Long boolean chains no longer blow up the size of the instrumented code. A mutation point kept the original expression beside a mutated copy of it, and the operands of `a && b` are themselves already instrumented `when` expressions, so every term doubled everything before it: a ten-term chain passed the JVM's 64 KB method limit with `MethodTooLargeException`, and a sixteen-term one exhausted the compiler's heap while copying. `&&` and `||` are now instrumented in a fused form, `when { (left != selectsOr) -> b; else -> selectsOr }`, where a single boolean selects the operator and the mutation flag supplies it. Neither operand is duplicated, so the instrumented size is linear in the length of the chain and no longer depends on whether the source associates to the left (`a && b && c`) or to the right (`a && (b && c)`, or any mix of `&&` and `||`). Short-circuiting, mutation point ids, counts and metadata are unchanged. (#34)
+- Long arithmetic chains no longer blow up the size of the instrumented code, the same growth as for boolean chains: an arithmetic variant copied both operands, and the left operand of `a + b + c` is the already instrumented `a + b`, so a twelve-term sum failed with `MethodTooLargeException`. Arithmetic is strictly evaluated, so its operands are now evaluated once into temporaries that the original and the variant both read, and a sixteen-term sum takes 734 bytes of bytecode. Relational, constant boundary, equality, boolean inversion and exception type mutations are emitted the same way and no longer copy their operands either. Mutation point ids, counts and metadata are unchanged. (#34)
+
+### Contributors
+Thanks to @rikshot for finding and diagnosing the exponential growth of boolean chains, and for the left-associative regression target (#31).
+
 ## [1.3.2]
 ### Fixed
 - Compiler-generated members of data and value classes (`equals`, `hashCode`, `toString`, `copy`, `componentN`) are no longer mutated. They hold no logic of the author's, so their mutants were noise, and instrumenting the generated `equals` of a wide data class failed the build with `MethodTooLargeException`: one mutation switch per property comparison pushes the method past the JVM's 64 KB limit. Traps pinned on such mutations no longer resolve.
