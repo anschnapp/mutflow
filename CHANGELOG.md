@@ -1,4 +1,16 @@
 # Changelog
+
+## [1.5.0]
+### Added
+- Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name, or, for the parts of a `@file:JvmMultifileClass` facade, the part class name (`com.example.Utils__StringUtilsKt`), since every part numbers its points from zero and ids on the shared facade name would collide. Classes declared in the file stay targets of their own. (#33)
+
+### Changed
+- Target patterns also match a file's facade class, so a broad pattern such as `com.example.**` now includes the top-level functions and properties in those packages. In STRICT mode, survivors there can fail a build although the code did not change; narrow the pattern or add the assertions.
+- Mutation ids from before this release cannot be compared with ids from it: the nested-target fix below renumbers the points that follow a nested target, and top-level code has ids for the first time.
+
+### Fixed
+- Mutation ids restart from zero after a nested mutation target. Entering a target class reset the point counter and did not restore it, so a class with a nested `@MutationTarget` class numbered the points after the nested class from zero again, colliding with the ones before it. The counter and the per-line occurrence table are now restored when the nested target is left. (#33)
+
 ## [1.4.0]
 ### Changed
 - The compiler plugin's five internal operator interfaces are replaced by one, `MutationOperator<T>`, parameterized by IR node kind. An operator returns a `Mutation` whose kind (`Replace`, `OverOperands` or `Fused`) decides how the original and its variants are emitted, so that choice is made once per kind instead of by every operator. Boolean variable inversion, previously hand-built in the transformer, is now the `BooleanVariableInversionOperator`.

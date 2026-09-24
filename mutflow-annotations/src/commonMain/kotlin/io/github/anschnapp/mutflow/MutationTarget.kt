@@ -1,7 +1,7 @@
 package io.github.anschnapp.mutflow
 
 /**
- * Marks a class as a target for mutation injection.
+ * Marks a class, or the top-level declarations of a file, as a target for mutation injection.
  *
  * The compiler plugin will only inject mutations into classes
  * annotated with this annotation. This limits bytecode bloat
@@ -13,6 +13,16 @@ package io.github.anschnapp.mutflow
  * class Calculator {
  *     fun add(a: Int, b: Int): Int = a + b
  * }
+ * ```
+ *
+ * Top-level functions and properties belong to no class; as a file annotation the marker
+ * covers all of them in that file (the classes declared in the file are not included, each
+ * is its own target):
+ * ```kotlin
+ * @file:MutationTarget
+ * package com.example
+ *
+ * fun clamp(value: Int, max: Int): Int = if (value > max) max else value
  * ```
  *
  * ## Suppressing mutations
@@ -43,6 +53,6 @@ package io.github.anschnapp.mutflow
  * compiler and no runtime artifacts are added. The compiler plugin reads the source file
  * during IR transformation to detect these comments.
  */
-@Target(AnnotationTarget.CLASS)
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FILE)
 @Retention(AnnotationRetention.BINARY)
 annotation class MutationTarget
