@@ -1,16 +1,23 @@
 # Changelog
 
-## [1.4.0]
+## [1.5.0]
 ### Added
-- Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name. Classes declared in the file stay targets of their own.
+- Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name, or, for the parts of a `@file:JvmMultifileClass` facade, the part class name (`com.example.Utils__StringUtilsKt`), since every part numbers its points from zero and ids on the shared facade name would collide. Classes declared in the file stay targets of their own. (#33)
 
+### Changed
+- Target patterns also match a file's facade class, so a broad pattern such as `com.example.**` now includes the top-level functions and properties in those packages. In STRICT mode, survivors there can fail a build although the code did not change; narrow the pattern or add the assertions.
+- Mutation ids from before this release cannot be compared with ids from it: the nested-target fix below renumbers the points that follow a nested target, and top-level code has ids for the first time.
+
+### Fixed
+- Mutation ids restart from zero after a nested mutation target. Entering a target class reset the point counter and did not restore it, so a class with a nested `@MutationTarget` class numbered the points after the nested class from zero again, colliding with the ones before it. The counter and the per-line occurrence table are now restored when the nested target is left. (#33)
+
+## [1.4.0]
 ### Changed
 - The compiler plugin's five internal operator interfaces are replaced by one, `MutationOperator<T>`, parameterized by IR node kind. An operator returns a `Mutation` whose kind (`Replace`, `OverOperands` or `Fused`) decides how the original and its variants are emitted, so that choice is made once per kind instead of by every operator. Boolean variable inversion, previously hand-built in the transformer, is now the `BooleanVariableInversionOperator`.
 
 ### Fixed
 - Long boolean chains no longer blow up the size of the instrumented code. A mutation point kept the original expression beside a mutated copy of it, and the operands of `a && b` are themselves already instrumented `when` expressions, so every term doubled everything before it: a ten-term chain passed the JVM's 64 KB method limit with `MethodTooLargeException`, and a sixteen-term one exhausted the compiler's heap while copying. `&&` and `||` are now instrumented in a fused form, `when { (left != selectsOr) -> b; else -> selectsOr }`, where a single boolean selects the operator and the mutation flag supplies it. Neither operand is duplicated, so the instrumented size is linear in the length of the chain and no longer depends on whether the source associates to the left (`a && b && c`) or to the right (`a && (b && c)`, or any mix of `&&` and `||`). Short-circuiting, mutation point ids, counts and metadata are unchanged. (#34)
 - Long arithmetic chains no longer blow up the size of the instrumented code, the same growth as for boolean chains: an arithmetic variant copied both operands, and the left operand of `a + b + c` is the already instrumented `a + b`, so a twelve-term sum failed with `MethodTooLargeException`. Arithmetic is strictly evaluated, so its operands are now evaluated once into temporaries that the original and the variant both read, and a sixteen-term sum takes 734 bytes of bytecode. Relational, constant boundary, equality, boolean inversion and exception type mutations are emitted the same way and no longer copy their operands either. Mutation point ids, counts and metadata are unchanged. (#34)
-- Mutation ids restart from zero after a nested mutation target. Entering a target class reset the point counter and did not restore it, so a class with a nested `@MutationTarget` class numbered the points after the nested class from zero again, colliding with the ones before it. The counter and the per-line occurrence table are now restored when the nested target is left.
 
 ### Contributors
 Thanks to @rikshot for finding and diagnosing the exponential growth of boolean chains, and for the left-associative regression target (#31).

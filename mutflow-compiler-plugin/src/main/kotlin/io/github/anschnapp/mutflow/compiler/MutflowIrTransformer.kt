@@ -121,11 +121,22 @@ class MutflowIrTransformer(
          */
         fun facadeClassName(fileName: String, jvmName: String?): String =
             jvmName ?: PackagePartClassUtils.getFilePartShortName(File(fileName).name)
+
+        /**
+         * The class whose name mutation ids of the file's top-level code carry. The parts of a
+         * `@file:JvmMultifileClass` facade share the facade name, and each part numbers its points
+         * from zero, so ids built on the facade alone collide across parts; they carry the part
+         * class the backend compiles the file into instead (`Utils__StringUtilsKt`). Targets are
+         * still matched on the facade name.
+         */
+        fun pointIdClassName(facadeFqName: String, fileName: String, multifile: Boolean): String =
+            if (multifile) "${facadeFqName}__${PackagePartClassUtils.getFilePartShortName(File(fileName).name)}" else facadeFqName
     }
 
     private val mutationTargetFqName = FqName("io.github.anschnapp.mutflow.MutationTarget")
     private val suppressMutationsFqName = FqName("io.github.anschnapp.mutflow.SuppressMutations")
     private val jvmNameFqName = FqName("kotlin.jvm.JvmName")
+    private val jvmMultifileClassFqName = FqName("kotlin.jvm.JvmMultifileClass")
     private val mutationRegistryFqName = FqName("io.github.anschnapp.mutflow.MutationRegistry")
 
     private val mutationRegistryClass: IrClassSymbol? by lazy {
@@ -242,9 +253,13 @@ class MutflowIrTransformer(
         // them into. The classes declared in the file are not part of it; each is its own target,
         // exactly as a nested class is not covered by its outer class.
         val facadeFqName = facadeFqName(declaration)
-        currentFacadeFqName = facadeFqName
+        currentFacadeFqName = pointIdClassName(
+            facadeFqName,
+            declaration.fileEntry.name,
+            multifile = declaration.hasAnnotation(jvmMultifileClassFqName)
+        )
         isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName) || matchesTargetPattern(facadeFqName)
-        debug("  facade: $facadeFqName, isInMutationTarget: $isInMutationTarget")
+        debug("  facade: $facadeFqName, ids: $currentFacadeFqName, isInMutationTarget: $isInMutationTarget")
         if (isInMutationTarget) {
             mutationPointCounter = 0
             lineOperatorOccurrences.clear()
