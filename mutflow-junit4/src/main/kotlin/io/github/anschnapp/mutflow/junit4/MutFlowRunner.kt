@@ -22,8 +22,11 @@ import org.junit.runners.model.Statement
  * `@MutFlowTest(wrapTestMethods = true)` the runner wraps each whole test method instead, so
  * a suite can be mutation-tested without touching its tests.
  *
+ * Each test method runs under the session's wall-clock budget (see `@MutFlowTest`), with its
+ * rules and `@Before`/`@After` outside it, as on JUnit 6.
+ *
  * Runners with their own threading (Robolectric runs the test body on a sandbox thread) can
- * subclass their runner and delegate the same two hooks to a [MutFlowRun].
+ * subclass their runner and delegate the same three hooks to a [MutFlowRun].
  */
 open class MutFlowRunner(testClass: Class<*>) : BlockJUnit4ClassRunner(testClass) {
 
@@ -33,6 +36,9 @@ open class MutFlowRunner(testClass: Class<*>) : BlockJUnit4ClassRunner(testClass
         val statement = super.methodBlock(method)
         return if (mutflow.wrapTestMethods) mutflow.wrap(statement) else statement
     }
+
+    override fun methodInvoker(method: FrameworkMethod, test: Any): Statement =
+        mutflow.budget(describeChild(method).displayName, super.methodInvoker(method, test))
 
     override fun run(notifier: RunNotifier) {
         mutflow.run(notifier) { super.run(it) }

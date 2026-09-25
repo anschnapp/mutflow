@@ -8,6 +8,7 @@ import io.github.anschnapp.mutflow.MutationTimedOutException
 import io.github.anschnapp.mutflow.Selection
 import io.github.anschnapp.mutflow.SessionId
 import io.github.anschnapp.mutflow.Shuffle
+import io.github.anschnapp.mutflow.TestBudget
 import io.github.anschnapp.mutflow.VerificationMode
 import org.junit.Test
 import org.junit.runner.Description
@@ -27,8 +28,8 @@ import org.junit.runners.model.Statement
  * mutant survived in STRICT mode, and with [MutationTimedOutException] when it timed out.
  *
  * The class is independent of any particular runner so that runners with their own threading,
- * such as Robolectric, can reuse it: [wrap] takes the session from this object rather than from
- * the thread-keyed `MutFlow.underTest`, which would not find it on a foreign thread.
+ * such as Robolectric, can reuse it: [wrap] and [budget] take the session from this object rather
+ * than from the thread-keyed `MutFlow.underTest`, which would not find it on a foreign thread.
  */
 class MutFlowRun(private val testClass: Class<*>) {
 
@@ -48,10 +49,31 @@ class MutFlowRun(private val testClass: Class<*>) {
         }
     }
 
+    /**
+     * Runs [inner], a single test method, under the session's wall-clock budget; see
+     * [MutFlowSession.runTest]. Meant for `methodInvoker`, so that rules and `@Before`/`@After`
+     * stay outside the budget as they do on JUnit 6, and the interrupt lands on the thread that
+     * runs the test. [testId] must be stable across runs: the baseline duration is keyed by it.
+     */
+    fun budget(testId: String, inner: Statement): Statement = object : Statement() {
+        override fun evaluate() {
+            val session = checkNotNull(session) { "No MutFlow session is open; run this class with MutFlowRunner" }
+            session.runTest(testId) { inner.evaluate() }
+        }
+    }
+
     fun run(notifier: RunNotifier, runOnce: (RunNotifier) -> Unit) {
         val maxRuns = resolveMaxRuns(settings?.maxRuns ?: Int.MAX_VALUE)
         val timeoutMs = resolveTimeoutMs(settings?.timeoutMs ?: 60_000)
         val mode = resolveVerificationMode(settings?.verificationMode ?: VerificationMode.STRICT)
+        val testBudget = TestBudget.fromEnvironment(
+            TestBudget(
+                factor = settings?.testBudgetFactor ?: TestBudget.DEFAULT_FACTOR,
+                slackMs = settings?.testBudgetSlackMs ?: TestBudget.DEFAULT_SLACK_MS,
+                baselineTimeoutMs = settings?.baselineTimeoutMs ?: TestBudget.DEFAULT_BASELINE_TIMEOUT_MS,
+                graceMs = settings?.testBudgetGraceMs ?: TestBudget.DEFAULT_GRACE_MS
+            )
+        )
 
         val sessionId = MutFlow.createSession(
             selection = Selection.MostLikelyStable,
@@ -62,7 +84,8 @@ class MutFlowRun(private val testClass: Class<*>) {
             includeTargets = settings?.includeTargets?.map { it.java.name }.orEmpty(),
             excludeTargets = settings?.excludeTargets?.map { it.java.name }.orEmpty(),
             timeoutMs = timeoutMs,
-            verificationMode = mode
+            verificationMode = mode,
+            testBudget = testBudget
         )
         val session = checkNotNull(MutFlow.getSession(sessionId))
         this.session = session

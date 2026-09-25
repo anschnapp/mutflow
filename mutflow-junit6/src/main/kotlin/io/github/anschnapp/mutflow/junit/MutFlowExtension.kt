@@ -7,6 +7,7 @@ import io.github.anschnapp.mutflow.Mutation
 import io.github.anschnapp.mutflow.Selection
 import io.github.anschnapp.mutflow.SessionId
 import io.github.anschnapp.mutflow.Shuffle
+import io.github.anschnapp.mutflow.TestBudget
 import io.github.anschnapp.mutflow.VerificationMode
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.AfterTestExecutionCallback
@@ -16,7 +17,10 @@ import org.junit.jupiter.api.extension.ClassTemplateInvocationContext
 import org.junit.jupiter.api.extension.ClassTemplateInvocationContextProvider
 import org.junit.jupiter.api.extension.Extension
 import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.InvocationInterceptor
+import org.junit.jupiter.api.extension.ReflectiveInvocationContext
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler
+import java.lang.reflect.Method
 import java.util.stream.Stream
 import kotlin.streams.asStream
 
@@ -54,6 +58,14 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
         val maxRuns = resolveMaxRuns(annotation.maxRuns)
         val timeoutMs = resolveTimeoutMs(annotation.timeoutMs)
         val effectiveMode = resolveVerificationMode(annotation.verificationMode)
+        val testBudget = TestBudget.fromEnvironment(
+            TestBudget(
+                factor = annotation.testBudgetFactor,
+                slackMs = annotation.testBudgetSlackMs,
+                baselineTimeoutMs = annotation.baselineTimeoutMs,
+                graceMs = annotation.testBudgetGraceMs
+            )
+        )
 
         // Count test methods for partial run detection
         val testClass = context.requiredTestClass
@@ -69,7 +81,8 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             includeTargets = annotation.includeTargets.map { it.qualifiedName!! },
             excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
             timeoutMs = timeoutMs,
-            verificationMode = effectiveMode
+            verificationMode = effectiveMode,
+            testBudget = testBudget
         )
 
         // DISABLED mode: only run baseline, skip all mutation runs
@@ -141,6 +154,10 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             println("[mutflow] Starting mutation run: $displayName")
                         }
                     },
+                    // Wall-clock budget per test: measured in the baseline run, enforced in
+                    // mutation runs. Wraps the test method (not @BeforeEach/@AfterEach), on
+                    // the thread that runs it, which is the one the budget interrupts.
+                    BudgetInterceptor(sessionId),
                     // Track test executions during baseline (for partial run detection)
                     AfterTestExecutionCallback { testContext ->
                         if (run == 0) {
@@ -188,6 +205,38 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                     }
                 )
             }
+        }
+    }
+
+    /**
+     * Runs each test method through [io.github.anschnapp.mutflow.MutFlowSession.runTest].
+     * A test exceeding its budget throws [MutationTimedOutException] out of here, which the
+     * exception handler above records exactly like a loop timeout.
+     */
+    private class BudgetInterceptor(private val sessionId: SessionId) : InvocationInterceptor {
+        override fun interceptTestMethod(
+            invocation: InvocationInterceptor.Invocation<Void?>,
+            invocationContext: ReflectiveInvocationContext<Method>,
+            extensionContext: ExtensionContext
+        ) = budgeted(invocation, extensionContext)
+
+        override fun interceptTestTemplateMethod(
+            invocation: InvocationInterceptor.Invocation<Void?>,
+            invocationContext: ReflectiveInvocationContext<Method>,
+            extensionContext: ExtensionContext
+        ) = budgeted(invocation, extensionContext)
+
+        private fun budgeted(invocation: InvocationInterceptor.Invocation<Void?>, context: ExtensionContext) {
+            val session = MutFlow.getSession(sessionId)
+            if (session == null) {
+                invocation.proceed()
+                return
+            }
+            // The unique ID differs per class-template invocation, so it cannot key a
+            // test across runs; method name plus display name (which carries the
+            // parameters of a parameterized test) is stable from run to run.
+            val testId = "${context.requiredTestMethod.name} ${context.displayName}"
+            session.runTest(testId) { invocation.proceed() }
         }
     }
 
