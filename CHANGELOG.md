@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- Compiler crash on arithmetic with an operator declared as an extension inside a class or object (`object Ops { operator fun Money.plus(that: Money): Money }`, called through `with(Ops) { a + b }` or an import of `Ops.plus`). Such a call passes the object as dispatch receiver in front of the two operands, and the variant took the receiver for the left operand and dropped the right one, so codegen failed with `No argument for parameter`. All the arguments are now hoisted and passed on, the last two being the operands. The replacement operator was also the first one of that name in the class, whatever its operand types; it is now the one with the same receivers, parameters and return type. An operator of the class itself with no such counterpart keeps the first one of that name as before (`Char - Char` becomes `Char.plus(Int)`), while an extension operator without one is not mutated. (#35)
+
 ## [1.5.0]
 ### Added
 - Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name, or, for the parts of a `@file:JvmMultifileClass` facade, the part class name (`com.example.Utils__StringUtilsKt`), since every part numbers its points from zero and ids on the shared facade name would collide. Classes declared in the file stay targets of their own. (#33)
