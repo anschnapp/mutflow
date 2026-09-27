@@ -3,7 +3,6 @@ package io.github.anschnapp.mutflow.compiler
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.IrClass
-import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
@@ -16,6 +15,7 @@ import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.classId
+import org.jetbrains.kotlin.ir.util.defaultType
 import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.Name
@@ -90,15 +90,16 @@ class ArithmeticOperator : MutationOperator<IrCall> {
         // The replacement takes the same receivers and parameters as the original and returns
         // the same type: the declaring class can have several operators of that name, for other
         // operand types (`Int.plus(Byte)`, or an object's `A.plus(A)` beside its `B.plus(B)`).
-        // Without such an overload, a call on the class itself keeps the first operator of that
-        // name, as it always has (`Char - Char` has no `Char + Char` and becomes `Char.plus(Int)`),
-        // while an extension operator is not mutated: another receiver would not compile.
+        // Without such an overload, a primitive keeps the first operator of that name, as it always
+        // has (`Char - Char` has no `Char + Char` and becomes `Char.plus(Int)`). Any other operator
+        // is not mutated: another signature would not compile, or would fail at runtime with a
+        // `ClassCastException` instead of computing a value.
         fun findFunction(name: String): IrSimpleFunctionSymbol? {
             if (name == originalFunction.name.asString()) return originalSymbol // same function
             val callableId = CallableId(declaringClassId, Name.identifier(name))
             val candidates = context.pluginContext.referenceFunctions(callableId)
             return candidates.firstOrNull { it.owner.hasSameSignatureAs(originalFunction) }
-                ?: candidates.firstOrNull().takeUnless { originalFunction.hasExtensionReceiver() }
+                ?: candidates.firstOrNull().takeIf { originalFunction.isPrimitiveOperator() }
         }
 
         fun swapTo(description: String, fn: IrSimpleFunctionSymbol) =
@@ -140,8 +141,9 @@ class ArithmeticOperator : MutationOperator<IrCall> {
             parameters.size == other.parameters.size &&
             parameters.zip(other.parameters).all { (a, b) -> a.kind == b.kind && a.type == b.type }
 
-    private fun IrSimpleFunction.hasExtensionReceiver(): Boolean =
-        parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
+    /** True for an operator of a primitive class, `Char` included; no extension is declared there. */
+    private fun IrSimpleFunction.isPrimitiveOperator(): Boolean =
+        (parent as? IrClass)?.defaultType?.isPrimitiveType() == true
 
     /**
      * Calls [fn] over the hoisted [operands], the ones at [first] and [second] as its two
