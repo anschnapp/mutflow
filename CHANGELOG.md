@@ -1,10 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.1]
 ### Fixed
 - Compiler crash on arithmetic with an operator declared as an extension inside a class or object (`object Ops { operator fun Money.plus(that: Money): Money }`, called through `with(Ops) { a + b }` or an import of `Ops.plus`). Such a call passes the object as dispatch receiver in front of the two operands, and the variant took the receiver for the left operand and dropped the right one, so codegen failed with `No argument for parameter`. All the arguments are now hoisted and passed on, the last two being the operands. The replacement operator was also the first one of that name in the class, whatever its operand types; it is now the one with the same receivers, parameters and return type. Without such a counterpart, a primitive keeps the first operator of that name as before (`Char - Char` becomes `Char.plus(Int)`), and any other operator is not mutated. (#35)
 - Arithmetic mutants of primitives with operands of different types compute the swapped operator. They called the first overload of that name, `Int.minus(Byte)` for an `Int`: the `-` mutant of `1 + 5_000_000_000L` gave `-705032703` instead of `-4999999999`, and the one of `1 + 0.5` gave `1.0` instead of `0.5`, so a test could kill them without checking the arithmetic.
 - An operator of a user class whose counterpart takes other operand types (`Vec.plus(Vec)` beside `Vec.minus(Int)`) is no longer mutated. Its mutant passed a `Vec` where an `Int` was expected and failed with a `ClassCastException`, so any test killed it by crashing, whatever it asserted.
+
+### Contributors
+Thanks to @akuma8 for finding the crash on a real project and for the fix with its regression targets (#35, #36).
 
 ## [1.5.0]
 ### Added
