@@ -70,7 +70,6 @@ class MutFlowRun(private val testClass: Class<*>) {
             TestBudget(
                 factor = settings?.testBudgetFactor ?: TestBudget.DEFAULT_FACTOR,
                 slackMs = settings?.testBudgetSlackMs ?: TestBudget.DEFAULT_SLACK_MS,
-                baselineTimeoutMs = settings?.baselineTimeoutMs ?: TestBudget.DEFAULT_BASELINE_TIMEOUT_MS,
                 graceMs = settings?.testBudgetGraceMs ?: TestBudget.DEFAULT_GRACE_MS
             )
         )

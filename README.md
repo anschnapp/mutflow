@@ -315,16 +315,17 @@ budget = baseline duration × testBudgetFactor + testBudgetSlackMs     (default:
 ```
 
 - A test that exceeds its budget is **interrupted** and fails with `MutationTimedOutException`, like a loop timeout; the mutation shows as `⏱` in the summary.
+- A loop in mutated code is stopped at the budget too: a tight loop never looks at the interrupt, so running out of budget also trips the loop check, and the loop fails on its next iteration.
 - The budget is relative on purpose: a fixed limit is too tight for slow suites or too loose to be useful, while three times what the same test took a moment ago in the same JVM is both.
 - If the interrupted test still has not returned after `testBudgetGraceMs` (default 10 s), the run is **abandoned**: the test JVM exits with a diagnostic naming the test and the mutation. A thread that ignores interruption cannot be stopped, and it holds the lock every later mutation run needs, so the alternative is a build that hangs until CI kills it.
-- During the baseline run, where no reference exists yet, `baselineTimeoutMs` (default 60 s) applies instead.
+- The baseline run has no budget: it is the reference, and a slow test there is not caused by a mutation. A test the baseline never ran has no budget either, as there is nothing to scale.
 
 ```kotlin
 @MutFlowTest(testBudgetFactor = 5, testBudgetSlackMs = 2_000)  // roomier budget
 @MutFlowTest(testBudgetFactor = 0)                             // budget off, loop check only
 ```
 
-The `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override the annotation values. The budget covers the test method itself (not `@BeforeEach`/`@AfterEach`; on JUnit 4 not rules or `@Before`/`@After`), on the JVM only: a hung Kotlin/Native run is a hung process, which the Gradle orchestrator's process timeout already kills.
+The `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override the annotation values. The budget covers the test method itself (not `@BeforeEach`/`@AfterEach`; on JUnit 4 not rules or `@Before`/`@After`), on the JVM only: a hung Kotlin/Native run is a hung process, which the Gradle orchestrator's process timeout already kills.
 
 ### Traps (Pinning Mutations)
 
@@ -629,7 +630,6 @@ mutflow {
     verificationMode = "STRICT" // STRICT | LENIENT | DISABLED
     testBudgetFactor = 3        // per-test wall-clock budget, × baseline duration (jvm() target; 0 = off)
     testBudgetSlackMs = 1_000L  // fixed allowance on top
-    baselineTimeoutMs = 60_000L // absolute limit during the baseline run
     testBudgetGraceMs = 10_000L // interrupted test still running this long: abandon the run
 }
 ```

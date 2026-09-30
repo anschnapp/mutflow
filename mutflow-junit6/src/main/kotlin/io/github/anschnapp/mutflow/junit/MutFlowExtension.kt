@@ -62,7 +62,6 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             TestBudget(
                 factor = annotation.testBudgetFactor,
                 slackMs = annotation.testBudgetSlackMs,
-                baselineTimeoutMs = annotation.baselineTimeoutMs,
                 graceMs = annotation.testBudgetGraceMs
             )
         )

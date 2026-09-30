@@ -9,7 +9,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TestBudgetTest {
@@ -29,11 +28,12 @@ class TestBudgetTest {
     private fun checkPoint(pointId: String = "budget.Target_0"): Int? =
         MutationRegistry.check(pointId, 1, "Target.kt:1", "a", "b")
 
-    private fun session(budget: TestBudget): MutFlowSession {
+    private fun session(budget: TestBudget, loopTimeoutMs: Long = 60_000): MutFlowSession {
         val id = MutFlow.createSession(
             selection = Selection.MostLikelyStable,
             shuffle = Shuffle.PerChange,
             maxRuns = Int.MAX_VALUE,
+            timeoutMs = loopTimeoutMs,
             testBudget = budget
         )
         return checkNotNull(MutFlow.getSession(id))
@@ -61,17 +61,14 @@ class TestBudgetTest {
     }
 
     @Test
-    fun `a test the baseline never saw falls back to the baseline timeout`() {
-        val budget = TestBudget(factor = 3, slackMs = 500, baselineTimeoutMs = 7_000)
-        assertEquals(7_000, budget.limitForMutationRun(null))
-        assertEquals(7_000, budget.limitForBaseline())
+    fun `a test the baseline never saw has no budget`() {
+        assertEquals(0, TestBudget(factor = 3, slackMs = 500).limitForMutationRun(null))
     }
 
     @Test
     fun `factor zero disables every limit`() {
         assertFalse(TestBudget.DISABLED.enabled)
         assertEquals(0, TestBudget.DISABLED.limitForMutationRun(40))
-        assertEquals(0, TestBudget.DISABLED.limitForBaseline())
     }
 
     @Test
@@ -182,7 +179,84 @@ class TestBudgetTest {
 
         assertTrue(abandoned.await(5, TimeUnit.SECONDS), "abandon handler ran")
         assertTrue("ABORT" in message!!, message)
-        assertTrue("'ignores'" in message!!, message)
+        assertTrue("'ignores'" in message, message)
+    }
+
+    @Test
+    fun `a loop in mutated code past the budget stops at the loop guard instead of being abandoned`() {
+        val session = session(TestBudget(factor = 1, slackMs = 100, graceMs = 2_000), loopTimeoutMs = 10_000)
+        session.baseline("loops", sleepMs = 10)
+        session.startMutationRun()
+
+        var abandoned = false
+        session.onTestAbandoned = { abandoned = true }
+
+        val start = System.nanoTime()
+        assertFailsWith<MutationTimedOutException> {
+            session.runTest("loops") {
+                session.underTest {
+                    checkPoint()
+                    // A tight loop never looks at the interrupt; only the loop guard can end it.
+                    while (true) {
+                        MutationRegistry.checkTimeout()
+                    }
+                }
+            }
+        }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+
+        assertFalse(abandoned, "the loop failed cleanly within the grace period")
+        assertTrue(elapsedMs < 2_000, "stopped at the budget, not at the 10 s loop timeout, took $elapsedMs ms")
+    }
+
+    @Test
+    fun `a loop stops at the budget also when its underTest block opened before the test`() {
+        val session = session(TestBudget(factor = 1, slackMs = 100, graceMs = 2_000), loopTimeoutMs = 10_000)
+        session.baseline("wrapped", sleepMs = 10)
+        session.startMutationRun()
+
+        var abandoned = false
+        session.onTestAbandoned = { abandoned = true }
+
+        // The JUnit 4 runner's wrapTestMethods opens underTest around rules and @Before, outside the budget.
+        assertFailsWith<MutationTimedOutException> {
+            session.underTest {
+                session.runTest("wrapped") {
+                    checkPoint()
+                    while (true) {
+                        MutationRegistry.checkTimeout()
+                    }
+                }
+            }
+        }
+
+        assertFalse(abandoned, "the loop failed cleanly within the grace period")
+    }
+
+    @Test
+    fun `the loop guard is back to normal once the timed-out test has returned`() {
+        val session = session(TestBudget(factor = 1, slackMs = 100))
+        session.baseline("loops", sleepMs = 10)
+        session.startMutationRun()
+        assertFailsWith<MutationTimedOutException> {
+            session.runTest("loops") {
+                session.underTest {
+                    checkPoint()
+                    while (true) {
+                        MutationRegistry.checkTimeout()
+                    }
+                }
+            }
+        }
+
+        val value = session.runTest("next") {
+            session.underTest {
+                repeat(3) { MutationRegistry.checkTimeout() }
+                "loops normally"
+            }
+        }
+
+        assertEquals("loops normally", value)
     }
 
     @Test
@@ -197,15 +271,13 @@ class TestBudgetTest {
     }
 
     @Test
-    fun `the baseline run is limited by the absolute baseline timeout`() {
-        val session = session(TestBudget(baselineTimeoutMs = 100))
+    fun `the baseline run has no budget`() {
+        val session = session(TestBudget(factor = 1, slackMs = 0))
         MutFlow.startRun(session.id, 0)
 
-        val timeout = assertFailsWith<MutationTimedOutException> {
-            session.runTest("hangs in baseline") { Thread.sleep(30_000) }
-        }
-        assertTrue("baseline" in timeout.message!!, timeout.message)
-        assertNull(session.getActiveMutation())
+        val value = session.runTest("slow in baseline") { Thread.sleep(300); "finished" }
+
+        assertEquals("finished", value)
     }
 
     @Test
@@ -233,7 +305,7 @@ class TestBudgetTest {
 
     @Test
     fun `fromEnvironment keeps the base values when nothing is set`() {
-        val base = TestBudget(factor = 5, slackMs = 7, baselineTimeoutMs = 9, graceMs = 11)
+        val base = TestBudget(factor = 5, slackMs = 7, graceMs = 11)
         assertEquals(base, TestBudget.fromEnvironment(base))
     }
 }

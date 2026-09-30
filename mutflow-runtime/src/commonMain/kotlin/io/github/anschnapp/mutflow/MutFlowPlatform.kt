@@ -74,16 +74,22 @@ internal interface TestInterrupt {
 
 /**
  * Schedules an interruption of the calling thread [delayMs] from now, unless
- * cancelled first. Because interrupted code may swallow the interrupt and keep
- * waiting, the interruption repeats until [cancel]; if the thread has still not
- * returned [graceMs] after the first interrupt, [onAbandoned] runs on the
- * watchdog thread (a grace of 0 disables that).
+ * cancelled first. [onExpired] runs just before the first interrupt, and never
+ * once [TestInterrupt.cancel] has returned. Because interrupted code may swallow
+ * the interrupt and keep waiting, the interruption repeats until cancelled; if
+ * the thread has still not returned [graceMs] after the first interrupt,
+ * [onAbandoned] runs on the watchdog thread (a grace of 0 disables that).
  *
  * JVM: a daemon watchdog thread and `Thread.interrupt()`. Native: never fires -
  * the test process is single-threaded and one process hosts one run, so the
  * Gradle orchestrator's hard process timeout plays this role there.
  */
-internal expect fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt
+internal expect fun scheduleInterrupt(
+    delayMs: Long,
+    graceMs: Long,
+    onExpired: () -> Unit,
+    onAbandoned: () -> Unit
+): TestInterrupt
 
 /**
  * Ends the process with [status]. `kotlin.system.exitProcess` exists on the

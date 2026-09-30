@@ -61,8 +61,6 @@ import kotlin.reflect.KClass
  *                         Overridden by MUTFLOW_TEST_BUDGET_FACTOR. See [TestBudget].
  * @param testBudgetSlackMs Fixed allowance added to the scaled baseline duration. Overridden by
  *                          MUTFLOW_TEST_BUDGET_SLACK_MS.
- * @param baselineTimeoutMs Absolute limit for a test in the baseline run, where no reference exists yet.
- *                          0 disables it. Overridden by MUTFLOW_BASELINE_TIMEOUT_MS.
  * @param testBudgetGraceMs How long an interrupted test may keep running before the run is abandoned
  *                          (the test JVM exits with a diagnostic). 0 never abandons. Overridden by
  *                          MUTFLOW_TEST_BUDGET_GRACE_MS.
@@ -80,6 +78,5 @@ annotation class MutFlowTest(
     val verificationMode: VerificationMode = VerificationMode.STRICT,
     val testBudgetFactor: Int = TestBudget.DEFAULT_FACTOR,
     val testBudgetSlackMs: Long = TestBudget.DEFAULT_SLACK_MS,
-    val baselineTimeoutMs: Long = TestBudget.DEFAULT_BASELINE_TIMEOUT_MS,
     val testBudgetGraceMs: Long = TestBudget.DEFAULT_GRACE_MS
 )

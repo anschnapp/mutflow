@@ -57,12 +57,17 @@ private val watchdog: ScheduledExecutorService by lazy {
 // How often the interrupt is repeated while waiting for the test to return.
 private const val REPEAT_INTERVAL_MS = 100L
 
-internal actual fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt =
-    JvmTestInterrupt(Thread.currentThread(), graceMs, onAbandoned).also { it.schedule(delayMs) }
+internal actual fun scheduleInterrupt(
+    delayMs: Long,
+    graceMs: Long,
+    onExpired: () -> Unit,
+    onAbandoned: () -> Unit
+): TestInterrupt = JvmTestInterrupt(Thread.currentThread(), graceMs, onExpired, onAbandoned).also { it.schedule(delayMs) }
 
 private class JvmTestInterrupt(
     private val target: Thread,
     private val graceMs: Long,
+    private val onExpired: () -> Unit,
     private val onAbandoned: () -> Unit
 ) : TestInterrupt {
     private val lock = Any()
@@ -83,6 +88,7 @@ private class JvmTestInterrupt(
             if (!fired) {
                 fired = true
                 firstInterruptNanos = System.nanoTime()
+                onExpired()
             }
             target.interrupt()
             val sinceFirstMs = (System.nanoTime() - firstInterruptNanos) / 1_000_000

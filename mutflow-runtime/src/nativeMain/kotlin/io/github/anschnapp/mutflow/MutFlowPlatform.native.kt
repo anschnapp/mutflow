@@ -57,7 +57,12 @@ private object NoInterrupt : TestInterrupt {
     override fun cancel(): Boolean = false
 }
 
-internal actual fun scheduleInterrupt(delayMs: Long, graceMs: Long, onAbandoned: () -> Unit): TestInterrupt = NoInterrupt
+internal actual fun scheduleInterrupt(
+    delayMs: Long,
+    graceMs: Long,
+    onExpired: () -> Unit,
+    onAbandoned: () -> Unit
+): TestInterrupt = NoInterrupt
 
 private const val DEFAULT_TIMEOUT_MS = 60_000L
 

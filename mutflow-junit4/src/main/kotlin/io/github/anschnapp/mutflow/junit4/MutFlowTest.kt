@@ -7,8 +7,8 @@ import kotlin.reflect.KClass
 /**
  * Optional settings for a class run with [MutFlowRunner]. Mirrors the JUnit 6 `@MutFlowTest`
  * knob for knob; the same `MUTFLOW_MAX_RUNS`, `MUTFLOW_TIMEOUT_MS`, `MUTFLOW_VERIFICATION_MODE`,
- * `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_BASELINE_TIMEOUT_MS` and
- * `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override it.
+ * `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS`
+ * environment variables override it.
  *
  * ```kotlin
  * @RunWith(MutFlowRunner::class)
@@ -21,8 +21,6 @@ import kotlin.reflect.KClass
  *   under test wait forever, which the loop-based timeout cannot see. 0 disables the budget. See
  *   [TestBudget].
  * @property testBudgetSlackMs Fixed allowance added to the scaled baseline duration.
- * @property baselineTimeoutMs Absolute limit for a test in the baseline run, where no reference
- *   exists yet. 0 disables it.
  * @property testBudgetGraceMs How long an interrupted test may keep running before the run is
  *   abandoned (the test JVM exits with a diagnostic). 0 never abandons.
  * @property wrapTestMethods Run every test method, with its rules and `@Before`/`@After`, inside
@@ -41,7 +39,6 @@ annotation class MutFlowTest(
     val verificationMode: VerificationMode = VerificationMode.STRICT,
     val testBudgetFactor: Int = TestBudget.DEFAULT_FACTOR,
     val testBudgetSlackMs: Long = TestBudget.DEFAULT_SLACK_MS,
-    val baselineTimeoutMs: Long = TestBudget.DEFAULT_BASELINE_TIMEOUT_MS,
     val testBudgetGraceMs: Long = TestBudget.DEFAULT_GRACE_MS,
     val wrapTestMethods: Boolean = false
 )

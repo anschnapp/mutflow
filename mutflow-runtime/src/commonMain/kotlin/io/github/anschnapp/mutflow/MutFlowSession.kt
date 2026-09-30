@@ -376,14 +376,10 @@ class MutFlowSession internal constructor(
     fun <T> runTest(testId: String, block: () -> T): T {
         val run = currentRun
             ?: error("No run active. Call startRun() before runTest().")
-        val limitMs = if (run == 0) {
-            testBudget.limitForBaseline()
-        } else {
-            testBudget.limitForMutationRun(baselineDurationsMs[testId])
-        }
+        val limitMs = if (run == 0) 0 else testBudget.limitForMutationRun(baselineDurationsMs[testId])
         val mutationName = activeMutation?.let(::getDisplayName)
         val interrupt = if (limitMs > 0) {
-            scheduleInterrupt(limitMs, testBudget.graceMs) {
+            scheduleInterrupt(limitMs, testBudget.graceMs, onExpired = MutationRegistry::tripLoopGuard) {
                 onTestAbandoned(abandonedMessage(testId, mutationName, limitMs))
             }
         } else {
@@ -393,6 +389,7 @@ class MutFlowSession internal constructor(
         val start = TimeSource.Monotonic.markNow()
         val outcome = runCatching(block)
         val expired = interrupt?.cancel() ?: false
+        if (expired) MutationRegistry.resetLoopGuard()
         if (run == 0) {
             val elapsedMs = start.elapsedNow().inWholeMilliseconds
             baselineDurationsMs[testId] = (baselineDurationsMs[testId] ?: 0L) + elapsedMs
@@ -407,10 +404,10 @@ class MutFlowSession internal constructor(
         append("Test '").append(testId).append("' exceeded its wall-clock budget of ").append(limitMs).append(" ms")
         if (mutationName != null) {
             append(" with mutation ").append(mutationName).append(" active.\n")
-            append("The mutation likely makes the code under test wait forever. ")
+            append("The mutation likely makes the code under test loop or wait forever. ")
             append("If the mutant is equivalent, add a // mutflow:ignore comment on the affected line.")
         } else {
-            append(" in the baseline run (MUTFLOW_BASELINE_TIMEOUT_MS).")
+            append(".")
         }
     }
 

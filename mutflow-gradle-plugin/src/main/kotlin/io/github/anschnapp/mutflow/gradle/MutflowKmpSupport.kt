@@ -190,7 +190,6 @@ internal object MutflowKmpSupport {
             val budget = mapOf(
                 "MUTFLOW_TEST_BUDGET_FACTOR" to extension.testBudgetFactor.get(),
                 "MUTFLOW_TEST_BUDGET_SLACK_MS" to extension.testBudgetSlackMs.get(),
-                "MUTFLOW_BASELINE_TIMEOUT_MS" to extension.baselineTimeoutMs.get(),
                 "MUTFLOW_TEST_BUDGET_GRACE_MS" to extension.testBudgetGraceMs.get()
             )
             budget.forEach { (name, value) ->

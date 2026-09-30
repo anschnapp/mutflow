@@ -15,9 +15,12 @@ package io.github.anschnapp.mutflow
  * slow suites or too loose to be useful; three times what the same test took
  * a moment ago in the same JVM, plus a fixed slack for jitter, is both.
  *
+ * The baseline run has no budget: it is the reference, and a slow test there
+ * is not caused by a mutation.
+ *
  * Every value can be overridden through the environment:
- * `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`,
- * `MUTFLOW_BASELINE_TIMEOUT_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS`. This is
+ * `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS` and
+ * `MUTFLOW_TEST_BUDGET_GRACE_MS`. This is
  * how the Gradle DSL reaches a multiplatform project, whose test annotation
  * is synthesized with default values.
  *
@@ -25,9 +28,6 @@ package io.github.anschnapp.mutflow
  *   the budget entirely.
  * @property slackMs Fixed allowance added on top of the scaled baseline, so a
  *   test that took 2 ms in baseline is not held to 6 ms.
- * @property baselineTimeoutMs Absolute limit for a test during the baseline
- *   run, where no reference exists yet, and for a test the baseline never saw.
- *   0 leaves those unlimited.
  * @property graceMs How long after the first interrupt to keep waiting for the
  *   test to return before the run is abandoned (the JVM exits with a
  *   diagnostic, because a thread that ignores interruption cannot be stopped
@@ -36,13 +36,11 @@ package io.github.anschnapp.mutflow
 data class TestBudget(
     val factor: Int = DEFAULT_FACTOR,
     val slackMs: Long = DEFAULT_SLACK_MS,
-    val baselineTimeoutMs: Long = DEFAULT_BASELINE_TIMEOUT_MS,
     val graceMs: Long = DEFAULT_GRACE_MS
 ) {
     init {
         require(factor >= 0) { "factor must not be negative, got: $factor" }
         require(slackMs >= 0) { "slackMs must not be negative, got: $slackMs" }
-        require(baselineTimeoutMs >= 0) { "baselineTimeoutMs must not be negative, got: $baselineTimeoutMs" }
         require(graceMs >= 0) { "graceMs must not be negative, got: $graceMs" }
     }
 
@@ -54,21 +52,17 @@ data class TestBudget(
      *
      * @param baselineDurationMs What the test took in the baseline run, or null
      *   if the baseline never ran it (a different filter, or a test that
-     *   skipped itself); such a test falls back to [baselineTimeoutMs].
+     *   skipped itself); such a test has no budget, as there is nothing to scale.
      */
     fun limitForMutationRun(baselineDurationMs: Long?): Long = when {
         !enabled -> 0
-        baselineDurationMs == null -> baselineTimeoutMs
+        baselineDurationMs == null -> 0
         else -> baselineDurationMs * factor + slackMs
     }
-
-    /** The limit for one test in the baseline run, or 0 for none. */
-    fun limitForBaseline(): Long = if (enabled) baselineTimeoutMs else 0
 
     companion object {
         const val DEFAULT_FACTOR = 3
         const val DEFAULT_SLACK_MS = 1_000L
-        const val DEFAULT_BASELINE_TIMEOUT_MS = 60_000L
         const val DEFAULT_GRACE_MS = 10_000L
 
         /** No budget: only the loop guard remains. */
@@ -82,7 +76,6 @@ data class TestBudget(
         fun fromEnvironment(base: TestBudget = TestBudget()): TestBudget = TestBudget(
             factor = override("MUTFLOW_TEST_BUDGET_FACTOR", base.factor) { it.toIntOrNull()?.takeIf { n -> n >= 0 } },
             slackMs = override("MUTFLOW_TEST_BUDGET_SLACK_MS", base.slackMs) { it.toLongOrNull()?.takeIf { n -> n >= 0 } },
-            baselineTimeoutMs = override("MUTFLOW_BASELINE_TIMEOUT_MS", base.baselineTimeoutMs) { it.toLongOrNull()?.takeIf { n -> n >= 0 } },
             graceMs = override("MUTFLOW_TEST_BUDGET_GRACE_MS", base.graceMs) { it.toLongOrNull()?.takeIf { n -> n >= 0 } }
         )
 

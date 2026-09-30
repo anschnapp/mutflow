@@ -55,9 +55,6 @@ abstract class MutflowExtension {
     /** Fixed allowance in milliseconds added to the scaled baseline duration. */
     abstract val testBudgetSlackMs: Property<Long>
 
-    /** Absolute per-test limit in milliseconds during the baseline run (0 disables). */
-    abstract val baselineTimeoutMs: Property<Long>
-
     /**
      * How long in milliseconds an interrupted test may keep running before the
      * test JVM is abandoned with a diagnostic (0 never abandons).
@@ -113,7 +110,6 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         extension.verificationMode.convention("STRICT")
         extension.testBudgetFactor.convention(3)
         extension.testBudgetSlackMs.convention(1_000L)
-        extension.baselineTimeoutMs.convention(60_000L)
         extension.testBudgetGraceMs.convention(10_000L)
 
         target.plugins.withId("org.jetbrains.kotlin.multiplatform") {
