@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.2]
+### Fixed
+- Code that the kotlinx.serialization plugin generates is no longer mutated. In a build that passes mutflow with `-Xplugin` alone, mutflow runs after that plugin and found its code in the target: the `write$Self` function of a `@Serializable` class, and, when a pattern such as `com.example.Event.**` also matched it, the `$serializer` object nested in the class. A class with two properties got nine mutants nobody wrote (`write$Self() → removed`, `serialize() → removed`, `shouldEncodeElementDefault() → !shouldEncodeElementDefault()`, `decodeSequentially() → !decodeSequentially()` and comparisons), reported on line 0 or on the class declaration. A class another compiler plugin declares is now never a target, and members with the serialization plugin's own origin are skipped like the compiler-generated ones. With mutflow on the compiler plugin classpath it runs first and never saw this code, which is why the sample module pins the order for its new `SerializableTarget`.
+
 ## [1.5.1]
 ### Fixed
 - Compiler crash on arithmetic with an operator declared as an extension inside a class or object (`object Ops { operator fun Money.plus(that: Money): Money }`, called through `with(Ops) { a + b }` or an import of `Ops.plus`). Such a call passes the object as dispatch receiver in front of the two operands, and the variant took the receiver for the left operand and dropped the right one, so codegen failed with `No argument for parameter`. All the arguments are now hoisted and passed on, the last two being the operands. The replacement operator was also the first one of that name in the class, whatever its operand types; it is now the one with the same receivers, parameters and return type. Without such a counterpart, a primitive keeps the first operator of that name as before (`Char - Char` becomes `Char.plus(Int)`), and any other operator is not mutated. (#35)

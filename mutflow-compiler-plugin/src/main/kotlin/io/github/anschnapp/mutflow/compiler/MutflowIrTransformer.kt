@@ -6,6 +6,8 @@ import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrDeclaration
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrFile
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -180,8 +182,16 @@ class MutflowIrTransformer(
         "GENERATED_FULL_VALUE_CLASS_MEMBER",
         "GENERATED_MULTI_FIELD_VALUE_CLASS_MEMBER",
         "DEFAULT_PROPERTY_ACCESSOR",
-        "DELEGATED_MEMBER"
+        "DELEGATED_MEMBER",
+        // What kotlinx.serialization builds in the IR of a @Serializable class: `write$Self`.
+        "KOTLINX_SERIALIZATION"
     )
+
+    // A declaration another compiler plugin declared, such as the `$serializer` object
+    // kotlinx.serialization nests in a @Serializable class. Like the plugin's IR-built members
+    // above, its code only exists by the time mutflow runs when that plugin runs first, which
+    // is the case in a build that passes mutflow with -Xplugin alone.
+    private fun IrDeclaration.isGeneratedByPlugin(): Boolean = origin is IrDeclarationOrigin.GeneratedByPlugin
     private var mutationPointCounter = 0
 
     // Tracks how many times the same (lineNumber, originalOperator) pair has been seen
@@ -296,8 +306,12 @@ class MutflowIrTransformer(
         val previousPointCounter = mutationPointCounter
         val previousLineOperatorOccurrences = lineOperatorOccurrences.toMap()
 
-        isInMutationTarget = declaration.hasAnnotation(mutationTargetFqName)
+        // A generated class is never a target, whatever pattern its name matches: `Foo.**`
+        // also names the `Foo.$serializer` object of a @Serializable class.
+        isInMutationTarget = !declaration.isGeneratedByPlugin() && (
+            declaration.hasAnnotation(mutationTargetFqName)
                 || matchesTargetPattern(declaration.fqNameWhenAvailable?.asString())
+            )
         currentClass = declaration
 
         debug("  isInMutationTarget: $isInMutationTarget")
@@ -346,7 +360,8 @@ class MutflowIrTransformer(
         // can kill them, and selection serves least-touched points first, so the noise
         // eats the run budget. The generated equals of a wide data class is also where
         // one switch per property comparison breaks the JVM's 64 KB method limit.
-        if (isInMutationTarget && declaration.origin.name in compilerGeneratedOriginNames) {
+        // The same goes for a member another compiler plugin added to the class.
+        if (isInMutationTarget && (declaration.origin.name in compilerGeneratedOriginNames || declaration.isGeneratedByPlugin())) {
             isInSuppressedScope = true
         }
 
