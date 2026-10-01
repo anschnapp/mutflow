@@ -96,4 +96,58 @@ class DiscardedResultTargetTest {
         }
         assertEquals(emptyList(), mutations.inversions(), "try and catch results are discarded, got $mutations")
     }
+
+    @Test
+    fun `discarded add in a let is not inverted`() {
+        val mutations = discoveredMutations { target.addInLet(1) }
+        assertEquals(emptyList(), mutations.inversions(), "The lambda's value is the discarded value of let, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a run is not inverted`() {
+        val mutations = discoveredMutations {
+            target.addInRun(1)
+            target.addInPlainRun(1)
+        }
+        assertEquals(emptyList(), mutations.inversions(), "The lambda's value is the discarded value of run, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a with is not inverted`() {
+        val mutations = discoveredMutations { target.addInWith(1) }
+        assertEquals(emptyList(), mutations.inversions(), "The lambda's value is the discarded value of with, got $mutations")
+    }
+
+    @Test
+    fun `add in a let whose value is used keeps its inversion`() {
+        val mutations = discoveredMutations { target.addInLetUsed(1) }
+        assertEquals(1, mutations.inversions().size, "Expected the inversion point, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a labeled return of a let is not inverted`() {
+        val mutations = discoveredMutations {
+            target.addInLetWithReturn(-1) // the labeled return runs
+            target.addInLetWithReturn(1) // the last expression runs
+        }
+        assertEquals(emptyList(), mutations.inversions(), "Both values of the discarded let are discarded, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in nested scope functions is not inverted`() {
+        val mutations = discoveredMutations { target.addInNestedScopes(1) }
+        assertEquals(emptyList(), mutations.inversions(), "The inner run's value is the discarded value of let, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a let inside a builder lambda is not inverted`() {
+        val mutations = discoveredMutations { target.addInLetInsideBuilder(1) }
+        assertEquals(emptyList(), mutations.inversions(), "The let is a discarded statement of the builder lambda, got $mutations")
+    }
+
+    @Test
+    fun `add in a lambda whose value the discarded call reads keeps its inversion`() {
+        val mutations = discoveredMutations { target.addInAny(listOf(1)) }
+        assertEquals(1, mutations.inversions().size, "any decides on the lambda's value, got $mutations")
+    }
 }

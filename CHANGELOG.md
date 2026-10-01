@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.2]
+### Fixed
+- Boolean inversion no longer mutates a call whose result is the discarded value of a scope function. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run` or `with` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested scope functions. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
+
 ## [1.5.1]
 ### Fixed
 - Compiler crash on arithmetic with an operator declared as an extension inside a class or object (`object Ops { operator fun Money.plus(that: Money): Money }`, called through `with(Ops) { a + b }` or an import of `Ops.plus`). Such a call passes the object as dispatch receiver in front of the two operands, and the variant took the receiver for the left operand and dropped the right one, so codegen failed with `No argument for parameter`. All the arguments are now hoisted and passed on, the last two being the operands. The replacement operator was also the first one of that name in the class, whatever its operand types; it is now the one with the same receivers, parameters and return type. Without such a counterpart, a primitive keeps the first operator of that name as before (`Char - Char` becomes `Char.plus(Int)`), and any other operator is not mutated. (#35)

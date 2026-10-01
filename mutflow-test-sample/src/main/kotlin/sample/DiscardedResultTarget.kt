@@ -55,4 +55,54 @@ class DiscardedResultTarget {
             items.add(0)
         }
     }
+
+    /** `let` as a statement: the lambda's value is the value of `let`, which is discarded. */
+    fun addInLet(x: Int?) {
+        x?.let { items.add(it) }
+    }
+
+    /** `run` with a receiver hands back the lambda's value as `let` does. */
+    fun addInRun(x: Int) {
+        items.run { add(x) }
+    }
+
+    /** `run` without a receiver. */
+    fun addInPlainRun(x: Int) {
+        run { items.add(x) }
+    }
+
+    /** `with` hands back the lambda's value too. */
+    fun addInWith(x: Int) {
+        with(items) { add(x) }
+    }
+
+    /** `let` whose value is returned: the inversion point must stay. */
+    fun addInLetUsed(x: Int?): Boolean? = x?.let { items.add(it) }
+
+    /** A labeled return hands its value to the discarded `let` as the last expression does. */
+    fun addInLetWithReturn(x: Int) {
+        x.let {
+            if (it < 0) return@let items.add(0)
+            items.add(it)
+        }
+    }
+
+    /** Scope functions nested in each other: the innermost value is the one discarded. */
+    fun addInNestedScopes(x: Int?) {
+        x?.let { value -> items.run { add(value) } }
+    }
+
+    /**
+     * A discarded `let` inside a builder lambda, followed by another statement: as the last
+     * statement its lambda would be typed Unit and `add` coerced, which was never inverted.
+     */
+    fun addInLetInsideBuilder(x: Int?): List<Int> = buildList {
+        x?.let { add(it) }
+        add(0)
+    }
+
+    /** `any` is discarded, but it reads what its lambda returns: the inversion point must stay. */
+    fun addInAny(xs: List<Int>) {
+        xs.any { items.add(it) }
+    }
 }
