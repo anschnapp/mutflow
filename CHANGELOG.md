@@ -2,7 +2,7 @@
 
 ## [1.5.2]
 ### Fixed
-- Boolean inversion no longer mutates a call whose result is the discarded value of a scope function. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run` or `with` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested scope functions. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
+- Boolean inversion no longer mutates a call whose result is the discarded value of a scope function, `synchronized` or `use`. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run`, `with`, `synchronized` or `use` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested calls of these. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
 
 ## [1.5.1]
 ### Fixed

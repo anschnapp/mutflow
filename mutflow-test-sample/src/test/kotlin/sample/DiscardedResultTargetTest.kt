@@ -5,6 +5,7 @@ import io.github.anschnapp.mutflow.Mutation
 import io.github.anschnapp.mutflow.MutationRegistry
 import io.github.anschnapp.mutflow.Selection
 import io.github.anschnapp.mutflow.Shuffle
+import java.io.Closeable
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -143,6 +144,21 @@ class DiscardedResultTargetTest {
     fun `discarded add in a let inside a builder lambda is not inverted`() {
         val mutations = discoveredMutations { target.addInLetInsideBuilder(1) }
         assertEquals(emptyList(), mutations.inversions(), "The let is a discarded statement of the builder lambda, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a synchronized block is not inverted`() {
+        val mutations = discoveredMutations { target.addInSynchronized(1) }
+        assertEquals(emptyList(), mutations.inversions(), "The lambda's value is the discarded value of synchronized, got $mutations")
+    }
+
+    @Test
+    fun `discarded add in a use block is not inverted`() {
+        val mutations = discoveredMutations {
+            target.addInUse(Closeable { }, 1)
+            target.addInAutoCloseableUse(AutoCloseable { }, 1)
+        }
+        assertEquals(emptyList(), mutations.inversions(), "The lambda's value is the discarded value of use, got $mutations")
     }
 
     @Test

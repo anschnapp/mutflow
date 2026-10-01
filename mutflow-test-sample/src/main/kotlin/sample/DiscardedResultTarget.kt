@@ -1,6 +1,7 @@
 package sample
 
 import io.github.anschnapp.mutflow.MutationTarget
+import java.io.Closeable
 
 /**
  * Boolean calls in statement position with their result discarded. Inverting such a result
@@ -99,6 +100,21 @@ class DiscardedResultTarget {
     fun addInLetInsideBuilder(x: Int?): List<Int> = buildList {
         x?.let { add(it) }
         add(0)
+    }
+
+    /** `synchronized` hands back the lambda's value as a scope function does. */
+    fun addInSynchronized(x: Int) {
+        synchronized(items) { items.add(x) }
+    }
+
+    /** `use` on a `Closeable` (`kotlin.io.use`) hands back the lambda's value too. */
+    fun addInUse(resource: Closeable, x: Int) {
+        resource.use { items.add(x) }
+    }
+
+    /** `use` on an `AutoCloseable` is a function of its own (`kotlin.use`). */
+    fun addInAutoCloseableUse(resource: AutoCloseable, x: Int) {
+        resource.use { items.add(x) }
     }
 
     /** `any` is discarded, but it reads what its lambda returns: the inversion point must stay. */

@@ -203,7 +203,7 @@ class MutflowIrTransformer(
      * entering a block, before its statements are transformed, so the identity of the
      * original call still matches when [visitCall] reaches it. Only the outermost call
      * of a statement is discarded: in `rows.add(x > 0)` the `>` result is used by `add`.
-     * The one exception is a scope function that hands back what its lambda returns
+     * The one exception is a function that hands back what its lambda returns
      * ([lambdaValueFunctions]): in `x?.let { rows.add(it) }` the `add` result is the value
      * of `let`, and is discarded with it.
      */
@@ -212,10 +212,19 @@ class MutflowIrTransformer(
 
     /**
      * The standard library functions whose value is the value of their lambda and nothing
-     * else. Other functions taking a lambda are left alone even when they return its type:
-     * `any` or a retry helper reads what the lambda returns, so a mutant there is not equivalent.
+     * else: the scope functions, `synchronized`, and `use` on a `Closeable` (`kotlin.io.use`)
+     * or an `AutoCloseable` (`kotlin.use`). Other functions taking a lambda are left alone
+     * even when they return its type: `any` or a retry helper reads what the lambda returns,
+     * so a mutant there is not equivalent.
      */
-    private val lambdaValueFunctions = setOf("kotlin.let", "kotlin.run", "kotlin.with")
+    private val lambdaValueFunctions = setOf(
+        "kotlin.let",
+        "kotlin.run",
+        "kotlin.with",
+        "kotlin.synchronized",
+        "kotlin.io.use",
+        "kotlin.use"
+    )
 
     override fun visitBlockBody(body: IrBlockBody): IrBody {
         body.statements.forEach { recordDiscardedCall(it) }
