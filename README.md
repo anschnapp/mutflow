@@ -531,7 +531,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 - **Timeout detection** - Mutations that cause infinite loops (e.g., flipping `<` in a loop condition) are automatically detected and reported. Compiler-injected `checkTimeout()` at the top of every loop body ensures even tight loops are caught. Test fails with actionable guidance to add `// mutflow:ignore`
 - **Test budget** - Mutations that make the code under test wait forever outside any loop (a flow that never emits, a latch never released) are caught by a per-test wall-clock budget derived from the test's own baseline duration; the test is interrupted and reported as timed out
 - **Partial run detection** - Automatically skips mutation testing when running single tests from IDE (prevents false positives)
-- **Parallel test safe** - Mutation test classes can run alongside other tests in parallel; `underTest {}` blocks serialize automatically via a synchronized lock, without using `ThreadLocal` (keeping the door open for coroutine/reactive support)
+- **Overlap guard** - Mutations are activated process-wide, so mutflow test classes run one at a time per JVM; opening a second session while one is open fails fast instead of producing wrong verdicts. Separate test JVMs (`maxParallelForks`) are fully independent
 - **Session-based architecture** - Clean lifecycle, no leaked global state
 
 **Extensibility**

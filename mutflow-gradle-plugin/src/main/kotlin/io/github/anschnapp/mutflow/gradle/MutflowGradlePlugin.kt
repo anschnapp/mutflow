@@ -47,7 +47,7 @@ abstract class MutflowExtension {
     /**
      * Wall-clock budget per test during mutation runs, as a multiple of the
      * test's own baseline duration (0 disables). Catches mutations that make
-     * the code under test wait forever. JVM targets only; a hung native run
+     * the code under test wait forever. jvm() target only; a hung native run
      * is caught by the orchestrator's process timeout instead.
      */
     abstract val testBudgetFactor: Property<Int>
