@@ -825,10 +825,10 @@ This is useful for:
 - By the time mutflow matures, K2 will be standard
 
 ### Test Build Only
-The compiler plugin is applied ONLY to test compilation, never production:
-- Gradle plugin applies to `testCompile` tasks only
-- Runtime guards detect non-test context and fail fast
-- Build verification can scan production artifacts for mutation markers
+The compiler plugin is applied ONLY to the separate mutated compilation the tests run against, never to production:
+- Gradle plugin applies it to the `mutatedMain` compilation only (plus annotate mode on the KMP `jvm()` target's `mutatedTest`); the regular `main` compilation and everything built from it stay untouched
+- There is no runtime guard: `MutationRegistry` cannot tell a test from production, and with no open session `check()` simply returns `null`. Keeping instrumented classes out of production artifacts is entirely the build's job
+- For a hard guarantee, the shipped CLI check `scripts/mutflow-verify-jar.sh` can run as a step in the CI/release pipeline, for example right before `docker build` or publishing: `scripts/mutflow-verify-jar.sh build/libs/*.jar || exit 1`. It fails when a jar (nested Spring Boot / fat-jar archives included) contains classes referencing `MutationRegistry` or bundles the mutflow core/runtime. See the README section "Verifying Production Artifacts"
 
 ### Thread Safety and Parallel Test Execution
 
