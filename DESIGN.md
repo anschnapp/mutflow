@@ -538,6 +538,53 @@ class CalculatorTest { ... }
 **Design rationale - fail loudly, not silently:**
 When a timeout occurs, the test **fails** rather than silently marking the mutation as killed. This ensures the developer notices and takes action (adds `// mutflow:ignore` on the affected line). Silent handling would mask slow mutation runs that accumulate over time.
 
+#### Per-Test Wall-Clock Budget (Hangs Outside Loops)
+
+The loop guard only sees loops inside mutated code. A mutation can also make the code under test wait forever without looping: a flow that never emits, a latch that is never released, a future that never completes. The test thread parks somewhere no `checkTimeout()` runs, and the build hangs. To cover that, every test gets a wall-clock budget during mutation runs, derived from its own baseline duration:
+
+```
+budget = baseline duration × factor + slackMs      (defaults: 3 × baseline + 1 s)
+```
+
+The budget lives in the runtime, in `MutFlowSession.runTest(testId) { ... }`, so every framework integration shares it. The JUnit 6 extension calls it from an `InvocationInterceptor` around each test method, and the JUnit 4 runner from `methodInvoker`. In both, `@BeforeEach`/`@AfterEach` (JUnit 4: rules and `@Before`/`@After`) stay outside the budget.
+
+**How it works:**
+1. **Baseline run**: `runTest` only measures. The duration is stored under the test's ID (JUnit 6: method name plus display name, since the unique ID changes per class-template invocation; JUnit 4: the description's display name). The baseline itself has no budget: it is the reference, and a slow test there is not caused by a mutation.
+2. **Mutation run**: a watchdog (one daemon thread per JVM) is scheduled for the test's limit. A test the baseline never ran has no budget, as there is nothing to scale.
+3. **On expiry** the watchdog first trips the loop guard (`MutationRegistry.tripLoopGuard()`) and then interrupts the test thread. The interrupt is repeated every 100 ms, because interrupted code may swallow it and keep waiting.
+4. **When the test returns**, `runTest` cancels the watchdog, resets the loop guard, clears any interrupt status it caused (so nothing leaks into the next test) and throws `MutationTimedOutException`, with whatever the test threw as `cause`. From there it is handled exactly like a loop timeout.
+5. **Grace period, then abandon**: if the test still has not returned `graceMs` after the first interrupt, the test JVM exits with a diagnostic naming the test and the mutation. A thread that ignores interruption cannot be stopped, and it holds the `MutationRegistry` lock that every later run needs, so the only alternative is a build that hangs until CI kills it.
+
+**Why the budget also trips the loop guard:** a tight loop never looks at the interrupt. Without the trip, a mutation that loops forever would run past its budget, ignore every interrupt and end in the abandon path, so the JVM would exit instead of the mutation being reported as timed out. The trip is a flag that `checkTimeout()` reads in addition to the deadline, not a deadline moved to "now": with the JUnit 4 runner's `wrapTestMethods`, the `underTest` session opens around the rules and `@Before`, before the budget starts, so a deadline fixed at that point would not see it. The flag is process-global like the session slot. That is safe because only one session can be open at a time (see [Thread Safety](#thread-safety-and-parallel-test-execution)). Test methods of one class running concurrently would still share it, as well as the time spent waiting for the registry lock.
+
+**Two layers, two jobs:** `timeoutMs` and the budget overlap but are not redundant:
+
+| | Loop guard deadline (`timeoutMs`) | Test budget |
+|---|---|---|
+| Catches | Infinite loops in mutated code | Waits outside mutated loops, plus loops (via the trip) |
+| Measured over | One `underTest` block | One test method |
+| Limit | Fixed (default 60 s) | Relative to the test's baseline duration |
+| Stops by | Throwing from the loop | Interrupt, then loop-guard trip, then abandoning the JVM |
+| Applies when | Always in mutation runs | Only where an integration calls `runTest` and the baseline measured the test |
+
+The deadline remains the safety net wherever the budget does not apply: the budget is disabled (`factor = 0`), a test has no baseline measurement, a `@TestFactory` dynamic test is not wrapped by the interceptor, or the code runs on Kotlin/Native (see below).
+
+**Fail loudly applies here too:** a test over its budget fails the build in every verification mode, like a loop timeout. Counting it as killed instead was considered and rejected. A mutant close to its limit would then be killed in one build and evaluated normally in the next, depending only on timing: a verdict that silently flips. Failing loudly surfaces the case with the mutation's name, and the developer decides (`// mutflow:ignore`, or a roomier budget). The price is that the budget must not be tight enough for ordinary timing noise (GC pauses, a loaded CI machine) to cross it, which is what `slackMs` is for.
+
+**Kotlin/Native:** the interrupt is an inert `expect`/`actual`. The test process is single-threaded and hosts one mutation run, so a hung run is a hung process, which the Gradle orchestrator's hard process timeout already kills (see [DESIGN-MULTIPLATFORM.md](DESIGN-MULTIPLATFORM.md#timeout-path-verification-post-phase-3)).
+
+**Configuration:**
+```kotlin
+@MutFlowTest(
+    testBudgetFactor = 3,       // default; 0 disables the budget
+    testBudgetSlackMs = 1_000,  // default; fixed allowance on top of the scaled baseline
+    testBudgetGraceMs = 10_000  // default; 0 never abandons
+)
+class CalculatorTest { ... }
+```
+
+`MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` override the annotation values. They are resolved in the runtime (`TestBudget.fromEnvironment`), which is how the `mutflow { }` DSL reaches the `jvm()` target of a KMP project, whose `@MutFlowTest` is synthesized with default values.
+
 ### 10. Verification Mode
 
 Controls how surviving mutations are handled. Three modes are available:
@@ -778,10 +825,10 @@ This is useful for:
 - By the time mutflow matures, K2 will be standard
 
 ### Test Build Only
-The compiler plugin is applied ONLY to test compilation, never production:
-- Gradle plugin applies to `testCompile` tasks only
-- Runtime guards detect non-test context and fail fast
-- Build verification can scan production artifacts for mutation markers
+The compiler plugin is applied ONLY to the separate mutated compilation the tests run against, never to production:
+- Gradle plugin applies it to the `mutatedMain` compilation only (plus annotate mode on the KMP `jvm()` target's `mutatedTest`); the regular `main` compilation and everything built from it stay untouched
+- There is no runtime guard: `MutationRegistry` cannot tell a test from production, and with no open session `check()` simply returns `null`. Keeping instrumented classes out of production artifacts is entirely the build's job
+- For a hard guarantee, the shipped CLI check `scripts/mutflow-verify-jar.sh` can run as a step in the CI/release pipeline, for example right before `docker build` or publishing: `scripts/mutflow-verify-jar.sh build/libs/*.jar || exit 1`. It fails when a jar (nested Spring Boot / fat-jar archives included) contains classes referencing `MutationRegistry` or bundles the mutflow core/runtime. See the README section "Verifying Production Artifacts"
 
 ### Thread Safety and Parallel Test Execution
 
@@ -805,7 +852,7 @@ synchronized(lock) {
 }
 ```
 
-This means `underTest {}` blocks from different test classes serialize at the `MutationRegistry` level. Between these blocks (test setup, assertions, Spring context initialization, non-mutation tests), everything runs freely in parallel.
+The lock keeps two `underTest {}` blocks from overlapping, but it cannot keep two test classes under mutation apart: the session slot is process-global, so a second class's runs would be steered by the first class's active mutation and its verdicts would be meaningless. `MutFlow.createSession()` therefore refuses to open a session while another one is open, and fails with a message pointing at parallel test execution. A test task that runs mutflow classes must run them one class at a time in each JVM (Gradle's `maxParallelForks` is fine, since every fork is its own JVM).
 
 **Session routing via thread-to-session map**
 
@@ -818,8 +865,9 @@ Each test class has its own `MutFlowSession`, but the parameterless `MutFlow.und
 This is not a `ThreadLocal` - it's an explicit `ConcurrentHashMap<Long, String>` used only for test-thread routing. The coroutine concern doesn't apply here because `underTest()` is always called from the test thread, before entering the `withSession` synchronized block where production code (potentially using coroutines) executes.
 
 **Summary of parallel behavior:**
-- Non-mutation test classes: fully parallel, unaffected
-- Mutation test classes: `underTest {}` blocks serialize; everything else (setup, assertions) is parallel
+- Mutation test classes: one at a time per JVM; opening a second session while one is open fails fast instead of producing wrong verdicts
+- Separate JVMs (`maxParallelForks`): fully independent, each has its own registry
+- Other test classes running alongside in the same JVM: fine as long as they do not call mutated code. A `check()` call reads the global session from any thread, so mutated code reached by a parallel test while an `underTest {}` block is open sees the active mutation
 - Coroutines/reactive inside `underTest {}`: works correctly (lock is held for the entire block)
 
 ## Tradeoffs and Limitations
@@ -870,6 +918,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - `MutationRegistry` with `check()`, `checkTimeout()`, `startSession()`, `endSession()`, `withSession()` API
 - `withSession()`: synchronized wrapper that ensures only one mutation session is active at a time; its `onSessionEnd` hook delivers discovered points whether the block returns or throws
 - `checkTimeout()`: compiler-injected loop guard that throws `MutationTimedOutException` when deadline exceeded
+- `tripLoopGuard()` / `resetLoopGuard()`: makes `checkTimeout()` throw regardless of the deadline while a test is over its wall-clock budget
 - Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `@MutationTarget` annotation for scoping mutations
 - Occurrence-on-line tracking for disambiguating duplicate operators on the same source line
@@ -961,6 +1010,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Target filtering: `includeTargets`/`excludeTargets` for scoping mutations by class
 - `MutationsExhaustedException` when all mutations tested
 - `VerificationMode` enum: `STRICT`, `LENIENT`, `DISABLED`
+- Per-test wall-clock budget: `MutFlowSession.runTest()` measures each test in the baseline run and interrupts it in mutation runs once it exceeds `TestBudget` (factor × baseline + slack), with a grace period before the JVM is abandoned
 
 **mutflow-junit6:**
 - `@MutFlowTest` meta-annotation combining `@ClassTemplate` + `@ExtendWith`
@@ -968,6 +1018,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Session lifecycle management (create, startRun, endRun, close)
 - Mutation selection at context creation for accurate display names
 - Verification mode resolution: annotation parameter with `MUTFLOW_VERIFICATION_MODE` env var override
+- `InvocationInterceptor` that runs each test method through `MutFlowSession.runTest()` for the wall-clock budget
 
 **mutflow-test-sample:**
 - Integration tests demonstrating both APIs

@@ -765,6 +765,13 @@ remedy, `// mutflow:ignore` on the affected line - which was also verified
 end-to-end on the native backend (the suppressed loop produces no mutation
 points; comment-based suppression is compile-time and backend-neutral).
 
+The JVM later gained a third layer, the per-test wall-clock budget (see
+DESIGN.md, "Per-Test Wall-Clock Budget"), for mutations that wait forever
+outside any loop. On Native its interrupt is an inert `expect`/`actual`: the
+test process is single-threaded and hosts one mutation run, so a hung run is a
+hung process, and the hard process kill above already plays the budget's role.
+The `testBudget*` DSL properties therefore only reach the `jvm()` target.
+
 Incidental finding, not native-specific: compound assignments (`sum += i`,
 `i += 1`) are never mutated on any backend - `ArithmeticOperator` matches the
 `PLUS`/`MINUS`/... origins but not `PLUSEQ`/`MINUSEQ`/... A possible future
