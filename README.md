@@ -108,6 +108,8 @@ mutflow {
 
 Both can be combined freely. If a class matches either mechanism, it will be mutated. The Gradle config is useful when you prefer not to annotate production code with test-related annotations.
 
+**Top-level functions and properties** belong to no class. They are targeted through the file: `@file:MutationTarget` at the top of the file, or a pattern naming the file's facade class, which is the file name with a `Kt` suffix (`com.example.StringUtilsKt` for `StringUtils.kt`) or the `@file:JvmName` name when the file declares one. The parts of a `@file:JvmMultifileClass` facade are all matched by the facade name; their mutation ids carry the part class (`com.example.Utils__StringUtilsKt`) so the parts do not collide. The classes declared in such a file are not included; each is a target of its own, as a nested class is not covered by its outer class.
+
 ### Disabling Mutation Testing
 
 You can completely disable mutation testing without removing the plugin. When disabled, no compiler plugin is registered and no extra compilation happens - zero overhead.
@@ -172,6 +174,49 @@ The `@MutFlowTest` annotation handles everything:
 - **Run without mutations**: Discovers mutation points, all tests pass normally
 - **Mutation runs**: Each mutation is activated across all tests; if any test catches it (assertion fails), the mutation is killed and tests appear green
 - **Survivor detection**: If no test catches a mutation, `MutantSurvivedException` is thrown and the build fails
+
+### JUnit 4
+
+Projects still on JUnit 4, which includes every Android unit test suite, use the runner from the
+`mutflow-junit4` artifact instead of `@MutFlowTest`. Tests are written the same way:
+
+```kotlin
+dependencies {
+    testImplementation("io.github.anschnapp.mutflow:mutflow-junit4:<latest-version>")
+}
+```
+
+```kotlin
+@RunWith(MutFlowRunner::class)
+class CalculatorTest {
+    private val calculator = Calculator()
+
+    @Test
+    fun `isPositive returns true for positive numbers`() {
+        val result = MutFlow.underTest { calculator.isPositive(5) }
+        assertTrue(result)
+    }
+}
+```
+
+The runner performs the baseline run and one run per mutation, stops a mutation run at its first
+failing test, and reports each mutation run as a test named `Mutation: (Calculator.kt:7) > → >=`
+that fails when the mutant survives (STRICT) or timed out. The optional
+`@MutFlowTest(...)` annotation from the `junit4` package carries the same settings as the JUnit 6
+one, with the same `MUTFLOW_*` environment overrides, and every test method runs under the same
+[wall-clock budget](#test-budget-hangs-outside-loops), rules and `@Before`/`@After` excluded.
+Partial runs (one test picked in the IDE) skip mutation testing as on JUnit 6.
+
+An existing suite can be mutation-tested without touching its tests: `@MutFlowTest(wrapTestMethods = true)`
+wraps every test method, including rules and `@Before`/`@After`, in `underTest`. Such tests must
+not call `MutFlow.underTest {}` themselves, as the blocks do not nest.
+
+The run loop is a plain class, `MutFlowRun`, so a runner with its own threading can reuse it. A
+Robolectric runner, whose test bodies execute on a sandbox thread where the thread-keyed
+`MutFlow.underTest` finds no session, is its `RobolectricTestRunner` with `methodBlock` passed
+through `MutFlowRun.wrap`, `methodInvoker` through `MutFlowRun.budget` and `run` through
+`MutFlowRun.run`; the sandbox must also be told not to load the `io.github.anschnapp.mutflow`
+package into its own class loader.
 
 ### Example Output
 
@@ -260,6 +305,27 @@ class CalculatorTest { ... }
 ```
 
 The timeout check is nearly free: a single `System.nanoTime()` comparison per loop iteration during mutation runs, and an instant null-check return during baseline or production execution.
+
+### Test Budget (Hangs Outside Loops)
+
+The loop check only sees loops inside mutated code. A mutation can also make the code under test wait forever without looping - a flow that never emits, a latch that is never released, a future that never completes - and park the test thread. For that, every test gets a **wall-clock budget** during mutation runs, derived from the test's own baseline duration:
+
+```
+budget = baseline duration × testBudgetFactor + testBudgetSlackMs     (default: 3× + 1 s)
+```
+
+- A test that exceeds its budget is **interrupted** and fails with `MutationTimedOutException`, like a loop timeout; the mutation shows as `⏱` in the summary.
+- A loop in mutated code is stopped at the budget too: a tight loop never looks at the interrupt, so running out of budget also trips the loop check, and the loop fails on its next iteration.
+- The budget is relative on purpose: a fixed limit is too tight for slow suites or too loose to be useful, while three times what the same test took a moment ago in the same JVM is both.
+- If the interrupted test still has not returned after `testBudgetGraceMs` (default 10 s), the run is **abandoned**: the test JVM exits with a diagnostic naming the test and the mutation. A thread that ignores interruption cannot be stopped, and it holds the lock every later mutation run needs, so the alternative is a build that hangs until CI kills it.
+- The baseline run has no budget: it is the reference, and a slow test there is not caused by a mutation. A test the baseline never ran has no budget either, as there is nothing to scale.
+
+```kotlin
+@MutFlowTest(testBudgetFactor = 5, testBudgetSlackMs = 2_000)  // roomier budget
+@MutFlowTest(testBudgetFactor = 0)                             // budget off, loop check only
+```
+
+The `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` environment variables override the annotation values. The budget covers the test method itself (not `@BeforeEach`/`@AfterEach`; on JUnit 4 not rules or `@Before`/`@After`), on the JVM only: a hung Kotlin/Native run is a hung process, which the Gradle orchestrator's process timeout already kills.
 
 ### Traps (Pinning Mutations)
 
@@ -468,6 +534,7 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 **Core**
 - **JUnit 6 integration** - `@MutFlowTest` annotation for automatic multi-run orchestration
+- **JUnit 4 integration** - `@RunWith(MutFlowRunner::class)` from `mutflow-junit4`, same run loop and configuration; opt-in whole-method wrapping for suites that cannot call `MutFlow.underTest {}` (see [JUnit 4](#junit-4))
 - **K2 compiler plugin** - Transforms `@MutationTarget` classes (or Gradle-configured target patterns) with multiple mutation types
 - **Parameterless API** - Simple `MutFlow.underTest { }` when using JUnit extension
 - **Runs all mutations by default** - Zero-config: `@MutFlowTest` tests every discovered mutation
@@ -488,12 +555,13 @@ The script requires `bash` and `unzip`. It is tested end-to-end by `scripts/test
 
 **Robustness**
 - **Timeout detection** - Mutations that cause infinite loops (e.g., flipping `<` in a loop condition) are automatically detected and reported. Compiler-injected `checkTimeout()` at the top of every loop body ensures even tight loops are caught. Test fails with actionable guidance to add `// mutflow:ignore`
+- **Test budget** - Mutations that make the code under test wait forever outside any loop (a flow that never emits, a latch never released) are caught by a per-test wall-clock budget derived from the test's own baseline duration; the test is interrupted and reported as timed out
 - **Partial run detection** - Automatically skips mutation testing when running single tests from IDE (prevents false positives)
-- **Parallel test safe** - Mutation test classes can run alongside other tests in parallel; `underTest {}` blocks serialize automatically via a synchronized lock, without using `ThreadLocal` (keeping the door open for coroutine/reactive support)
+- **Overlap guard** - Mutations are activated process-wide, so mutflow test classes run one at a time per JVM; opening a second session while one is open fails fast instead of producing wrong verdicts. Separate test JVMs (`maxParallelForks`) are fully independent
 - **Session-based architecture** - Clean lifecycle, no leaked global state
 
 **Extensibility**
-- **Extensible architecture** - `MutationOperator` (for calls), `ReturnMutationOperator` (for returns), `WhenMutationOperator` (for boolean logic), `FunctionBodyMutationOperator` (for function bodies), and `ThrowMutationOperator` (for throw statements) interfaces for adding new mutation types
+- **Extensible architecture** - one generic `MutationOperator<T>` interface, parameterized by the IR node kind it mutates (calls, returns, boolean logic, throw statements, boolean variables, function bodies), for adding new mutation types. An operator says what to mutate and picks how it is emitted (`Replace`, `OverOperands` or `Fused`), which keeps the instrumented code linear in the size of the source
 
 ## Kotlin Multiplatform Support
 
@@ -587,6 +655,9 @@ mutflow {
     timeoutMs = 60_000L         // infinite-loop protection deadline
     verificationMode = "STRICT" // STRICT | LENIENT | DISABLED | ACCUMULATE
     failOnSurvivors = true      // ACCUMULATE only: whether mutflowJvmReport fails the build
+    testBudgetFactor = 3        // per-test wall-clock budget, × baseline duration (jvm() target; 0 = off)
+    testBudgetSlackMs = 1_000L  // fixed allowance on top
+    testBudgetGraceMs = 10_000L // interrupted test still running this long: abandon the run
 }
 ```
 
@@ -817,7 +888,7 @@ fun inheritedSelection(invertSelection: Boolean, parentSelected: Boolean): Boole
 | `invertSelection → !invertSelection` | `if (!invertSelection)` | Test with `invertSelection=true` should invert |
 | `parentSelected → !parentSelected` | `!(!parentSelected)` / `!parentSelected` | Test should verify both branches |
 
-**Discarded results are not inverted:** a boolean call whose value is thrown away, such as `list.add(x)` or `flow.tryEmit(value)` on its own line, gets no inversion point. The call and its arguments still run exactly the same, so the mutant would be equivalent and no test could kill it. Only the outermost call of a statement counts as discarded; in `rows.add(x > 0)` the `>` is still mutated.
+**Discarded results are not inverted:** a boolean call whose value is thrown away, such as `list.add(x)` or `flow.tryEmit(value)` on its own line, gets no inversion point. The call and its arguments still run exactly the same, so the mutant would be equivalent and no test could kill it. Only the outermost call of a statement counts as discarded; in `rows.add(x > 0)` the `>` is still mutated. A `let`, `run`, `with`, `synchronized` or `use` on its own line passes this on to the value of its lambda, which is its own value: `x?.let { list.add(it) }` gets no inversion point for `add` either. Other functions that take a lambda do not: `items.any { seen.add(it) }` reads what the lambda returns.
 
 **Negation removal is implicit:** There is no separate "remove `!`" mutation. Adding `!` to the inner expression of `!expr` produces `!(!expr)`, which evaluates to `expr` - achieving the same effect. This simplification covers all boolean types uniformly without special-casing negation.
 
@@ -967,6 +1038,16 @@ Pairs are chosen so that neither type is a subtype of the other. A swap to a sub
 Constructor arguments are copied by position onto a matching constructor of the target type, so `throw IllegalArgumentException(message, cause)` mutates to `IllegalStateException(message, cause)`.
 
 **Note:** Only a `throw` of a direct constructor call is mutated. `val e = IllegalStateException(); throw e` is not, since the thrown expression is a variable read rather than a constructor call. Constructs that eventually become throws (`!!`, `TODO()`, `require`/`check`, exhaustive `when` without `else`) are never mutated by this operator either, because they are still ordinary calls at the point where the compiler plugin runs.
+
+### How Mutations Become Code
+
+All mutations are compiled in at once and one is switched on per run. For each mutation the plugin asks one question: where do the node's operands live, if the original and the variants all need them? The answer picks one of three shapes:
+
+- **Replace** - the variant doesn't use the operands (`true`, `null`, an empty body), so it simply replaces the node.
+- **OverOperands** - every operand always runs (`+`, `>`, `==`, ...), so each one is evaluated once and the original and all variants are built over that value.
+- **Fused** - the right side of `&&`/`||` may be skipped, so one expression acts as both original and mutant.
+
+No shape copies its operands, so long chains like `a + b + c + ...` or `a && b && c && ...` compile to code that grows linearly, and every operand is evaluated once, in source order. See [DESIGN.md](DESIGN.md#how-a-mutation-is-emitted-three-shapes) for details.
 
 ## Design Decisions
 

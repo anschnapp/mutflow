@@ -54,35 +54,91 @@ class Calculator {
 @MutationTarget
 class Calculator {
     fun isPositive(x: Int): Boolean {
-        // Compiler injects nested when expressions for multiple mutation types
-        return when (MutationRegistry.check(
-            pointId = "sample.Calculator_0",
-            variantCount = 2,
-            sourceLocation = "Calculator.kt:4",
-            originalOperator = ">",
-            variantOperators = ">=,<",
-            occurrenceOnLine = 1
-        )) {
-            0 -> x >= 0  // operator mutation: include equality
-            1 -> x < 0   // operator mutation: direction flip
-            else -> when (MutationRegistry.check(
+        return run {
+            // one check() per mutation point, before anything else runs
+            val mutflowVariant0 = MutationRegistry.check(
+                pointId = "sample.Calculator_0",
+                variantCount = 2,
+                sourceLocation = "Calculator.kt:4",
+                originalOperator = ">",
+                variantOperators = ">=,<",
+                occurrenceOnLine = 1
+            )
+            val mutflowVariant1 = MutationRegistry.check(
                 pointId = "sample.Calculator_1",
                 variantCount = 2,
                 sourceLocation = "Calculator.kt:4",
                 originalOperator = "0",
                 variantOperators = "1,-1",
                 occurrenceOnLine = 1
-            )) {
-                0 -> x > 1   // constant mutation: increment
-                1 -> x > -1  // constant mutation: decrement
-                else -> x > 0  // original
+            )
+            when {
+                mutflowVariant0 == 0 -> x >= 0  // operator mutation: include equality
+                mutflowVariant0 == 1 -> x < 0   // operator mutation: direction flip
+                mutflowVariant1 == 0 -> x > 1   // constant mutation: increment
+                mutflowVariant1 == 1 -> x > -1  // constant mutation: decrement
+                else -> x > 0                   // original
             }
         }
     }
 }
 ```
 
-This nested structure is generated recursively by the compiler plugin. Each matching `MutationOperator` wraps the expression, with the `else` branch feeding into the next operator. Since only one mutation is active at runtime, there's no complexity - the active mutation's branch executes, all others fall through to original.
+The plugin works bottom-up, so by the time a node is instrumented its operands already are. Two operators match `x > 0` here, the relational one and the constant boundary one, and both share one `when`. `x` and `0` are cheap to read, so they are simply restated in every branch. An operand like `f()` would be evaluated once into a temporary instead (see the next section). Since only one mutation is active at runtime, there's no complexity - the active mutation's branch executes, all others fall through to the original.
+
+### How a Mutation Is Emitted: Three Shapes
+
+The idea of mutant schemata leaves one choice open: how the original and its variants sit next to each other in the emitted code. At runtime it makes no difference, only one path runs. It does decide how large the compiled method gets.
+
+The obvious way is a `when` with the original in `else` and a standalone copy of the node in every variant branch. That breaks down on chains. In `f1() + f2() + f3()` the left operand of the second `+` is the first `+`, already instrumented. A variant that copies its operand copies the whole switch inside it, so each term doubles the code: a 16-term sum ends up with 98 302 leaf operands instead of 16 and fails with `MethodTooLargeException`, and a 16-term `&&` chain runs the compiler out of heap.
+
+So every mutation has to answer one question: **where do the node's operands live, if the original and the variants all need them?**
+
+```
+                Does a variant reuse the node's operands?
+                  │                                   │
+                  no                                  yes
+                  │                                   │
+                  ▼                                   ▼
+               Replace                 Is every operand always evaluated?
+     true, false, null, {}, !flag            │                     │
+                                             yes                   no
+                                             │                     │
+                                             ▼                     ▼
+                                       OverOperands              Fused
+                                 + - * / %  > >=  == !=         &&  ||
+                                   !isValid()  throw
+```
+
+- **Replace**: the variant has nothing to do with the operands (a constant, an empty body, a negated variable). Nothing to share means nothing to copy, so the plain switch is fine:
+  ```kotlin
+  // return isAdult(age)
+  return when {
+      check(p) == 0 -> true
+      check(p) == 1 -> false
+      else -> isAdult(age)
+  }
+  ```
+- **OverOperands**: every operand always runs, whichever variant is active. So each one is evaluated once, into a temporary, and the original and every variant are built over reads of it:
+  ```kotlin
+  // f1() + f2()
+  run {
+      val v = check(p)
+      val o1 = f1()
+      val o2 = f2()
+      when { v == 0 -> o1 - o2; else -> o1 + o2 }
+  }
+  ```
+- **Fused**: the right operand of `&&` and `||` may never run (`user != null && user.isAdmin`), so it can't be hoisted. Instead one expression is both the original and the mutant, steered by a flag:
+  ```kotlin
+  // a && b         (for a || b the flag is negated)
+  run {
+      val active = check(p) == 0
+      when { (a != active) -> b; else -> active }   // active = false: a && b, true: a || b
+  }
+  ```
+
+Each operator answers the question itself by returning one of the three subtypes of the sealed `Mutation` from `MutationOperator<T>.mutation()`. The transformer only knows how to emit the three shapes. Because no shape copies its operands, every mutated node adds one block around children that each appear exactly once, and the emitted code grows linearly with the source. Every operand is still evaluated exactly once and in source order, and `b` in `a && b` is skipped exactly when the active operator would skip it.
 
 ### Runtime Discovery Model
 
@@ -471,7 +527,7 @@ All loop types in Kotlin compile to `IrWhileLoop` or `IrDoWhileLoop` in IR:
 
 Higher-order function "loops" like `forEach` can't cause infinite loops from mutations because the loop control (`hasNext()`, counter) lives in the stdlib, not in the mutated code.
 
-**Where the check goes in a desugared `for` loop:** a `for` loop reaches the transformer as an `IrWhileLoop` with origin `FOR_LOOP_INNER_WHILE`, and its body block has to start with the loop-variable declarations (`val i = iterator.next()`) - `ForLoopsLowering` pattern-matches that shape later in the pipeline and fails with "No 'next' statement in for-loop" if anything precedes them. So for those loops the check is inserted after the leading `IrVariable` statements of the existing body instead of wrapping the body in a new block. `while` and `do-while` bodies are wrapped as shown above.
+**Where the check goes:** when the loop body is already a block, the check is inserted into that block rather than wrapping the body in a new one. Wrapping would add a scope, and a `do-while` condition may read a value declared in the body (`do { val next = it.next() } while (next != null)`); inside a new block that declaration is out of the condition's reach and JVM codegen fails with "No mapping for symbol". For `while` and `do-while` the check becomes the first statement of the body. A `for` loop reaches the transformer as an `IrWhileLoop` with origin `FOR_LOOP_INNER_WHILE`, and its body has to start with the loop-variable declarations (`val i = iterator.next()`): `ForLoopsLowering` pattern-matches that shape later and fails with "No 'next' statement in for-loop" if anything precedes them, so there the check goes after the leading `IrVariable` statements. Only a body that is a single expression, not a block, is wrapped in a new block.
 
 **Configuration:**
 ```kotlin
@@ -481,6 +537,53 @@ class CalculatorTest { ... }
 
 **Design rationale - fail loudly, not silently:**
 When a timeout occurs, the test **fails** rather than silently marking the mutation as killed. This ensures the developer notices and takes action (adds `// mutflow:ignore` on the affected line). Silent handling would mask slow mutation runs that accumulate over time.
+
+#### Per-Test Wall-Clock Budget (Hangs Outside Loops)
+
+The loop guard only sees loops inside mutated code. A mutation can also make the code under test wait forever without looping: a flow that never emits, a latch that is never released, a future that never completes. The test thread parks somewhere no `checkTimeout()` runs, and the build hangs. To cover that, every test gets a wall-clock budget during mutation runs, derived from its own baseline duration:
+
+```
+budget = baseline duration × factor + slackMs      (defaults: 3 × baseline + 1 s)
+```
+
+The budget lives in the runtime, in `MutFlowSession.runTest(testId) { ... }`, so every framework integration shares it. The JUnit 6 extension calls it from an `InvocationInterceptor` around each test method, and the JUnit 4 runner from `methodInvoker`. In both, `@BeforeEach`/`@AfterEach` (JUnit 4: rules and `@Before`/`@After`) stay outside the budget.
+
+**How it works:**
+1. **Baseline run**: `runTest` only measures. The duration is stored under the test's ID (JUnit 6: method name plus display name, since the unique ID changes per class-template invocation; JUnit 4: the description's display name). The baseline itself has no budget: it is the reference, and a slow test there is not caused by a mutation.
+2. **Mutation run**: a watchdog (one daemon thread per JVM) is scheduled for the test's limit. A test the baseline never ran has no budget, as there is nothing to scale.
+3. **On expiry** the watchdog first trips the loop guard (`MutationRegistry.tripLoopGuard()`) and then interrupts the test thread. The interrupt is repeated every 100 ms, because interrupted code may swallow it and keep waiting.
+4. **When the test returns**, `runTest` cancels the watchdog, resets the loop guard, clears any interrupt status it caused (so nothing leaks into the next test) and throws `MutationTimedOutException`, with whatever the test threw as `cause`. From there it is handled exactly like a loop timeout.
+5. **Grace period, then abandon**: if the test still has not returned `graceMs` after the first interrupt, the test JVM exits with a diagnostic naming the test and the mutation. A thread that ignores interruption cannot be stopped, and it holds the `MutationRegistry` lock that every later run needs, so the only alternative is a build that hangs until CI kills it.
+
+**Why the budget also trips the loop guard:** a tight loop never looks at the interrupt. Without the trip, a mutation that loops forever would run past its budget, ignore every interrupt and end in the abandon path, so the JVM would exit instead of the mutation being reported as timed out. The trip is a flag that `checkTimeout()` reads in addition to the deadline, not a deadline moved to "now": with the JUnit 4 runner's `wrapTestMethods`, the `underTest` session opens around the rules and `@Before`, before the budget starts, so a deadline fixed at that point would not see it. The flag is process-global like the session slot. That is safe because only one session can be open at a time (see [Thread Safety](#thread-safety-and-parallel-test-execution)). Test methods of one class running concurrently would still share it, as well as the time spent waiting for the registry lock.
+
+**Two layers, two jobs:** `timeoutMs` and the budget overlap but are not redundant:
+
+| | Loop guard deadline (`timeoutMs`) | Test budget |
+|---|---|---|
+| Catches | Infinite loops in mutated code | Waits outside mutated loops, plus loops (via the trip) |
+| Measured over | One `underTest` block | One test method |
+| Limit | Fixed (default 60 s) | Relative to the test's baseline duration |
+| Stops by | Throwing from the loop | Interrupt, then loop-guard trip, then abandoning the JVM |
+| Applies when | Always in mutation runs | Only where an integration calls `runTest` and the baseline measured the test |
+
+The deadline remains the safety net wherever the budget does not apply: the budget is disabled (`factor = 0`), a test has no baseline measurement, a `@TestFactory` dynamic test is not wrapped by the interceptor, or the code runs on Kotlin/Native (see below).
+
+**Fail loudly applies here too:** a test over its budget fails the build in every verification mode, like a loop timeout. Counting it as killed instead was considered and rejected. A mutant close to its limit would then be killed in one build and evaluated normally in the next, depending only on timing: a verdict that silently flips. Failing loudly surfaces the case with the mutation's name, and the developer decides (`// mutflow:ignore`, or a roomier budget). The price is that the budget must not be tight enough for ordinary timing noise (GC pauses, a loaded CI machine) to cross it, which is what `slackMs` is for.
+
+**Kotlin/Native:** the interrupt is an inert `expect`/`actual`. The test process is single-threaded and hosts one mutation run, so a hung run is a hung process, which the Gradle orchestrator's hard process timeout already kills (see [DESIGN-MULTIPLATFORM.md](DESIGN-MULTIPLATFORM.md#timeout-path-verification-post-phase-3)).
+
+**Configuration:**
+```kotlin
+@MutFlowTest(
+    testBudgetFactor = 3,       // default; 0 disables the budget
+    testBudgetSlackMs = 1_000,  // default; fixed allowance on top of the scaled baseline
+    testBudgetGraceMs = 10_000  // default; 0 never abandons
+)
+class CalculatorTest { ... }
+```
+
+`MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS` and `MUTFLOW_TEST_BUDGET_GRACE_MS` override the annotation values. They are resolved in the runtime (`TestBudget.fromEnvironment`), which is how the `mutflow { }` DSL reaches the `jvm()` target of a KMP project, whose `@MutFlowTest` is synthesized with default values.
 
 ### 10. Verification Mode
 
@@ -556,12 +659,11 @@ The environment variable override is intentional: it allows the same test code t
 │  mutflow-compiler-plugin  │  Transforms @MutationTarget classes │
 │                           │  and Gradle-configured target classes│
 │                           │  Injects MutationRegistry.check()   │
-│                           │  Five operator interfaces:          │
-│                           │    MutationOperator (IrCall nodes)  │
-│                           │    ReturnMutationOperator (IrReturn)│
-│                           │    FunctionBodyMutationOperator     │
-│                           │    WhenMutationOperator (IrWhen)    │
-│                           │    ThrowMutationOperator (IrThrow)  │
+│                           │  MutationOperator<T> per node kind: │
+│                           │    IrCall, IrReturn, IrWhen,        │
+│                           │    IrThrow, IrGetValue, functions   │
+│                           │  Mutation kinds (how it's emitted): │
+│                           │    Replace, OverOperands, Fused     │
 │                           │  RelationalComparisonOperator:      │
 │                           │    handles >, <, >=, <= operators   │
 │                           │  ConstantBoundaryOperator:          │
@@ -723,10 +825,10 @@ This is useful for:
 - By the time mutflow matures, K2 will be standard
 
 ### Test Build Only
-The compiler plugin is applied ONLY to test compilation, never production:
-- Gradle plugin applies to `testCompile` tasks only
-- Runtime guards detect non-test context and fail fast
-- Build verification can scan production artifacts for mutation markers
+The compiler plugin is applied ONLY to the separate mutated compilation the tests run against, never to production:
+- Gradle plugin applies it to the `mutatedMain` compilation only (plus annotate mode on the KMP `jvm()` target's `mutatedTest`); the regular `main` compilation and everything built from it stay untouched
+- There is no runtime guard: `MutationRegistry` cannot tell a test from production, and with no open session `check()` simply returns `null`. Keeping instrumented classes out of production artifacts is entirely the build's job
+- For a hard guarantee, the shipped CLI check `scripts/mutflow-verify-jar.sh` can run as a step in the CI/release pipeline, for example right before `docker build` or publishing: `scripts/mutflow-verify-jar.sh build/libs/*.jar || exit 1`. It fails when a jar (nested Spring Boot / fat-jar archives included) contains classes referencing `MutationRegistry` or bundles the mutflow core/runtime. See the README section "Verifying Production Artifacts"
 
 ### Thread Safety and Parallel Test Execution
 
@@ -750,7 +852,7 @@ synchronized(lock) {
 }
 ```
 
-This means `underTest {}` blocks from different test classes serialize at the `MutationRegistry` level. Between these blocks (test setup, assertions, Spring context initialization, non-mutation tests), everything runs freely in parallel.
+The lock keeps two `underTest {}` blocks from overlapping, but it cannot keep two test classes under mutation apart: the session slot is process-global, so a second class's runs would be steered by the first class's active mutation and its verdicts would be meaningless. `MutFlow.createSession()` therefore refuses to open a session while another one is open, and fails with a message pointing at parallel test execution. A test task that runs mutflow classes must run them one class at a time in each JVM (Gradle's `maxParallelForks` is fine, since every fork is its own JVM).
 
 **Session routing via thread-to-session map**
 
@@ -763,8 +865,9 @@ Each test class has its own `MutFlowSession`, but the parameterless `MutFlow.und
 This is not a `ThreadLocal` - it's an explicit `ConcurrentHashMap<Long, String>` used only for test-thread routing. The coroutine concern doesn't apply here because `underTest()` is always called from the test thread, before entering the `withSession` synchronized block where production code (potentially using coroutines) executes.
 
 **Summary of parallel behavior:**
-- Non-mutation test classes: fully parallel, unaffected
-- Mutation test classes: `underTest {}` blocks serialize; everything else (setup, assertions) is parallel
+- Mutation test classes: one at a time per JVM; opening a second session while one is open fails fast instead of producing wrong verdicts
+- Separate JVMs (`maxParallelForks`): fully independent, each has its own registry
+- Other test classes running alongside in the same JVM: fine as long as they do not call mutated code. A `check()` call reads the global session from any thread, so mutated code reached by a parallel test while an `underTest {}` block is open sees the active mutation
 - Coroutines/reactive inside `underTest {}`: works correctly (lock is held for the entire block)
 
 ## Tradeoffs and Limitations
@@ -786,7 +889,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 ### Limitations
 - **Not exhaustive per session**: Each session tests a small fixed number of mutations (3-8), not all. Coverage grows over many builds.
-- **Bytecode bloat**: Injected branches increase class size (64KB method limit is a risk)
+- **Bytecode bloat**: Injected branches increase class size. Growth is linear in the source (see [the three shapes](#how-a-mutation-is-emitted-three-shapes)), so only a method that is already close to the JVM's 64KB limit can be pushed over it
 - **Coverage interference**: Extra branches affect coverage reports (may need separate non-mutated build)
 - **Debugging complexity**: Stack traces through mutated code can be confusing
 - **Equivalent mutants**: Some mutations produce identical behavior (noise)
@@ -815,6 +918,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - `MutationRegistry` with `check()`, `checkTimeout()`, `startSession()`, `endSession()`, `withSession()` API
 - `withSession()`: synchronized wrapper that ensures only one mutation session is active at a time; its `onSessionEnd` hook delivers discovered points whether the block returns or throws
 - `checkTimeout()`: compiler-injected loop guard that throws `MutationTimedOutException` when deadline exceeded
+- `tripLoopGuard()` / `resetLoopGuard()`: makes `checkTimeout()` throw regardless of the deadline while a test is over its wall-clock budget
 - Supporting types (`ActiveMutation`, `DiscoveredPoint`, `SessionResult`)
 - `@MutationTarget` annotation for scoping mutations
 - Occurrence-on-line tracking for disambiguating duplicate operators on the same source line
@@ -823,12 +927,12 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - K2 compiler plugin with extensible mutation operator mechanism
 - `MutflowCommandLineProcessor` receives target patterns from Gradle plugin via `SubpluginOption`
 - Target pattern matching: glob-style patterns (`*`, `**`) compiled to regex for FQN matching
-- Five operator interfaces for different IR node types:
-  - `MutationOperator` - for `IrCall` nodes (comparison operators, etc.)
-  - `ReturnMutationOperator` - for `IrReturn` nodes (return statement mutations)
-  - `FunctionBodyMutationOperator` - for function declarations (body-level mutations)
-  - `WhenMutationOperator` - for `IrWhen` nodes (boolean logic operators)
-  - `ThrowMutationOperator` - for `IrThrow` nodes (exception type mutations)
+- One operator interface, `MutationOperator<T>`, parameterized by the IR node kind it mutates: `IrCall` (comparisons, arithmetic, etc.), `IrReturn` (return values), `IrWhen` (boolean logic), `IrThrow` (exception types), `IrGetValue` (boolean variables) and `IrSimpleFunction` (function bodies)
+- An operator returns a `Mutation`, whose kind decides how the transformer emits the original next to the variants (see [How a Mutation Is Emitted: Three Shapes](#how-a-mutation-is-emitted-three-shapes) for why):
+  - `Replace` - variants that stand on their own: `when { check(...) == 0 -> <variant>; else -> <original> }`, with check() inline in each branch and no temporaries. For variants that are constants, an empty body or a negated leaf (return values, function bodies, boolean variables), where there is nothing to share with the original.
+  - `OverOperands` - check() and then the node's operands are evaluated once into temporaries, and the original and every variant are rebuilt over reads of them. For strictly evaluated nodes (arithmetic, comparisons, constant boundaries, `==`/`!=`, boolean calls, exception constructors). Equality and boolean inversion take the whole boolean call as their one operand and negate it. Constants and reads of parameters and `val`s are restated instead of hoisted. Several such mutations of one node (`x > 0` has a relational and a constant boundary one) share the same temporaries.
+  - `Fused` - one expression that is the original while the mutation is inactive and the mutant while it is active, steered by `val mutflowActive = check(...) == 0`. For `&&` and `||`, whose right operand is evaluated lazily and so cannot be hoisted.
+  - Every kind keeps the instrumented code linear in the size of the source and evaluates each operand exactly once, in source order, whichever variant is active.
 - `RelationalComparisonOperator` handles all comparison operators (`>`, `<`, `>=`, `<=`)
   - Each operator produces 2 variants: boundary mutation + direction flip
 - `ConstantBoundaryOperator` mutates numeric constants in comparisons
@@ -851,8 +955,8 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - `%` → `/` (1 variant)
   - Safe division for `*` → `/`: when b=0, computes b/a; when both are 0, returns 1
 - `EqualitySwapOperator` swaps equality operators
-  - `==` → `!=` (1 variant: wraps EQEQ intrinsic with `Boolean.not()`)
-  - `!=` → `==` (1 variant: unwraps the `not()` wrapper to expose the inner EQEQ call)
+  - `==` → `!=` (1 variant: wraps the evaluated EQEQ intrinsic with `Boolean.not()`)
+  - `!=` → `==` (1 variant: drops the `not()` wrapper around the evaluated EQEQ call)
   - In K2 IR, `==` is a single EQEQ intrinsic; `!=` is `not(EQEQ(a, b))` - two calls both with EXCLEQ origin
   - Matches EQEQ calls with EQEQ origin for `==`, and `not()` calls with EXCLEQ origin for `!=`
   - Avoids double-matching the inner EQEQ of `!=` expressions (which would create spurious mutation points)
@@ -862,16 +966,16 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Matches boolean-returning `IrCall` nodes with null or `GET_PROPERTY` origin (function calls and property accesses)
   - Excludes `not()` calls (would create redundant double-negation points) and EXCLEQ origin (handled by EqualitySwapOperator)
   - The "remove negation" case (`!expr` → `expr`) is implicitly covered: adding `!` to the inner expression of `!expr` produces `!(!expr)` = `expr`
-- Boolean variable/parameter inversion is handled directly by `MutflowIrTransformer.visitGetValue`
+- `BooleanVariableInversionOperator` negates boolean variable and parameter reads
   - `varName` → `!varName` (1 variant: wraps boolean `IrGetValue` in `Boolean.not()`)
-  - Not an operator interface - `IrGetValue` is a leaf node, handled inline with a single mutation point
 - `BooleanLogicOperator` swaps boolean logic operators
-  - `&&` → `||` (1 variant: swaps branch results to short-circuit true)
-  - `||` → `&&` (1 variant: swaps branch results to short-circuit false)
+  - `&&` → `||` (1 variant)
+  - `||` → `&&` (1 variant)
   - In K2 IR (2.3.0+), `&&` and `||` are lowered to `IrWhen` expressions with ANDAND/OROR origins
   - `&&`: `when(ANDAND) { a -> b; else -> false }` - if first is true, evaluate second
   - `||`: `when(OROR) { a -> true; else -> b }` - if first is true, short-circuit true
-  - Mutation swaps branch results: ANDAND replaces `b` with `true` and `false` with `b` (and vice versa for OROR)
+  - Fused mutation: `when { (a != selectsOr) -> b; else -> selectsOr }`, where `selectsOr` is the mutation flag for `&&` and its negation for `||`. Each operand appears once and `b` is only reached where the active operator would evaluate it, so short-circuiting holds for the mutant too
+  - `a` is emitted as `a!!`: `!=` accepts a null, so a platform-typed Java `Boolean` that is null would pass as a value where the unmutated `a && b` throws a NullPointerException. The `!!` restores that exception; for a Kotlin `Boolean` it is a no-op
 - `VoidFunctionBodyOperator` removes entire function bodies of Unit/void functions
   - Produces 1 variant: empty body (all side effects removed)
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
@@ -881,7 +985,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Produces 1 variant: the paired sibling exception (e.g. `IllegalArgumentException` → `IllegalStateException`)
   - Only matches `throw` of a direct constructor call; `val e = ...; throw e` is not matched
   - Pairs are chosen so neither type is a subtype of the other, otherwise a `catch` of the supertype would still match and the mutant would be equivalent
-  - Constructor arguments are copied by position onto a matching constructor of the target type
+  - Constructor arguments are evaluated once and passed by position to a matching constructor of the target type
   - Catches tests that assert something threw without asserting what
   - Synthetic throws are not a concern at this phase: `!!`, `TODO()`, `require`/`check` and exhaustive `when` are still `IrCall` nodes when IR plugin extensions run
 - Recursive operator application: multiple operators can match the same expression
@@ -906,6 +1010,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Target filtering: `includeTargets`/`excludeTargets` for scoping mutations by class
 - `MutationsExhaustedException` when all mutations tested
 - `VerificationMode` enum: `STRICT`, `LENIENT`, `DISABLED`
+- Per-test wall-clock budget: `MutFlowSession.runTest()` measures each test in the baseline run and interrupts it in mutation runs once it exceeds `TestBudget` (factor × baseline + slack), with a grace period before the JVM is abandoned
 
 **mutflow-junit6:**
 - `@MutFlowTest` meta-annotation combining `@ClassTemplate` + `@ExtendWith`
@@ -913,6 +1018,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - Session lifecycle management (create, startRun, endRun, close)
 - Mutation selection at context creation for accurate display names
 - Verification mode resolution: annotation parameter with `MUTFLOW_VERIFICATION_MODE` env var override
+- `InvocationInterceptor` that runs each test method through `MutFlowSession.runTest()` for the wall-clock budget
 
 **mutflow-test-sample:**
 - Integration tests demonstrating both APIs
@@ -981,14 +1087,16 @@ The goal is that **all tests appear green when mutations are properly killed**. 
 // Before (in @MutationTarget class)
 fun isPositive(x: Int) = x > 0
 
-// After compiler plugin (nested mutations for operator AND constant)
-fun isPositive(x: Int) = when (MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<", 1)) {
-    0 -> x >= 0   // operator: boundary (include equality)
-    1 -> x < 0    // operator: direction flip
-    else -> when (MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1", 1)) {
-        0 -> x > 1    // constant: increment
-        1 -> x > -1   // constant: decrement
-        else -> x > 0 // original
+// After compiler plugin (operator AND constant mutations share one when)
+fun isPositive(x: Int) = run {
+    val mutflowVariant0 = MutationRegistry.check("..._0", 2, "Calculator.kt:7", ">", ">=,<", 1)
+    val mutflowVariant1 = MutationRegistry.check("..._1", 2, "Calculator.kt:7", "0", "1,-1", 1)
+    when {
+        mutflowVariant0 == 0 -> x >= 0  // operator: boundary (include equality)
+        mutflowVariant0 == 1 -> x < 0   // operator: direction flip
+        mutflowVariant1 == 0 -> x > 1   // constant: increment
+        mutflowVariant1 == 1 -> x > -1  // constant: decrement
+        else -> x > 0                   // original
     }
 }
 ```

@@ -49,6 +49,23 @@ abstract class MutflowExtension {
      */
     abstract val verificationMode: Property<String>
 
+    /**
+     * Wall-clock budget per test during mutation runs, as a multiple of the
+     * test's own baseline duration (0 disables). Catches mutations that make
+     * the code under test wait forever. jvm() target only; a hung native run
+     * is caught by the orchestrator's process timeout instead.
+     */
+    abstract val testBudgetFactor: Property<Int>
+
+    /** Fixed allowance in milliseconds added to the scaled baseline duration. */
+    abstract val testBudgetSlackMs: Property<Long>
+
+    /**
+     * How long in milliseconds an interrupted test may keep running before the
+     * test JVM is abandoned with a diagnostic (0 never abandons).
+     */
+    abstract val testBudgetGraceMs: Property<Long>
+
     /** Whether the ACCUMULATE report task fails the build on surviving mutations. */
     abstract val failOnSurvivors: Property<Boolean>
 }
@@ -99,6 +116,9 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         extension.maxMutationRuns.convention(Int.MAX_VALUE)
         extension.timeoutMs.convention(60_000L)
         extension.verificationMode.convention("STRICT")
+        extension.testBudgetFactor.convention(3)
+        extension.testBudgetSlackMs.convention(1_000L)
+        extension.testBudgetGraceMs.convention(10_000L)
         extension.failOnSurvivors.convention(true)
 
         target.plugins.withId("org.jetbrains.kotlin.multiplatform") {

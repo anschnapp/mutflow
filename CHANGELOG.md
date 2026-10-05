@@ -1,7 +1,68 @@
 # Changelog
+
 ## [Unreleased]
 ### Added
 - `VerificationMode.ACCUMULATE` and the `mutflowReport` Gradle task: a merged verdict across test classes. A single test class cannot tell whether a survivor is a real gap when other classes exercise the same production code. In `ACCUMULATE` mode no class judges; each writes every mutation it reached with its verdict to `build/mutflow/results/<TestClass>.json` (same dependency-free JSON writer as the native path, format in `MutflowFiles`), and `mutflowReport` (`mutflowJvmReport` for a multiplatform `jvm()` target) merges them: killed by any class wins, a timeout counts as killed, a mutant survives only if no class that reached it killed it. It writes `build/reports/mutflow/mutation-report.md` with survivors grouped by production class and the test classes that reached them, and fails the build on survivors unless `mutflow { failOnSurvivors = false }`. Plain JVM projects gain a `mutflowTest` task, the explicit mutation testing job driven by the `mutflow { }` DSL; in `ACCUMULATE` mode the ordinary `test` task runs the baseline only. (#24)
+
+## [1.6.1]
+### Fixed
+- Boolean inversion no longer mutates a call whose result is the discarded value of a scope function, `synchronized` or `use`. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run`, `with`, `synchronized` or `use` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested calls of these. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
+
+## [1.6.0]
+### Added
+- Per-test wall-clock budget for mutations that hang outside loops. The loop guard only sees loops in mutated code; a mutation that makes the code under test wait forever (a flow that never emits, a latch never released) parked the test thread and hung the build. Every test now gets a budget during mutation runs, `testBudgetFactor` times its own baseline duration plus `testBudgetSlackMs` (default 3× + 1 s); a test exceeding it is interrupted and reported as timed out, like a loop timeout. A tight loop never looks at the interrupt, so running out of budget also trips the loop guard, and an endless loop fails on its next iteration as a normal timeout. The baseline run is the reference and has no budget. An interrupted test that still has not returned after `testBudgetGraceMs` abandons the run with a diagnostic (the JVM exits), since such a thread cannot be stopped and holds the lock every later run needs. The budget lives in `MutFlowSession.runTest`, so any test framework integration can enforce it; the JUnit 6 extension and the JUnit 4 runner wrap each test method (rules and `@Before`/`@After` stay outside it). New `@MutFlowTest` parameters, `mutflow { }` DSL properties for the `jvm()` target, and `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_TEST_BUDGET_GRACE_MS` overrides. (#23)
+- `MutationTimedOutException` gained a `cause`, carrying whatever an interrupted test threw.
+
+## [1.5.1]
+### Fixed
+- Compiler crash on arithmetic with an operator declared as an extension inside a class or object (`object Ops { operator fun Money.plus(that: Money): Money }`, called through `with(Ops) { a + b }` or an import of `Ops.plus`). Such a call passes the object as dispatch receiver in front of the two operands, and the variant took the receiver for the left operand and dropped the right one, so codegen failed with `No argument for parameter`. All the arguments are now hoisted and passed on, the last two being the operands. The replacement operator was also the first one of that name in the class, whatever its operand types; it is now the one with the same receivers, parameters and return type. Without such a counterpart, a primitive keeps the first operator of that name as before (`Char - Char` becomes `Char.plus(Int)`), and any other operator is not mutated. (#35)
+- Arithmetic mutants of primitives with operands of different types compute the swapped operator. They called the first overload of that name, `Int.minus(Byte)` for an `Int`: the `-` mutant of `1 + 5_000_000_000L` gave `-705032703` instead of `-4999999999`, and the one of `1 + 0.5` gave `1.0` instead of `0.5`, so a test could kill them without checking the arithmetic.
+- An operator of a user class whose counterpart takes other operand types (`Vec.plus(Vec)` beside `Vec.minus(Int)`) is no longer mutated. Its mutant passed a `Vec` where an `Int` was expected and failed with a `ClassCastException`, so any test killed it by crashing, whatever it asserted.
+
+### Contributors
+Thanks to @akuma8 for finding the crash on a real project and for the fix with its regression targets (#35, #36).
+
+## [1.5.0]
+### Added
+- Top-level functions and properties can be mutation targets. The transformer only ever entered a target through a class, so a file of top-level functions had no mutations at all and its tests scored nothing, whatever they checked. A file is now a target through `@file:MutationTarget`, or through a pattern naming its facade class (`com.example.StringUtilsKt`, or the `@file:JvmName` name). Mutation ids of top-level code carry the facade class name, or, for the parts of a `@file:JvmMultifileClass` facade, the part class name (`com.example.Utils__StringUtilsKt`), since every part numbers its points from zero and ids on the shared facade name would collide. Classes declared in the file stay targets of their own. (#33)
+
+### Changed
+- Target patterns also match a file's facade class, so a broad pattern such as `com.example.**` now includes the top-level functions and properties in those packages. In STRICT mode, survivors there can fail a build although the code did not change; narrow the pattern or add the assertions.
+- Mutation ids from before this release cannot be compared with ids from it: the nested-target fix below renumbers the points that follow a nested target, and top-level code has ids for the first time.
+
+### Fixed
+- Mutation ids restart from zero after a nested mutation target. Entering a target class reset the point counter and did not restore it, so a class with a nested `@MutationTarget` class numbered the points after the nested class from zero again, colliding with the ones before it. The counter and the per-line occurrence table are now restored when the nested target is left. (#33)
+
+## [1.4.0]
+### Changed
+- The compiler plugin's five internal operator interfaces are replaced by one, `MutationOperator<T>`, parameterized by IR node kind. An operator returns a `Mutation` whose kind (`Replace`, `OverOperands` or `Fused`) decides how the original and its variants are emitted, so that choice is made once per kind instead of by every operator. Boolean variable inversion, previously hand-built in the transformer, is now the `BooleanVariableInversionOperator`.
+
+### Fixed
+- Long boolean chains no longer blow up the size of the instrumented code. A mutation point kept the original expression beside a mutated copy of it, and the operands of `a && b` are themselves already instrumented `when` expressions, so every term doubled everything before it: a ten-term chain passed the JVM's 64 KB method limit with `MethodTooLargeException`, and a sixteen-term one exhausted the compiler's heap while copying. `&&` and `||` are now instrumented in a fused form, `when { (left != selectsOr) -> b; else -> selectsOr }`, where a single boolean selects the operator and the mutation flag supplies it. Neither operand is duplicated, so the instrumented size is linear in the length of the chain and no longer depends on whether the source associates to the left (`a && b && c`) or to the right (`a && (b && c)`, or any mix of `&&` and `||`). Short-circuiting, mutation point ids, counts and metadata are unchanged. (#34)
+- Long arithmetic chains no longer blow up the size of the instrumented code, the same growth as for boolean chains: an arithmetic variant copied both operands, and the left operand of `a + b + c` is the already instrumented `a + b`, so a twelve-term sum failed with `MethodTooLargeException`. Arithmetic is strictly evaluated, so its operands are now evaluated once into temporaries that the original and the variant both read, and a sixteen-term sum takes 734 bytes of bytecode. Relational, constant boundary, equality, boolean inversion and exception type mutations are emitted the same way and no longer copy their operands either. Mutation point ids, counts and metadata are unchanged. (#34)
+
+### Contributors
+Thanks to @rikshot for finding and diagnosing the exponential growth of boolean chains, and for the left-associative regression target (#31).
+
+## [1.3.2]
+### Fixed
+- Compiler-generated members of data and value classes (`equals`, `hashCode`, `toString`, `copy`, `componentN`) are no longer mutated. They hold no logic of the author's, so their mutants were noise, and instrumenting the generated `equals` of a wide data class failed the build with `MethodTooLargeException`: one mutation switch per property comparison pushes the method past the JVM's 64 KB limit. Traps pinned on such mutations no longer resolve.
+- Default property accessors are no longer mutated. The `return field` getter the compiler writes for a plain `val flag: Boolean` collected a boolean-return mutant whose display name pointed at the property's declaration line, so a survivor read as a `return` on a line with no return on it, and no test could kill it. A property with an author-written `get()` body keeps all of its mutations.
+- Members generated for `by` delegation are no longer mutated. Their whole body is a forward to the delegate, and the mutant was reported on the class header line.
+
+## [1.3.1]
+### Fixed
+- Compiler crash on a `do`/`while` loop whose condition reads a value declared in the body (`do { val next = it.next() } while (next != null)`). The loop guard wrapped the body in a new block, which pushed that declaration into an inner scope the condition could not see, and codegen failed with `No mapping for symbol`. The guard is now inserted inside an existing body block for every loop kind, as it already was for lowered `for` loops.
+
+## [1.3.0]
+### Added
+- **JUnit 4 integration**: the new `mutflow-junit4` artifact provides `@RunWith(MutFlowRunner::class)`, the JUnit 4 counterpart of `@MutFlowTest` (same run loop, same `MUTFLOW_*` environment overrides, same STRICT/LENIENT/DISABLED modes and partial-run detection). An optional `@MutFlowTest(wrapTestMethods = true)` wraps whole test methods so an existing suite needs no `MutFlow.underTest {}` calls, and the run loop (`MutFlowRun`) is reusable from runners with their own threading such as Robolectric. Depends on `mutflow-runtime` and `junit:junit` only; JUnit 6 users do not pick it up. The Gradle plugin does not wire this artifact up yet, so declare `mutflow-junit4` and the vintage engine yourself for now; plugin support is planned. (#22, #26)
+
+### Changed
+- Opening a mutflow session while another one is open now fails immediately instead of producing meaningless verdicts. Mutations are activated in the process-global `MutationRegistry`, so two overlapping sessions in one JVM mutate each other's runs. Sequential execution is unaffected, including test tasks that mix JUnit 4 and JUnit 6 mutflow classes; only parallel execution inside a single JVM is.
+
+### Contributors
+Thanks to @rikshot for the JUnit 4 integration, a fine piece of engineering. JUnit 4 still carries an enormous number of suites, especially Android and Robolectric.
 
 ## [1.2.2] - 2026-09-10
 ### Fixed

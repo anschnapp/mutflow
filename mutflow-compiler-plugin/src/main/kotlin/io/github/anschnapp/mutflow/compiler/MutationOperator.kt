@@ -1,52 +1,39 @@
 package io.github.anschnapp.mutflow.compiler
 
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.builders.IrBuilderWithScope
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
-import org.jetbrains.kotlin.ir.expressions.IrCall
-import org.jetbrains.kotlin.ir.expressions.IrExpression
 
 /**
  * Abstraction for mutation operators.
  *
- * Each implementation handles a specific category of mutations
- * (e.g., relational comparisons, arithmetic operations, boolean logic).
+ * Each implementation handles a specific category of mutations on one kind of IR node
+ * (e.g. relational comparisons on [org.jetbrains.kotlin.ir.expressions.IrCall], boolean
+ * logic on [org.jetbrains.kotlin.ir.expressions.IrWhen]). What it returns is a [Mutation],
+ * whose kind decides how the transformer emits the original next to the variants.
  */
-interface MutationOperator {
+interface MutationOperator<in T : IrElement> {
 
     /**
-     * Returns true if this operator can generate mutations for the given call.
-     */
-    fun matches(call: IrCall): Boolean
-
-    /**
-     * Generates mutation variants for the given call.
+     * Returns true if the node has the shape this operator handles.
      *
-     * @param call The original IR call expression
-     * @param context Context providing access to plugin context and IR builder
-     * @return List of variants (not including the original)
+     * Whether a mutation is actually available (for example, whether a swap pair exists for a
+     * thrown type) may still be decided in [mutation], which returns null when there is none.
      */
-    fun variants(call: IrCall, context: MutationContext): List<Variant>
+    fun matches(node: T): Boolean
 
     /**
-     * Returns a description of the original operator for display.
-     * Example: ">" for greater-than comparisons.
+     * Returns the mutation for the given node, or null if there is nothing to mutate.
+     *
+     * Only called for a node that [matches]. Nothing may be changed on the node here: the
+     * transformer decides whether and when the builders inside the mutation run.
      */
-    fun originalDescription(call: IrCall): String
-
-    /**
-     * A mutation variant with its description and expression generator.
-     */
-    data class Variant(
-        /** Description of the variant for display (e.g., ">=", "<") */
-        val description: String,
-        /** Creates the IR expression for this variant */
-        val createExpression: () -> IrExpression
-    )
+    fun mutation(node: T, context: MutationContext): Mutation?
 }
 
 /**
- * Context passed to mutation operators during variant generation.
+ * Context passed to mutation operators while building a mutation.
  *
  * [resultUsed] is false when the call sits in statement position and its value is
  * discarded (`list.add(x)` on its own line). A mutation that only changes the

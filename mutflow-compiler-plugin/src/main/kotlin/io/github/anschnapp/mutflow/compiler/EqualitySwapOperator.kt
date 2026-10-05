@@ -5,7 +5,7 @@ import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
-import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
+import org.jetbrains.kotlin.ir.expressions.IrExpression
 
 /**
  * Mutation operator for equality swaps: == ↔ !=
@@ -16,9 +16,10 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  *     - inner: EQEQ intrinsic (symbol name "EQEQ", origin EXCLEQ)
  *     - outer: Boolean.not() (symbol name "not", origin EXCLEQ)
  *
- * Mutation approach:
- * - `== → !=`: wrap the EQEQ call with `Boolean.not()`
- * - `!= → ==`: unwrap - return the dispatch receiver (the inner EQEQ call)
+ * Mutation approach: both directions are a negation of the EQEQ result, so the EQEQ call is
+ * the single operand, evaluated once, and the variant negates it or strips the negation:
+ * - `== → !=`: original `v`, variant `!v`
+ * - `!= → ==`: original `!v`, variant `v`
  *
  * Important: We match the outer `not()` call for `!=`, NOT the inner EQEQ.
  * Matching the inner EQEQ would create a duplicate/spurious mutation point.
@@ -32,17 +33,17 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  * produces a downstream NPE, so it carries little signal.
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class EqualitySwapOperator : MutationOperator {
+class EqualitySwapOperator : MutationOperator<IrCall> {
 
-    override fun matches(call: IrCall): Boolean {
+    override fun matches(node: IrCall): Boolean {
         return when {
             // == : EQEQ intrinsic with EQEQ origin (but not a null comparison)
-            call.origin == IrStatementOrigin.EQEQ
-                    && call.symbol.owner.name.asString() == "EQEQ" -> !isNullComparison(call)
+            node.origin == IrStatementOrigin.EQEQ
+                    && node.symbol.owner.name.asString() == "EQEQ" -> !isNullComparison(node)
             // != : outer not() wrapper with EXCLEQ origin (but not a null comparison)
-            call.origin == IrStatementOrigin.EXCLEQ
-                    && call.symbol.owner.name.asString() == "not" -> {
-                val innerEqEq = call.dispatchReceiver as? IrCall
+            node.origin == IrStatementOrigin.EXCLEQ
+                    && node.symbol.owner.name.asString() == "not" -> {
+                val innerEqEq = node.dispatchReceiver as? IrCall
                 innerEqEq != null && !isNullComparison(innerEqEq)
             }
             else -> false
@@ -58,32 +59,31 @@ class EqualitySwapOperator : MutationOperator {
         return eqeqCall.arguments.any { it is IrConst && it.value == null }
     }
 
-    override fun originalDescription(call: IrCall): String {
-        return when (call.origin) {
-            IrStatementOrigin.EQEQ -> "=="
-            IrStatementOrigin.EXCLEQ -> "!="
-            else -> "?"
+    override fun mutation(node: IrCall, context: MutationContext): Mutation? {
+        val booleanNotSymbol = context.pluginContext.irBuiltIns.booleanNotSymbol
+        fun not(value: IrExpression) = context.builder.irCall(booleanNotSymbol).also {
+            it.dispatchReceiver = value
         }
-    }
 
-    override fun variants(call: IrCall, context: MutationContext): List<MutationOperator.Variant> {
-        return when (call.origin) {
-            // == → != : create not() call with the EQEQ call as its receiver
-            IrStatementOrigin.EQEQ -> listOf(
-                MutationOperator.Variant("!=") {
-                    val booleanNotSymbol = context.pluginContext.irBuiltIns.booleanNotSymbol
-                    context.builder.irCall(booleanNotSymbol).also {
-                        it.dispatchReceiver = call.deepCopyWithSymbols()
-                    }
-                }
+        return when (node.origin) {
+            // == → != : the EQEQ call itself is the operand
+            IrStatementOrigin.EQEQ -> Mutation.OverOperands(
+                originalDescription = "==",
+                operands = listOf(node),
+                original = { operands -> operands[0] },
+                variants = listOf(Mutation.OverOperands.Variant("!=") { operands -> not(operands[0]) })
             )
-            // != → == : unwrap not(), return the inner EQEQ call
-            IrStatementOrigin.EXCLEQ -> listOf(
-                MutationOperator.Variant("==") {
-                    call.dispatchReceiver!!.deepCopyWithSymbols()
-                }
-            )
-            else -> emptyList()
+            // != → == : the EQEQ call inside not() is the operand
+            IrStatementOrigin.EXCLEQ -> {
+                val eqeq = node.dispatchReceiver ?: return null
+                Mutation.OverOperands(
+                    originalDescription = "!=",
+                    operands = listOf(eqeq),
+                    original = { operands -> node.also { it.dispatchReceiver = operands[0] } },
+                    variants = listOf(Mutation.OverOperands.Variant("==") { operands -> operands[0] })
+                )
+            }
+            else -> null
         }
     }
 }

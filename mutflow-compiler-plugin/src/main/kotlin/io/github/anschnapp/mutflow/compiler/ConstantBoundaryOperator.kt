@@ -8,7 +8,6 @@ import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.*
-import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 
 /**
  * Mutation operator for constant boundary testing.
@@ -22,7 +21,7 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  * while this tests boundary value choice.
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class ConstantBoundaryOperator : MutationOperator {
+class ConstantBoundaryOperator : MutationOperator<IrCall> {
 
     companion object {
         private val COMPARISON_ORIGINS = setOf(
@@ -33,43 +32,46 @@ class ConstantBoundaryOperator : MutationOperator {
         )
     }
 
-    override fun matches(call: IrCall): Boolean {
-        if (call.origin !in COMPARISON_ORIGINS) return false
+    override fun matches(node: IrCall): Boolean {
+        if (node.origin !in COMPARISON_ORIGINS) return false
 
         // Check if either argument is a numeric constant
-        val left = call.arguments[0]
-        val right = call.arguments[1]
+        val left = node.arguments[0]
+        val right = node.arguments[1]
 
         return isNumericConstant(left) || isNumericConstant(right)
     }
 
-    override fun originalDescription(call: IrCall): String {
-        // Find the constant and return its value as the description
-        val left = call.arguments[0]
-        val right = call.arguments[1]
-
-        return when {
-            isNumericConstant(right) -> (right as IrConst).value.toString()
-            isNumericConstant(left) -> (left as IrConst).value.toString()
-            else -> "?"
-        }
-    }
-
-    override fun variants(call: IrCall, context: MutationContext): List<MutationOperator.Variant> {
-        val left = call.arguments[0] ?: return emptyList()
-        val right = call.arguments[1] ?: return emptyList()
+    override fun mutation(node: IrCall, context: MutationContext): Mutation? {
+        val left = node.arguments[0] ?: return null
+        val right = node.arguments[1] ?: return null
 
         // Prefer mutating the right side (more common: x > 0)
         // If right is constant, mutate it; otherwise try left
-        return when {
-            isNumericConstant(right) -> createVariantsForConstant(
-                call, left, right as IrConst, isLeftConstant = false, context
-            )
-            isNumericConstant(left) -> createVariantsForConstant(
-                call, right, left as IrConst, isLeftConstant = true, context
-            )
-            else -> emptyList()
+        val (constant, isLeftConstant) = when {
+            isNumericConstant(right) -> right as IrConst to false
+            isNumericConstant(left) -> left as IrConst to true
+            else -> return null
         }
+
+        val incremented = createIncrementedConstant(constant) ?: return null
+        val decremented = createDecrementedConstant(constant) ?: return null
+
+        // Both arguments are listed, the constant included, so the operands are the same ones
+        // RelationalComparisonOperator lists for this call and the two mutations share them.
+        return Mutation.OverOperands(
+            originalDescription = constant.value.toString(),
+            operands = listOf(left, right),
+            original = { operands ->
+                node.arguments[0] = operands[0]
+                node.arguments[1] = operands[1]
+                node
+            },
+            variants = listOf(
+                createVariant(node, incremented, isLeftConstant, getIncrementedValue(constant), context),
+                createVariant(node, decremented, isLeftConstant, getDecrementedValue(constant), context)
+            )
+        )
     }
 
     private fun isNumericConstant(expr: IrExpression?): Boolean {
@@ -79,42 +81,22 @@ class ConstantBoundaryOperator : MutationOperator {
                 expr.type.isChar()
     }
 
-    private fun createVariantsForConstant(
-        originalCall: IrCall,
-        otherOperand: IrExpression,
-        constant: IrConst,
-        isLeftConstant: Boolean,
-        context: MutationContext
-    ): List<MutationOperator.Variant> {
-        val incremented = createIncrementedConstant(constant) ?: return emptyList()
-        val decremented = createDecrementedConstant(constant) ?: return emptyList()
-
-        val incrementedValue = getIncrementedValue(constant)
-        val decrementedValue = getDecrementedValue(constant)
-
-        return listOf(
-            createVariant(originalCall, otherOperand, incremented, isLeftConstant, incrementedValue, context),
-            createVariant(originalCall, otherOperand, decremented, isLeftConstant, decrementedValue, context)
-        )
-    }
-
     private fun createVariant(
         originalCall: IrCall,
-        otherOperand: IrExpression,
         newConstant: IrConst,
         isLeftConstant: Boolean,
         description: String,
         context: MutationContext
-    ): MutationOperator.Variant {
-        return MutationOperator.Variant(description) {
+    ): Mutation.OverOperands.Variant {
+        return Mutation.OverOperands.Variant(description) { operands ->
             context.builder.irCall(originalCall.symbol).also { call ->
                 call.origin = originalCall.origin
                 if (isLeftConstant) {
-                    call.arguments[0] = newConstant.deepCopyWithSymbols()
-                    call.arguments[1] = otherOperand.deepCopyWithSymbols()
+                    call.arguments[0] = newConstant
+                    call.arguments[1] = operands[1]
                 } else {
-                    call.arguments[0] = otherOperand.deepCopyWithSymbols()
-                    call.arguments[1] = newConstant.deepCopyWithSymbols()
+                    call.arguments[0] = operands[0]
+                    call.arguments[1] = newConstant
                 }
             }
         }

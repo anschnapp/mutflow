@@ -33,9 +33,10 @@ import org.jetbrains.kotlin.ir.types.isNullable
  * skips returns that are already null (mutating null to null is pointless).
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class NullableReturnOperator : ReturnMutationOperator {
+class NullableReturnOperator : MutationOperator<IrReturn> {
 
-    override fun matches(ret: IrReturn): Boolean {
+    override fun matches(node: IrReturn): Boolean {
+        val ret = node
         val value = ret.value
 
         // Skip synthetic returns (expression-bodied functions get synthetic IrReturn nodes)
@@ -71,29 +72,23 @@ class NullableReturnOperator : ReturnMutationOperator {
         return true
     }
 
-    override fun originalDescription(ret: IrReturn): String {
-        return "return ..."
-    }
-
-    @OptIn(UnsafeDuringIrConstructionAPI::class)
-    override fun variants(ret: IrReturn, context: MutationContext): List<MutationOperator.Variant> {
-        val value = ret.value
+    override fun mutation(node: IrReturn, context: MutationContext): Mutation {
+        val value = node.value
 
         // Get the function's return type for the null constant
-        val returnTarget = ret.returnTargetSymbol.owner
+        val returnTarget = node.returnTargetSymbol.owner
         val functionReturnType = when (returnTarget) {
             is IrFunction -> returnTarget.returnType
             else -> value.type
         }
 
-        return listOf(
-            MutationOperator.Variant("null") {
-                IrConstImpl.constNull(
-                    value.startOffset,
-                    value.endOffset,
-                    functionReturnType
-                )
-            }
+        return Mutation.Replace(
+            originalDescription = "return ...",
+            variants = listOf(
+                Mutation.Replace.Variant("null") {
+                    IrConstImpl.constNull(value.startOffset, value.endOffset, functionReturnType)
+                }
+            )
         )
     }
 }

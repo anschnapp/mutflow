@@ -5,7 +5,6 @@ import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.isBoolean
-import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 
 /**
  * Mutation operator for boolean inversion: expr → !expr
@@ -20,33 +19,35 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  * - Calls with EXCLEQ origin (handled by EqualitySwapOperator)
  * - Calls whose result is discarded (`list.add(x)` as a statement): inverting
  *   an unused value changes nothing observable, so the mutant would be equivalent
+ *
+ * The call itself is the single operand: it is evaluated once and the variant negates the
+ * result, so the call (with its receiver and arguments) is never duplicated.
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class BooleanInversionOperator : MutationOperator {
+class BooleanInversionOperator : MutationOperator<IrCall> {
 
-    override fun matches(call: IrCall): Boolean {
-        val name = call.symbol.owner.name.asString()
+    override fun matches(node: IrCall): Boolean {
+        val name = node.symbol.owner.name.asString()
         if (name == "not") return false
 
-        return call.type.isBoolean()
-                && (call.origin == null || call.origin == IrStatementOrigin.GET_PROPERTY)
+        return node.type.isBoolean()
+                && (node.origin == null || node.origin == IrStatementOrigin.GET_PROPERTY)
     }
 
-    override fun originalDescription(call: IrCall): String {
-        return "${call.symbol.owner.name.asString()}()"
-    }
+    override fun mutation(node: IrCall, context: MutationContext): Mutation? {
+        if (!context.resultUsed) return null
+        val name = node.symbol.owner.name.asString()
+        val booleanNotSymbol = context.pluginContext.irBuiltIns.booleanNotSymbol
 
-    override fun variants(call: IrCall, context: MutationContext): List<MutationOperator.Variant> {
-        if (!context.resultUsed) return emptyList()
-        val name = call.symbol.owner.name.asString()
-
-        return listOf(
-            MutationOperator.Variant("!${name}()") {
-                val booleanNotSymbol = context.pluginContext.irBuiltIns.booleanNotSymbol
-                context.builder.irCall(booleanNotSymbol).also {
-                    it.dispatchReceiver = call.deepCopyWithSymbols()
+        return Mutation.OverOperands(
+            originalDescription = "${name}()",
+            operands = listOf(node),
+            original = { operands -> operands[0] },
+            variants = listOf(
+                Mutation.OverOperands.Variant("!${name}()") { operands ->
+                    context.builder.irCall(booleanNotSymbol).also { it.dispatchReceiver = operands[0] }
                 }
-            }
+            )
         )
     }
 }

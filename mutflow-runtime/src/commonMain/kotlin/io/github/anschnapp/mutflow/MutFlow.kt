@@ -46,6 +46,7 @@ object MutFlow {
      * @param maxRuns Maximum number of runs
      * @param expectedTestCount Number of test methods in the class (for partial run detection)
      * @param traps Mutations to test first, by display name (e.g., "(Calculator.kt:8) > → >=")
+     * @param testBudget Wall-clock budget per test in mutation runs, enforced by [MutFlowSession.runTest]
      * @param testClassName Name of the test class, used to name its results file in ACCUMULATE mode
      * @param resultsDirectory Where ACCUMULATE mode writes the results file; null for the default
      * @return The session ID
@@ -60,9 +61,16 @@ object MutFlow {
         excludeTargets: List<String> = emptyList(),
         timeoutMs: Long = 60_000,
         verificationMode: VerificationMode = VerificationMode.STRICT,
+        testBudget: TestBudget = TestBudget(),
         testClassName: String = "",
         resultsDirectory: String? = null
     ): SessionId {
+        check(sessions.isEmpty()) {
+            "A mutflow session is already open. Mutations are activated in the process-global " +
+                "MutationRegistry, so only one test class at a time can be under mutation. " +
+                "Disable parallel test execution for this task (JUnit parallel execution, or a " +
+                "parallel JUnit 4 suite runner)."
+        }
         val id = SessionId(randomSessionIdValue())
         val session = MutFlowSession(
             id = id,
@@ -75,6 +83,7 @@ object MutFlow {
             excludeTargets = excludeTargets,
             timeoutMs = timeoutMs,
             verificationMode = verificationMode,
+            testBudget = testBudget,
             testClassName = testClassName,
             resultsDirectory = resultsDirectory
         )

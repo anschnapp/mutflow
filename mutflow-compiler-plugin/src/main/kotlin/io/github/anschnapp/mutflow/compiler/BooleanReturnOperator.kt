@@ -27,9 +27,10 @@ import org.jetbrains.kotlin.ir.types.isBoolean
  * Note: This operator only matches explicit return statements from source code,
  * not synthetic returns generated for expression-bodied functions.
  */
-class BooleanReturnOperator : ReturnMutationOperator {
+class BooleanReturnOperator : MutationOperator<IrReturn> {
 
-    override fun matches(ret: IrReturn): Boolean {
+    override fun matches(node: IrReturn): Boolean {
+        val ret = node
         val value = ret.value
 
         // Skip synthetic returns (expression-bodied functions get synthetic IrReturn nodes)
@@ -49,31 +50,17 @@ class BooleanReturnOperator : ReturnMutationOperator {
         return value.type.isBoolean() && value !is IrConst
     }
 
-    override fun originalDescription(ret: IrReturn): String {
-        return "return ..."
-    }
-
-    override fun variants(ret: IrReturn, context: MutationContext): List<MutationOperator.Variant> {
-        val value = ret.value
+    override fun mutation(node: IrReturn, context: MutationContext): Mutation {
+        val value = node.value
         val builtIns = context.pluginContext.irBuiltIns
 
-        return listOf(
-            MutationOperator.Variant("true") {
-                IrConstImpl.boolean(
-                    value.startOffset,
-                    value.endOffset,
-                    builtIns.booleanType,
-                    true
-                )
-            },
-            MutationOperator.Variant("false") {
-                IrConstImpl.boolean(
-                    value.startOffset,
-                    value.endOffset,
-                    builtIns.booleanType,
-                    false
-                )
-            }
+        fun constant(result: Boolean) = Mutation.Replace.Variant(result.toString()) {
+            IrConstImpl.boolean(value.startOffset, value.endOffset, builtIns.booleanType, result)
+        }
+
+        return Mutation.Replace(
+            originalDescription = "return ...",
+            variants = listOf(constant(true), constant(false))
         )
     }
 }

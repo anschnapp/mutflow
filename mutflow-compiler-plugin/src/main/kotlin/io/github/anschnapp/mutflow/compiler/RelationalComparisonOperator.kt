@@ -1,15 +1,12 @@
 package io.github.anschnapp.mutflow.compiler
 
-import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.ir.builders.IrBuilderWithScope
 import org.jetbrains.kotlin.ir.builders.irCall
 import org.jetbrains.kotlin.ir.expressions.IrCall
-import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.classOrNull
-import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 
 /**
  * Mutation operator for relational comparisons: >, <, >=, <=
@@ -21,7 +18,7 @@ import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
  * This is type-agnostic and works with Int, Long, Double, Float, Short, Byte, Char.
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-class RelationalComparisonOperator : MutationOperator {
+class RelationalComparisonOperator : MutationOperator<IrCall> {
 
     companion object {
         private val SUPPORTED_ORIGINS = setOf(
@@ -32,11 +29,11 @@ class RelationalComparisonOperator : MutationOperator {
         )
     }
 
-    override fun matches(call: IrCall): Boolean {
-        return call.origin in SUPPORTED_ORIGINS
+    override fun matches(node: IrCall): Boolean {
+        return node.origin in SUPPORTED_ORIGINS
     }
 
-    override fun originalDescription(call: IrCall): String {
+    private fun originalDescription(call: IrCall): String {
         return when (call.origin) {
             IrStatementOrigin.GT -> ">"
             IrStatementOrigin.LT -> "<"
@@ -46,11 +43,11 @@ class RelationalComparisonOperator : MutationOperator {
         }
     }
 
-    override fun variants(call: IrCall, context: MutationContext): List<MutationOperator.Variant> {
-        val left = call.arguments[0] ?: return emptyList()
-        val right = call.arguments[1] ?: return emptyList()
+    override fun mutation(node: IrCall, context: MutationContext): Mutation? {
+        val left = node.arguments[0] ?: return null
+        val right = node.arguments[1] ?: return null
 
-        val operandType = left.type.classOrNull ?: return emptyList()
+        val operandType = left.type.classOrNull ?: return null
         val builtIns = context.pluginContext.irBuiltIns
 
         // Get comparison functions for this operand type
@@ -61,49 +58,60 @@ class RelationalComparisonOperator : MutationOperator {
 
         // If any comparison function is missing, skip this mutation
         if (greaterFn == null || lessFn == null || greaterOrEqualFn == null || lessOrEqualFn == null) {
-            return emptyList()
+            return null
         }
 
-        return when (call.origin) {
+        val variants = when (node.origin) {
             IrStatementOrigin.GT -> listOf(
                 // > → >= (boundary: include equality)
-                createVariant(">=", left, right, greaterOrEqualFn, context.builder),
+                createVariant(">=", greaterOrEqualFn, context.builder),
                 // > → < (flip direction)
-                createVariant("<", left, right, lessFn, context.builder)
+                createVariant("<", lessFn, context.builder)
             )
             IrStatementOrigin.LT -> listOf(
                 // < → <= (boundary: include equality)
-                createVariant("<=", left, right, lessOrEqualFn, context.builder),
+                createVariant("<=", lessOrEqualFn, context.builder),
                 // < → > (flip direction)
-                createVariant(">", left, right, greaterFn, context.builder)
+                createVariant(">", greaterFn, context.builder)
             )
             IrStatementOrigin.GTEQ -> listOf(
                 // >= → > (boundary: exclude equality)
-                createVariant(">", left, right, greaterFn, context.builder),
+                createVariant(">", greaterFn, context.builder),
                 // >= → <= (flip direction)
-                createVariant("<=", left, right, lessOrEqualFn, context.builder)
+                createVariant("<=", lessOrEqualFn, context.builder)
             )
             IrStatementOrigin.LTEQ -> listOf(
                 // <= → < (boundary: exclude equality)
-                createVariant("<", left, right, lessFn, context.builder),
+                createVariant("<", lessFn, context.builder),
                 // <= → >= (flip direction)
-                createVariant(">=", left, right, greaterOrEqualFn, context.builder)
+                createVariant(">=", greaterOrEqualFn, context.builder)
             )
-            else -> emptyList()
+            else -> return null
         }
+
+        // The operands are the call's own arguments, which ConstantBoundaryOperator lists as
+        // well: both mutations of `x > 0` then share one evaluation of `x`.
+        return Mutation.OverOperands(
+            originalDescription = originalDescription(node),
+            operands = listOf(left, right),
+            original = { operands ->
+                node.arguments[0] = operands[0]
+                node.arguments[1] = operands[1]
+                node
+            },
+            variants = variants
+        )
     }
 
     private fun createVariant(
         description: String,
-        left: IrExpression,
-        right: IrExpression,
         comparisonFn: IrSimpleFunctionSymbol,
         builder: IrBuilderWithScope
-    ): MutationOperator.Variant {
-        return MutationOperator.Variant(description) {
+    ): Mutation.OverOperands.Variant {
+        return Mutation.OverOperands.Variant(description) { operands ->
             builder.irCall(comparisonFn).also {
-                it.arguments[0] = left.deepCopyWithSymbols()
-                it.arguments[1] = right.deepCopyWithSymbols()
+                it.arguments[0] = operands[0]
+                it.arguments[1] = operands[1]
             }
         }
     }
