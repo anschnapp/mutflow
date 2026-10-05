@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.6.2]
+### Fixed
+- Code that the kotlinx.serialization plugin generates is no longer mutated. In a build that passes mutflow with `-Xplugin` alone, mutflow runs after that plugin and found its code in the target: the `write$Self` function of a `@Serializable` class, and, when a pattern such as `com.example.Event.**` also matched it, the `$serializer` object nested in the class. A class with two properties got nine mutants nobody wrote (`write$Self() → removed`, `serialize() → removed`, `shouldEncodeElementDefault() → !shouldEncodeElementDefault()`, `decodeSequentially() → !decodeSequentially()` and comparisons), reported on line 0 or on the class declaration. A class another compiler plugin declares is now never a target, and members with the serialization plugin's own origin are skipped like the compiler-generated ones. With mutflow on the compiler plugin classpath it runs first and never saw this code, which is why the sample module pins the order for its new `SerializableTarget`.
+
 ## [1.6.1]
 ### Fixed
 - Boolean inversion no longer mutates a call whose result is the discarded value of a scope function, `synchronized` or `use`. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run`, `with`, `synchronized` or `use` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested calls of these. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
