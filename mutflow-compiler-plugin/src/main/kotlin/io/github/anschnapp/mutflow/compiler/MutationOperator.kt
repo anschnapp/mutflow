@@ -39,10 +39,15 @@ interface MutationOperator<in T : IrElement> {
  * discarded (`list.add(x)` on its own line). A mutation that only changes the
  * returned value of such a call is an equivalent mutant: the program behaves the
  * same and no test can kill it.
+ *
+ * [lambdaName] is set when the function being mutated is a lambda passed to a call or
+ * initialising a variable or property: the name of that call or declaration (`onEach`,
+ * `onClick`), so the mutation can say which lambda it is. Null otherwise.
  */
 data class MutationContext(
     val pluginContext: IrPluginContext,
     val builder: IrBuilderWithScope,
     val containingFunction: IrSimpleFunction,
-    val resultUsed: Boolean = true
+    val resultUsed: Boolean = true,
+    val lambdaName: String? = null
 )

@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.6.2]
+### Changed
+- The body removal of a Unit lambda is named after the call it is passed to or the variable or property it initialises: `(Screen.kt:92) onEach {} → removed` instead of `<anonymous>() → removed`, also for a lambda converted to a Java or `fun interface` type. Two lambdas on one line (`flow.onEach { … }.catch { … }`) no longer differ only by `#2`. A lambda that is returned or stored elsewhere keeps `<anonymous>()`. Point ids are unchanged; results compared across runs by display name see the new names. (#39)
+
 ## [1.6.1]
 ### Fixed
 - Boolean inversion no longer mutates a call whose result is the discarded value of a scope function, `synchronized` or `use`. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run`, `with`, `synchronized` or `use` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested calls of these. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
