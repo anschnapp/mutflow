@@ -20,6 +20,9 @@ object MutationRegistry {
     @Volatile
     private var currentSession: Session? = null
 
+    @Volatile
+    private var loopGuardTripped = false
+
     /**
      * Called by compiler-injected code at the top of each loop body.
      *
@@ -34,12 +37,25 @@ object MutationRegistry {
     fun checkTimeout() {
         val session = currentSession ?: return
         val deadline = session.deadlineNanos
-        if (deadline > 0 && nanoTime() > deadline) {
+        if (loopGuardTripped || deadline > 0 && nanoTime() > deadline) {
             throw MutationTimedOutException(
                 "Mutation timed out. This mutation likely causes an infinite loop.\n" +
                 "Add a // mutflow:ignore comment on the affected line to skip it."
             )
         }
+    }
+
+    /**
+     * Makes [checkTimeout] throw whatever the deadline, until [resetLoopGuard]: a test's
+     * wall-clock budget ran out, and a tight loop never looks at the interrupt that reports it.
+     */
+    fun tripLoopGuard() {
+        loopGuardTripped = true
+    }
+
+    /** Undoes [tripLoopGuard] once the test that ran out of its budget has returned. */
+    fun resetLoopGuard() {
+        loopGuardTripped = false
     }
 
     /**
@@ -173,6 +189,7 @@ object MutationRegistry {
      */
     fun reset() {
         currentSession = null
+        loopGuardTripped = false
     }
 
     private class Session(
@@ -225,7 +242,11 @@ data class SessionResult(
 )
 
 /**
- * Thrown when a mutation run exceeds its timeout deadline.
- * Indicates the mutation likely causes an infinite loop.
+ * Thrown when a mutation run exceeds a time limit: the loop-guard deadline
+ * ([MutationRegistry.checkTimeout], an infinite loop) or a test's wall-clock
+ * budget (`MutFlowSession.runTest`, code waiting forever). [cause] carries
+ * whatever the interrupted test threw, if anything.
  */
-class MutationTimedOutException(message: String) : RuntimeException(message)
+class MutationTimedOutException(message: String, cause: Throwable?) : RuntimeException(message, cause) {
+    constructor(message: String) : this(message, null)
+}

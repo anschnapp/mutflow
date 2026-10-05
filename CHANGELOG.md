@@ -1,8 +1,17 @@
 # Changelog
 
-## [1.5.2]
+## [1.6.2]
 ### Fixed
 - Code that the kotlinx.serialization plugin generates is no longer mutated. In a build that passes mutflow with `-Xplugin` alone, mutflow runs after that plugin and found its code in the target: the `write$Self` function of a `@Serializable` class, and, when a pattern such as `com.example.Event.**` also matched it, the `$serializer` object nested in the class. A class with two properties got nine mutants nobody wrote (`write$Self() → removed`, `serialize() → removed`, `shouldEncodeElementDefault() → !shouldEncodeElementDefault()`, `decodeSequentially() → !decodeSequentially()` and comparisons), reported on line 0 or on the class declaration. A class another compiler plugin declares is now never a target, and members with the serialization plugin's own origin are skipped like the compiler-generated ones. With mutflow on the compiler plugin classpath it runs first and never saw this code, which is why the sample module pins the order for its new `SerializableTarget`.
+
+## [1.6.1]
+### Fixed
+- Boolean inversion no longer mutates a call whose result is the discarded value of a scope function, `synchronized` or `use`. In `x?.let { list.add(it) }` as a statement, `add` is the lambda's last expression, so it was taken for a used result and inverted, although its value only becomes the value of `let`, which nobody reads: an equivalent mutant that every test class reaching the line had to run and none could kill. A discarded `let`, `run`, `with`, `synchronized` or `use` now marks what its lambda returns, the last expression and every `return@let`, as discarded too, through nested calls of these. Other functions that take a lambda are unchanged: `items.any { seen.add(it) }` reads the lambda's result, so its inversion stays.
+
+## [1.6.0]
+### Added
+- Per-test wall-clock budget for mutations that hang outside loops. The loop guard only sees loops in mutated code; a mutation that makes the code under test wait forever (a flow that never emits, a latch never released) parked the test thread and hung the build. Every test now gets a budget during mutation runs, `testBudgetFactor` times its own baseline duration plus `testBudgetSlackMs` (default 3× + 1 s); a test exceeding it is interrupted and reported as timed out, like a loop timeout. A tight loop never looks at the interrupt, so running out of budget also trips the loop guard, and an endless loop fails on its next iteration as a normal timeout. The baseline run is the reference and has no budget. An interrupted test that still has not returned after `testBudgetGraceMs` abandons the run with a diagnostic (the JVM exits), since such a thread cannot be stopped and holds the lock every later run needs. The budget lives in `MutFlowSession.runTest`, so any test framework integration can enforce it; the JUnit 6 extension and the JUnit 4 runner wrap each test method (rules and `@Before`/`@After` stay outside it). New `@MutFlowTest` parameters, `mutflow { }` DSL properties for the `jvm()` target, and `MUTFLOW_TEST_BUDGET_FACTOR`, `MUTFLOW_TEST_BUDGET_SLACK_MS`, `MUTFLOW_TEST_BUDGET_GRACE_MS` overrides. (#23)
+- `MutationTimedOutException` gained a `cause`, carrying whatever an interrupted test threw.
 
 ## [1.5.1]
 ### Fixed

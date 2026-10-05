@@ -28,6 +28,8 @@ import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
+import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
+import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
@@ -211,9 +213,28 @@ class MutflowIrTransformer(
      * entering a block, before its statements are transformed, so the identity of the
      * original call still matches when [visitCall] reaches it. Only the outermost call
      * of a statement is discarded: in `rows.add(x > 0)` the `>` result is used by `add`.
+     * The one exception is a function that hands back what its lambda returns
+     * ([lambdaValueFunctions]): in `x?.let { rows.add(it) }` the `add` result is the value
+     * of `let`, and is discarded with it.
      */
     private val discardedCalls: MutableSet<IrCall> =
         java.util.Collections.newSetFromMap(java.util.IdentityHashMap())
+
+    /**
+     * The standard library functions whose value is the value of their lambda and nothing
+     * else: the scope functions, `synchronized`, and `use` on a `Closeable` (`kotlin.io.use`)
+     * or an `AutoCloseable` (`kotlin.use`). Other functions taking a lambda are left alone
+     * even when they return its type: `any` or a retry helper reads what the lambda returns,
+     * so a mutant there is not equivalent.
+     */
+    private val lambdaValueFunctions = setOf(
+        "kotlin.let",
+        "kotlin.run",
+        "kotlin.with",
+        "kotlin.synchronized",
+        "kotlin.io.use",
+        "kotlin.use"
+    )
 
     override fun visitBlockBody(body: IrBlockBody): IrBody {
         body.statements.forEach { recordDiscardedCall(it) }
@@ -238,7 +259,10 @@ class MutflowIrTransformer(
         // The discarded value can come from a level deeper: a branch result of an `if` or
         // `when`, a `try`/`catch` result, the value of a block such as a safe call.
         when (expression) {
-            is IrCall -> discardedCalls.add(expression)
+            is IrCall -> {
+                discardedCalls.add(expression)
+                recordDiscardedLambdaValue(expression)
+            }
             is IrWhen -> expression.branches.forEach { recordDiscardedCall(it.result) }
             is IrTry -> {
                 recordDiscardedCall(expression.tryResult)
@@ -247,6 +271,23 @@ class MutflowIrTransformer(
             is IrContainerExpression -> expression.statements.lastOrNull()?.let { recordDiscardedCall(it) }
             else -> {}
         }
+    }
+
+    /**
+     * For a discarded call to one of [lambdaValueFunctions], records what its lambda returns:
+     * the last expression and every `return@let`, each of which is an [IrReturn] targeting the lambda.
+     */
+    private fun recordDiscardedLambdaValue(call: IrCall) {
+        if (call.symbol.owner.kotlinFqName.asString() !in lambdaValueFunctions) return
+        val lambda = (call.arguments.lastOrNull() as? IrFunctionExpression)?.function ?: return
+        lambda.body?.acceptChildrenVoid(object : IrVisitorVoid() {
+            override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
+
+            override fun visitReturn(expression: IrReturn) {
+                if (expression.returnTargetSymbol == lambda.symbol) recordDiscardedCall(expression.value)
+                super.visitReturn(expression)
+            }
+        })
     }
 
     override fun visitFile(declaration: IrFile): IrFile {
