@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.0]
+### Changed
+- The body removal of a Unit lambda is named after the call it is passed to or the variable or property it initialises: `(Screen.kt:92) onEach {} → removed` instead of `<anonymous>() → removed`, also for a lambda converted to a Java or `fun interface` type. Two lambdas on one line (`flow.onEach { … }.catch { … }`) no longer differ only by `#2`. A lambda that is returned or stored elsewhere keeps `<anonymous>()`. Point ids are unchanged; results compared across runs by display name see the new names. (#39)
+
 ### Added
 - `VerificationMode.ACCUMULATE` and the `mutflowAccumulateReport` Gradle task: a merged verdict across test classes. A single test class cannot tell whether a survivor is a real gap when other classes exercise the same production code. In `ACCUMULATE` mode no class judges its survivors; each writes every mutation it reached with its verdict to `build/mutflow/results/<TestClass>.json` (same dependency-free JSON writer as the native path, format in `MutflowFiles`), and `mutflowAccumulateReport` (`mutflowJvmAccumulateReport` for a multiplatform `jvm()` target) merges them: killed by any class wins, a timeout counts as killed, a mutant survives only if no class that reached it killed it. It writes `build/reports/mutflow/mutation-report.md` with survivors grouped by production class and the test classes that reached them, and fails the build on survivors unless `mutflow { failOnSurvivors = false }`. A timeout still fails its test class right away, as in every mode, so the line can be marked `// mutflow:ignore`. The tasks exist only in `ACCUMULATE` mode: a plain JVM project gets `mutflowAccumulateTest` to run the mutations, and its ordinary `test` task runs the baseline only. Classes on the JUnit 4 runner take part the same way as `@MutFlowTest` classes. (#24)
 

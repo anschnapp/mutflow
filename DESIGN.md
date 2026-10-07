@@ -981,6 +981,7 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
   - Only matches functions that return Unit, have non-empty bodies, and are not property accessors
   - Catches tests that don't verify side effects - "what if this function did nothing?"
   - Operates at the function declaration level, not at call sites
+  - A lambda's IR name is `<anonymous>`, so a lambda passed to a call or initialising a variable or property is described by that call or declaration instead (`onEach {} → removed`, `onClick {} → removed`, also through a SAM conversion); any other lambda stays `<anonymous>() → removed`
 - `ExceptionTypeSwapOperator` swaps a thrown exception for a sibling type
   - Produces 1 variant: the paired sibling exception (e.g. `IllegalArgumentException` → `IllegalStateException`)
   - Only matches `throw` of a direct constructor call; `val e = ...; throw e` is not matched

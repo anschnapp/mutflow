@@ -50,7 +50,7 @@ class VoidFunctionBodyOperator : MutationOperator<IrSimpleFunction> {
     override fun mutation(node: IrSimpleFunction, context: MutationContext): Mutation {
         val unitType = context.pluginContext.irBuiltIns.unitType
         return Mutation.Replace(
-            originalDescription = "${node.name}()",
+            originalDescription = context.lambdaName?.let { "$it {}" } ?: "${node.name}()",
             variants = listOf(
                 Mutation.Replace.Variant("removed") {
                     IrBlockImpl(node.startOffset, node.endOffset, unitType)

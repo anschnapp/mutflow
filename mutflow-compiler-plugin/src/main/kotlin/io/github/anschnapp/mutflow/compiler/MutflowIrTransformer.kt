@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrValueParameter
@@ -236,6 +237,34 @@ class MutflowIrTransformer(
         "kotlin.use"
     )
 
+    /**
+     * Lambdas named after the call they are passed to or the variable or property they
+     * initialise, for [VoidFunctionBodyOperator]: their own IR name is `<anonymous>`. Recorded
+     * before the lambda is transformed, like [discardedCalls].
+     */
+    private val lambdaNames: MutableMap<IrFunction, String> = java.util.IdentityHashMap()
+
+    private fun recordLambdaName(expression: IrExpression?, name: Name) {
+        if (!isInMutationTarget || name.isSpecial) return
+        val lambda = when (expression) {
+            is IrFunctionExpression -> expression
+            // A lambda passed where a Java or `fun interface` type is expected.
+            is IrTypeOperatorCall -> expression.argument.takeIf { expression.operator == IrTypeOperator.SAM_CONVERSION } as? IrFunctionExpression
+            else -> null
+        } ?: return
+        lambdaNames[lambda.function] = name.asString()
+    }
+
+    override fun visitVariable(declaration: IrVariable): IrStatement {
+        recordLambdaName(declaration.initializer, declaration.name)
+        return super.visitVariable(declaration)
+    }
+
+    override fun visitField(declaration: IrField): IrStatement {
+        recordLambdaName(declaration.initializer?.expression, declaration.correspondingPropertySymbol?.owner?.name ?: declaration.name)
+        return super.visitField(declaration)
+    }
+
     override fun visitBlockBody(body: IrBlockBody): IrBody {
         body.statements.forEach { recordDiscardedCall(it) }
         return super.visitBlockBody(body)
@@ -428,6 +457,7 @@ class MutflowIrTransformer(
     }
 
     override fun visitCall(expression: IrCall): IrExpression {
+        expression.arguments.forEach { recordLambdaName(it, expression.symbol.owner.name) }
         // First, transform children (bottom-up for nested expressions)
         val transformed = super.visitCall(expression) as IrCall
         if (!shouldMutate(transformed.startOffset)) return transformed
@@ -807,7 +837,7 @@ class MutflowIrTransformer(
      */
     private fun transformFunctionBody(declaration: IrSimpleFunction) {
         val body = declaration.body as? IrBlockBody ?: return
-        val context = mutationContext(declaration)
+        val context = mutationContext(declaration).copy(lambdaName = lambdaNames[declaration])
         val points = collectPoints(declaration, functionBodyOperators, context, stack = false, declaration.startOffset)
         if (points.isEmpty()) return
 
