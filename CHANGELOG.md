@@ -1,8 +1,12 @@
 # Changelog
 
-## [1.6.2]
+## [1.6.3]
 ### Changed
 - The body removal of a Unit lambda is named after the call it is passed to or the variable or property it initialises: `(Screen.kt:92) onEach {} → removed` instead of `<anonymous>() → removed`, also for a lambda converted to a Java or `fun interface` type. Two lambdas on one line (`flow.onEach { … }.catch { … }`) no longer differ only by `#2`. A lambda that is returned or stored elsewhere keeps `<anonymous>()`. Point ids are unchanged; results compared across runs by display name see the new names. (#39)
+
+## [1.6.2]
+### Fixed
+- Code that the kotlinx.serialization plugin generates is no longer mutated. In a build that passes mutflow with `-Xplugin` alone, mutflow runs after that plugin and found its code in the target: the `write$Self` function of a `@Serializable` class, and, when a pattern such as `com.example.Event.**` also matched it, the `$serializer` object nested in the class. A class with two properties got nine mutants nobody wrote (`write$Self() → removed`, `serialize() → removed`, `shouldEncodeElementDefault() → !shouldEncodeElementDefault()`, `decodeSequentially() → !decodeSequentially()` and comparisons), reported on line 0 or on the class declaration. A class another compiler plugin declares is now never a target, and members with the serialization plugin's own origin are skipped like the compiler-generated ones. With mutflow on the compiler plugin classpath it runs first and never saw this code, which is why the sample module pins the order for its new `SerializableTarget`.
 
 ## [1.6.1]
 ### Fixed
