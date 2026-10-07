@@ -25,8 +25,9 @@ import org.junit.runners.model.Statement
  * discovered mutation, each time through [runOnce]. A mutation run stops at its first failing
  * test, as its verdict is settled by then. Every mutation run is reported to the notifier as a
  * synthetic test named after the mutation: it fails with [MutantSurvivedException] when the
- * mutant survived in STRICT mode, and with [MutationTimedOutException] when it timed out. In
- * ACCUMULATE mode nothing fails: the verdicts go to the class's results file when the session closes.
+ * mutant survived in STRICT mode, and with [MutationTimedOutException] when it timed out, in every
+ * mode. In ACCUMULATE mode a survivor fails nothing: the verdicts go to the class's results file when
+ * the session closes, for the report task to merge.
  *
  * The class is independent of any particular runner so that runners with their own threading,
  * such as Robolectric, can reuse it: [wrap] and [budget] take the session from this object rather
@@ -99,7 +100,7 @@ class MutFlowRun(private val testClass: Class<*>) {
                     return
                 }
                 VerificationMode.LENIENT -> println("[mutflow] Verification mode: LENIENT - surviving mutations will not cause test failure")
-                VerificationMode.ACCUMULATE -> println("[mutflow] Verification mode: ACCUMULATE - results are written for the merged report; nothing fails here")
+                VerificationMode.ACCUMULATE -> println("[mutflow] Verification mode: ACCUMULATE - survivors are left to the merged report; a timeout still fails")
                 VerificationMode.STRICT -> Unit
             }
             var run = 1
@@ -170,9 +171,8 @@ class MutFlowRun(private val testClass: Class<*>) {
         notifier.fireTestStarted(description)
         val mode = session.getVerificationMode()
         when {
-            mode == VerificationMode.ACCUMULATE ->
-                if (survived) println("[mutflow] Mutation survived in this class (accumulate): $displayName")
             timeout != null -> notifier.fireTestFailure(Failure(description, timeout))
+            survived && mode == VerificationMode.ACCUMULATE -> println("[mutflow] Mutation survived in this class (accumulate): $displayName")
             survived && mode == VerificationMode.STRICT ->
                 notifier.fireTestFailure(Failure(description, MutantSurvivedException(mutation, displayName)))
             survived -> println("[mutflow] Mutation survived (lenient): $displayName")

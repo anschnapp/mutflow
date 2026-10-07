@@ -100,7 +100,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             println("[mutflow] Verification mode: LENIENT - surviving mutations will not cause test failure")
         }
         if (effectiveMode == VerificationMode.ACCUMULATE) {
-            println("[mutflow] Verification mode: ACCUMULATE - results are written for the merged report; nothing fails here")
+            println("[mutflow] Verification mode: ACCUMULATE - survivors are left to the merged report; a timeout still fails")
         }
 
         // Generate invocation contexts lazily
@@ -179,12 +179,10 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             throw throwable
                         } else if (throwable is MutationTimedOutException) {
                             // Timeout: mark as timed out and fail the test
-                            // so the user notices and can add // mutflow:ignore.
-                            // Except in ACCUMULATE mode, where the merged report
-                            // lists timeouts and no test class judges anything.
+                            // so the user notices and can add // mutflow:ignore
                             val session = MutFlow.getSession(sessionId)
                             session?.markTestTimedOut()
-                            if (session?.getVerificationMode() != VerificationMode.ACCUMULATE) throw throwable
+                            throw throwable
                         } else {
                             // Mutation run: failure means mutation was killed (success!)
                             val session = MutFlow.getSession(sessionId)

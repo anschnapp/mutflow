@@ -3,6 +3,7 @@ package sample
 import io.github.anschnapp.mutflow.MutFlow
 import io.github.anschnapp.mutflow.MutFlowSession
 import io.github.anschnapp.mutflow.MutationStatus
+import io.github.anschnapp.mutflow.MutationTimedOutException
 import io.github.anschnapp.mutflow.MutflowFiles
 import io.github.anschnapp.mutflow.VerificationMode
 import io.github.anschnapp.mutflow.junit4.MutFlowRunner
@@ -18,20 +19,22 @@ import kotlin.test.assertTrue
 import org.junit.Test as JUnit4Test
 
 /**
- * The JUnit 4 counterpart of [VerificationModeAccumulateTest]: under [MutFlowRunner], ACCUMULATE
- * fails nothing, a timed-out mutant included, and leaves the verdicts in the class's results file
- * for the report task. The class below is run from here so its outcome can be asserted.
+ * The JUnit 4 counterpart of [AccumulateExtensionTest]: under [MutFlowRunner], ACCUMULATE leaves
+ * survivors to the report task but fails the class on a timed-out mutant, as every mode does, and
+ * still writes the class's results file. The class below is run from here so its outcome can be asserted.
  */
 class AccumulateRunnerTest {
 
     @Test
-    fun `the runner fails nothing and writes the verdicts to the results file`() {
+    fun `a timeout fails the class, survivors do not, and the verdicts go to the results file`() {
         val file = File(MutFlowSession.DEFAULT_RESULTS_DIRECTORY, "${AccumulateUnderRunner::class.java.name}.json")
         file.delete()
 
         val result = JUnitCore().run(Request.runner(MutFlowRunner(AccumulateUnderRunner::class.java)))
 
-        assertEquals(emptyList(), result.failures, "ACCUMULATE leaves the verdict to the report")
+        val failure = result.failures.single()
+        assertTrue(failure.exception is MutationTimedOutException, "only the timeout fails the class, got ${result.failures}")
+        assertTrue("ready → !ready" in failure.description.displayName, "and it names the mutation, got ${failure.description}")
         assertTrue(file.isFile, "results file written to $file")
         val byStatus = MutflowFiles.parseSessionResultsJson(file.readText()).mutations.groupBy { it.status }
         assertTrue(

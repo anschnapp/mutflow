@@ -446,10 +446,11 @@ enum class VerificationMode {
     DISABLED,
 
     /**
-     * Mutations run, but no test class judges them: each class writes what it
-     * saw to a results file (see [MutFlow.closeSession]), and the Gradle
-     * `mutflowReport` task merges those across classes and gives the verdict.
-     * A mutant that survives one class but is killed by another is killed.
+     * Mutations run, but no test class judges its survivors: each class writes
+     * what it saw to a results file (see [MutFlow.closeSession]), and the Gradle
+     * `mutflowAccumulateReport` task merges those across classes and gives the
+     * verdict. A mutant that survives one class but is killed by another is
+     * killed. A timeout still fails the class, as in every mode.
      * Use it when several test classes exercise the same production code, so a
      * single class cannot know whether a survivor is a real gap.
      */
