@@ -71,6 +71,7 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
         val expectedTestCount = countTestMethods(testClass)
 
         // Create session for this test class
+        val resultsDirectory = System.getenv("MUTFLOW_RESULTS_DIR")?.takeIf { it.isNotBlank() }
         val sessionId = MutFlow.createSession(
             selection = Selection.MostLikelyStable,
             shuffle = Shuffle.PerChange,
@@ -81,7 +82,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
             excludeTargets = annotation.excludeTargets.map { it.qualifiedName!! },
             timeoutMs = timeoutMs,
             verificationMode = effectiveMode,
-            testBudget = testBudget
+            testBudget = testBudget,
+            testClassName = testClass.name,
+            resultsDirectory = resultsDirectory
         )
 
         // DISABLED mode: only run baseline, skip all mutation runs
@@ -95,6 +98,9 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
 
         if (effectiveMode == VerificationMode.LENIENT) {
             println("[mutflow] Verification mode: LENIENT - surviving mutations will not cause test failure")
+        }
+        if (effectiveMode == VerificationMode.ACCUMULATE) {
+            println("[mutflow] Verification mode: ACCUMULATE - survivors are left to the merged report; a timeout still fails")
         }
 
         // Generate invocation contexts lazily
@@ -192,11 +198,15 @@ class MutFlowExtension : ClassTemplateInvocationContextProvider {
                             if (session.didMutationSurvive()) {
                                 val survivedMutation = session.getActiveMutation()!!
                                 val displayName = session.getDisplayName(survivedMutation)
-                                if (session.getVerificationMode() == VerificationMode.STRICT) {
-                                    MutFlow.endRun(sessionId)
-                                    throw MutantSurvivedException(survivedMutation, displayName)
-                                } else {
-                                    println("[mutflow] Mutation survived (lenient): $displayName")
+                                when (session.getVerificationMode()) {
+                                    VerificationMode.STRICT -> {
+                                        MutFlow.endRun(sessionId)
+                                        throw MutantSurvivedException(survivedMutation, displayName)
+                                    }
+                                    VerificationMode.ACCUMULATE ->
+                                        println("[mutflow] Mutation survived in this class (accumulate): $displayName")
+                                    else ->
+                                        println("[mutflow] Mutation survived (lenient): $displayName")
                                 }
                             }
                         }

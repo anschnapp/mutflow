@@ -14,6 +14,8 @@ dependencies {
     implementation(project(":mutflow-core"))
 
     testImplementation(kotlin("test"))
+    // AccumulateTasksTest applies the Kotlin plugins to a ProjectBuilder project.
+    testImplementation("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinVersion")}")
 }
 
 // Generate version constant at build time

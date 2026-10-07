@@ -44,6 +44,12 @@ private val inactiveRun: ProcessRun? by lazy {
 
 internal actual fun currentProcessRun(): ProcessRun? = inactiveRun
 
+internal actual fun writeResultsFile(directory: String, fileName: String, content: String) {
+    val dir = java.io.File(directory)
+    dir.mkdirs()
+    java.io.File(dir, fileName).writeText(content)
+}
+
 internal actual fun environmentVariable(name: String): String? = System.getenv(name)
 
 // One daemon thread for every budget in the JVM: a scheduled task per test is
