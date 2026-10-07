@@ -40,6 +40,13 @@ abstract class MutflowExtension {
      * STRICT (default): surviving mutations fail the build.
      * LENIENT: survivors are reported but do not fail.
      * DISABLED: only the baseline run happens.
+     * ACCUMULATE: no test class judges its survivors; the mutation test task
+     * writes each class's results and the report task (`mutflowAccumulateReport`
+     * for a plain JVM project, `mutflowJvmAccumulateReport` for a multiplatform
+     * jvm() target) merges them across classes and gives the verdict. Those
+     * tasks, and `mutflowAccumulateTest` in a plain JVM project, exist only in
+     * this mode; the ordinary `test` task then runs the baseline only. A
+     * timeout still fails its test class, as in every mode.
      * The MUTFLOW_VERIFICATION_MODE environment variable overrides this.
      */
     abstract val verificationMode: Property<String>
@@ -60,6 +67,9 @@ abstract class MutflowExtension {
      * test JVM is abandoned with a diagnostic (0 never abandons).
      */
     abstract val testBudgetGraceMs: Property<Long>
+
+    /** Whether the ACCUMULATE report task fails the build on surviving mutations. */
+    abstract val failOnSurvivors: Property<Boolean>
 }
 
 /**
@@ -111,6 +121,7 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
         extension.testBudgetFactor.convention(3)
         extension.testBudgetSlackMs.convention(1_000L)
         extension.testBudgetGraceMs.convention(10_000L)
+        extension.failOnSurvivors.convention(true)
 
         target.plugins.withId("org.jetbrains.kotlin.multiplatform") {
             debug("  kotlin.multiplatform plugin detected, configuring native mutation testing...")
@@ -124,6 +135,7 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
                     debug("  mutflow is enabled, configuring source sets and dependencies")
                     configureSourceSets(target)
                     addDependencies(target)
+                    configureAccumulateTasks(target, extension)
                 } else {
                     debug("  mutflow is disabled, skipping configuration")
                     // Add annotations and test dependencies so code still compiles
@@ -203,6 +215,42 @@ class MutflowGradlePlugin : Plugin<Project>, KotlinCompilerPluginSupportPlugin {
             testTask.classpath = project.files(mutatedMain.output.classesDirs) + testTask.classpath
             debug("  configured test task '${testTask.name}' to use mutatedMain classes first")
         }
+    }
+
+    /**
+     * The ACCUMULATE pipeline of a plain JVM project. Exists only in ACCUMULATE mode:
+     * mutflowAccumulateTest writes one results file per test class,
+     * mutflowAccumulateReport merges them and judges, and the stock `test`
+     * task drops to the baseline, since per-class verdicts mean nothing here.
+     */
+    private fun configureAccumulateTasks(project: Project, extension: MutflowExtension) {
+        val mode = (System.getenv("MUTFLOW_VERIFICATION_MODE") ?: extension.verificationMode.get()).uppercase()
+        if (mode != "ACCUMULATE") return
+
+        val testSourceSet = project.extensions.getByType(SourceSetContainer::class.java).getByName("test")
+
+        val accumulateTest = project.tasks.register("mutflowAccumulateTest", Test::class.java) { task ->
+            task.group = "verification"
+            task.description = "Runs mutflow in ACCUMULATE mode and writes one results file per test class"
+            task.testClassesDirs = testSourceSet.output.classesDirs
+            // Appended, not assigned: the withType(Test) hook in configureSourceSets
+            // prepends the mutatedMain classes, and it may run before this action.
+            task.classpath += testSourceSet.runtimeClasspath
+            task.useJUnitPlatform()
+            task.environment("MUTFLOW_VERIFICATION_MODE", "ACCUMULATE")
+            task.inputs.property("mutflow.verificationMode", "ACCUMULATE")
+        }
+        project.tasks.named("test", Test::class.java) { task ->
+            task.environment("MUTFLOW_VERIFICATION_MODE", "DISABLED")
+            task.inputs.property("mutflow.verificationMode", "DISABLED")
+        }
+        MutflowAccumulate.wire(
+            project = project,
+            extension = extension,
+            testTask = accumulateTest,
+            reportTaskName = "mutflowAccumulateReport",
+            resultsDirectory = project.layout.buildDirectory.dir("mutflow/results")
+        )
     }
 
     private fun addDependencies(project: Project) {

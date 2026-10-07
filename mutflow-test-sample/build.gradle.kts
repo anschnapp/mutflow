@@ -20,6 +20,7 @@ dependencies {
     testRuntimeOnly("org.junit.vintage:junit-vintage-engine:${property("junitVersion")}")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:${property("junitVersion")}")
+    testImplementation("org.junit.platform:junit-platform-testkit:${property("junitVersion")}")
 }
 
 tasks.withType<KotlinCompilationTask<*>>().configureEach {
@@ -41,7 +42,8 @@ tasks.withType<KotlinCompilationTask<*>>().configureEach {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    // Fixture classes that a test runs through EngineTestKit to assert on their outcome.
+    useJUnitPlatform { excludeTags("fixture") }
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed")

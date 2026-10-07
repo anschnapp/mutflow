@@ -111,4 +111,10 @@ private val processRun: ProcessRun by lazy {
 
 internal actual fun currentProcessRun(): ProcessRun? = processRun
 
+// Sessions (and with them ACCUMULATE mode) are the JVM run model; native
+// runs report through the orchestrator's per-process result files instead.
+internal actual fun writeResultsFile(directory: String, fileName: String, content: String) {
+    error("[mutflow] ACCUMULATE results files are not supported on native targets")
+}
+
 internal actual fun terminateProcess(status: Int): Nothing = kotlin.system.exitProcess(status)

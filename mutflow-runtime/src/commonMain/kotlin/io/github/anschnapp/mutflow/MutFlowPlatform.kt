@@ -55,6 +55,13 @@ internal expect fun generateSeed(): Long
 internal expect fun currentProcessRun(): ProcessRun?
 
 /**
+ * Writes the ACCUMULATE results file of a session, creating [directory] if
+ * needed. JVM only in practice: sessions are the JVM run model, so the native
+ * actual fails loudly instead of pretending.
+ */
+internal expect fun writeResultsFile(directory: String, fileName: String, content: String)
+
+/**
  * Reads an environment variable, or null if unset. Backs the `MUTFLOW_*`
  * overrides that common code resolves itself (see [TestBudget.fromEnvironment]).
  */

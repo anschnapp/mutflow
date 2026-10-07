@@ -157,8 +157,8 @@ internal object MutflowKmpSupport {
             }
         }
 
-        val taskName = "mutflow${target.name.replaceFirstChar { it.uppercaseChar() }}Test"
-        project.tasks.register(taskName, Test::class.java) { task ->
+        val capitalized = target.name.replaceFirstChar { it.uppercaseChar() }
+        val mutationTest = project.tasks.register("mutflow${capitalized}Test", Test::class.java) { task ->
             task.group = "verification"
             task.description = "Runs mutflow mutation testing for the '${target.name}' target"
             task.testClassesDirs = mutatedTest.output.classesDirs
@@ -207,6 +207,22 @@ internal object MutflowKmpSupport {
             task.inputs.property("mutflow.testBudget", budget.values.joinToString(","))
 
             task.onlyIf("mutflow is disabled") { extension.enabled.get() }
+        }
+
+        // configureJvmTarget runs as soon as jvm() is declared in kotlin { }, which can be
+        // before the mutflow { } block is evaluated. Reading the mode here directly could
+        // see the STRICT default, so the decision waits for afterEvaluate.
+        project.afterEvaluate {
+            val mode = (System.getenv("MUTFLOW_VERIFICATION_MODE") ?: extension.verificationMode.get()).uppercase()
+            if (mode == "ACCUMULATE") {
+                MutflowAccumulate.wire(
+                    project = project,
+                    extension = extension,
+                    testTask = mutationTest,
+                    reportTaskName = "mutflow${capitalized}AccumulateReport",
+                    resultsDirectory = project.layout.buildDirectory.dir("mutflow/${target.name}/results")
+                )
+            }
         }
     }
 

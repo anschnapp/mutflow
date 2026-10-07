@@ -112,6 +112,46 @@ object MutflowFiles {
     }
 
     /**
+     * Builds the per-test-class results file of the JVM accumulate mode
+     * (`VerificationMode.ACCUMULATE`).
+     *
+     * Where the native result file describes one process and one mutation,
+     * this describes one session: every mutation the test class reached in
+     * its baseline run, with the verdict that class gave it. The Gradle
+     * report task merges these across test classes, which is what turns
+     * "survived in this class" into "survived", a verdict a single class
+     * cannot give when several classes exercise the same production code.
+     *
+     * @param testClass Fully qualified name of the test class the session ran
+     * @param records One entry per mutation reached by the class
+     */
+    fun buildSessionResultsJson(
+        testClass: String,
+        records: List<MutationRecord>
+    ): String = buildString {
+        append("{\"formatVersion\":").append(FORMAT_VERSION)
+        append(",\"testClass\":").append(jsonString(testClass))
+        append(",\"mutations\":[")
+        for ((index, record) in records.withIndex()) {
+            if (index > 0) append(',')
+            append('\n')
+            append("{\"pointId\":").append(jsonString(record.pointId))
+            append(",\"variantIndex\":").append(record.variantIndex)
+            append(",\"displayName\":").append(jsonString(record.displayName))
+            append(",\"status\":").append(jsonString(record.status.name))
+            append(",\"killedBy\":[")
+            for ((testIndex, test) in record.killedBy.withIndex()) {
+                if (testIndex > 0) append(',')
+                append(jsonString(test))
+            }
+            append("]}")
+        }
+        if (records.isNotEmpty()) append('\n')
+        append("]}")
+        append('\n')
+    }
+
+    /**
      * Encodes [value] as a JSON string literal, including the surrounding
      * quotes. Escapes the two mandatory characters (`"` and `\`) plus all
      * control characters below U+0020, per the JSON spec. Operator strings
@@ -198,6 +238,35 @@ object MutflowFiles {
         )
     }
 
+    /**
+     * Parses a results file produced by [buildSessionResultsJson].
+     *
+     * @throws MutflowFileFormatException if the content is not valid JSON, is
+     *   missing fields, or was written by an incompatible runtime version
+     */
+    fun parseSessionResultsJson(text: String): SessionResultsContent {
+        val root = parseRootObject(text, "results")
+        checkFormatVersion(root, "results")
+
+        val rawRecords = root["mutations"] as? List<*>
+            ?: throw MutflowFileFormatException("Results file has no \"mutations\" array")
+
+        val records = rawRecords.map { raw ->
+            val obj = raw as? Map<*, *>
+                ?: throw MutflowFileFormatException("Results file: entry in \"mutations\" is not an object")
+            val statusName = obj.stringField("status")
+            MutationRecord(
+                pointId = obj.stringField("pointId"),
+                variantIndex = obj.intField("variantIndex"),
+                displayName = obj.stringField("displayName"),
+                status = MutationStatus.entries.firstOrNull { it.name == statusName }
+                    ?: throw MutflowFileFormatException("Unknown mutation status \"$statusName\""),
+                killedBy = obj.stringListField("killedBy")
+            )
+        }
+        return SessionResultsContent(testClass = root.stringField("testClass"), mutations = records)
+    }
+
     private fun parseRootObject(text: String, fileKind: String): Map<*, *> {
         val value = try {
             JsonReader(text).readSingleValue()
@@ -260,6 +329,44 @@ data class ResultFileContent(
     val variantIndex: Int,
     val touched: Boolean,
     val timedOut: Boolean
+)
+
+/** Verdict one test class gave a mutation, as stored in its results file. */
+enum class MutationStatus {
+    /** A test of the class failed with the mutation active. */
+    KILLED,
+
+    /** Every test of the class passed with the mutation active. */
+    SURVIVED,
+
+    /** A test hit a timeout with the mutation active; counts as detected. */
+    TIMED_OUT,
+
+    /** The class reached the mutation in its baseline run but never activated it (run cap, partial run). */
+    UNTESTED
+}
+
+/**
+ * One mutation as seen by one test class.
+ *
+ * @property pointId Stable mutation point identifier (ClassName_N format)
+ * @property variantIndex Variant at that point
+ * @property displayName Human-readable name, e.g. "(Calculator.kt:8) > → >="
+ * @property status The class's verdict
+ * @property killedBy Tests of the class that failed with the mutation active
+ */
+data class MutationRecord(
+    val pointId: String,
+    val variantIndex: Int,
+    val displayName: String,
+    val status: MutationStatus,
+    val killedBy: List<String> = emptyList()
+)
+
+/** Parsed content of a per-test-class results file. */
+data class SessionResultsContent(
+    val testClass: String,
+    val mutations: List<MutationRecord>
 )
 
 /**
