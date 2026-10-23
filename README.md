@@ -56,7 +56,7 @@ Add the mutflow Gradle plugin to your `build.gradle.kts`:
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 ```
@@ -65,9 +65,12 @@ plugins {
 
 mutflow tracks the newest Kotlin release and updates frequently. Because compiler
 plugins are tightly coupled to the compiler's internal APIs, each mutflow release
-requires the Kotlin version it was built against - it will not work with older
-Kotlin versions in your project. If you are on an older Kotlin, use the matching
-older mutflow release:
+requires the Kotlin minor version it was built against - it will not work with
+older Kotlin minor versions in your project. Any patch release of that minor works
+(1.7.1+ is tested on 2.4.0, 2.4.10 and 2.4.21), and mutflow does not raise your
+`kotlin-stdlib`: its artifacts only require the first patch release of the minor
+(2.4.0), so your own Kotlin version decides. If you are on an older Kotlin, use the
+matching older mutflow release:
 
 | mutflow | Kotlin |
 |---------|--------|
@@ -586,7 +589,7 @@ Apply the same plugin in a KMP project:
 
 ```kotlin
 plugins {
-    kotlin("multiplatform") version "2.4.20"
+    kotlin("multiplatform") version "2.4.21"
     id("io.github.anschnapp.mutflow") version "<latest-version>"
 }
 

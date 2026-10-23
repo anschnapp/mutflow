@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1]
+### Fixed
+- mutflow no longer raises a consumer's `kotlin-stdlib`. The published artifacts required the stdlib mutflow was built with (2.4.20), so a project on Kotlin 2.4.0 or 2.4.10 got its stdlib bumped, production runtime classpath included, since `mutflow-annotations` is an `implementation` dependency. They now require 2.4.0, and the project's own Kotlin version decides. Verified with consumers on Kotlin 2.4.0 and 2.4.10.
+
+### Changed
+- Minor version updates: Kotlin 2.4.20 → 2.4.21, Gradle 9.8.1 → 9.8.2.
+
 ## [1.7.0]
 ### Changed
 - The body removal of a Unit lambda is named after the call it is passed to or the variable or property it initialises: `(Screen.kt:92) onEach {} → removed` instead of `<anonymous>() → removed`, also for a lambda converted to a Java or `fun interface` type. Two lambdas on one line (`flow.onEach { … }.catch { … }`) no longer differ only by `#2`. A lambda that is returned or stored elsewhere keeps `<anonymous>()`. Point ids are unchanged; results compared across runs by display name see the new names. (#39)
