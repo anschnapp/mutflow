@@ -188,6 +188,24 @@ The `MutFlow.underTest` block:
 - Assertions stay outside - they should fail when mutations change behavior
 - When using `@MutFlowTest`, the JUnit extension manages session lifecycle internally
 
+#### Why Scope by the Action Under Test
+
+The block is not just a convenience for finding the right session. It defines what a mutation result means, on two levels:
+
+- **Discovery scope**: only code reached inside a block becomes a mutation point.
+- **Activation scope**: during a mutation run the mutant is live only while a block runs. Outside a block there is no open registry session, `check()` returns `null`, and the original code runs, even on the mutated line. Setup (`@BeforeEach`, the "given" part of the test method) and assertions never see the mutant.
+
+Activation scope is the stronger of the two. It makes every kill attributable: a test can only kill a mutant because its action under test behaved differently and an assertion noticed. Tools that mutate everything a test executes (Pitest and Stryker with per-test coverage) don't separate setup from action. A mutant in code a test only uses to arrange its preconditions breaks that setup, the test fails, and the mutant counts as killed by a test that was never about it. That is incidental coverage: it inflates the mutation score and makes "killed by" hard to interpret. A related idea is *checked coverage* (Schuler and Zeller, 2011), which only counts code whose effect reaches an assertion. It draws the line differently: checked coverage is a dynamic slice backwards from the assertions, so setup that produces state an assertion depends on still counts, while mutflow cuts by the test's declared structure. Survivors gain the same direction: a surviving mutant always sits in code that some test deliberately exercised, so it points at an assertion gap in that test.
+
+The price is deliberate and has four parts:
+
+- **Tests change.** Each test wraps its action. This is the main adoption cost.
+- **Gaps are silent.** Code reached only as setup, or by a test that forgot to wrap its action, produces no points and no warning. Pitest would at least report it, as uncovered, survived or incidentally killed. mutflow does not, because a survivor there would not point at any test's claim.
+- **Precondition-only behavior stays unverified.** If no test ever makes it the action, it is never mutated.
+- **Deferred work runs unmutated.** Activation follows the block's dynamic extent, not the action's logical extent. Work the action only schedules and that runs after the block returns sees the original code: a coroutine launched in the block and driven by `advanceUntilIdle()` after it, a lazy `Sequence` or cold `Flow` returned from the block and collected in the assertion, a callback or executor task. No mutant is active when that work runs, so the test can neither kill one there nor reveal a gap. The action has to be driven to completion inside the block.
+
+No extra machinery is involved: activation scope falls out of the same rule that keeps instrumented code inert without a session (see [Test Build Only](#test-build-only)). The one way to give it up is the JUnit 4 runner's `wrapTestMethods = true`, which wraps whole test methods, rules and `@Before`/`@After` included. That is an adoption escape hatch for suites that cannot be changed, and it trades attributable kills for zero test changes.
+
 ### 2. Global Baseline and Run Model
 
 Mutation testing operates at the **test class level** with a global registry:
@@ -587,13 +605,14 @@ class CalculatorTest { ... }
 
 ### 10. Verification Mode
 
-Controls how surviving mutations are handled. Three modes are available:
+Controls how surviving mutations are handled. Four modes are available:
 
 ```kotlin
 enum class VerificationMode {
-    STRICT,    // survivors cause test failure (default)
-    LENIENT,   // survivors are reported but don't fail
-    DISABLED   // mutation runs are skipped entirely
+    STRICT,     // survivors cause test failure (default)
+    LENIENT,    // survivors are reported but don't fail
+    DISABLED,   // mutation runs are skipped entirely
+    ACCUMULATE  // per-class results are written; the verdict is merged across classes in Gradle
 }
 ```
 
@@ -615,18 +634,20 @@ MUTFLOW_VERIFICATION_MODE=LENIENT ./gradlew test     # report mutations, don't f
 
 **Resolution order:**
 1. Check `MUTFLOW_VERIFICATION_MODE` environment variable
-2. If set and valid (`STRICT`, `LENIENT`, `DISABLED`, case-insensitive): use it
+2. If set and valid (`STRICT`, `LENIENT`, `DISABLED`, `ACCUMULATE`, case-insensitive): use it
 3. If set but invalid: print warning, fall back to annotation value
 4. If not set: use annotation value (default: `STRICT`)
 
 **How each mode affects the test lifecycle:**
 
-| Phase | STRICT | LENIENT | DISABLED |
-|-------|--------|---------|----------|
-| Baseline (Run 0) | Runs normally | Runs normally | Runs normally |
-| Mutation runs | All mutations tested | All mutations tested | Skipped entirely |
-| Surviving mutation | `MutantSurvivedException` thrown — test fails | Printed as warning, test passes | N/A |
-| Summary | Full report | Full report | No mutation data |
+| Phase | STRICT | LENIENT | DISABLED | ACCUMULATE |
+|-------|--------|---------|----------|------------|
+| Baseline (Run 0) | Runs normally | Runs normally | Runs normally | Runs normally |
+| Mutation runs | All mutations tested | All mutations tested | Skipped entirely | All mutations tested |
+| Surviving mutation | `MutantSurvivedException` thrown — test fails | Printed as warning, test passes | N/A | Fails nothing in the class; written to `build/mutflow/results/<TestClass>.json` and judged by `mutflowAccumulateReport` |
+| Summary | Full report | Full report | No mutation data | Full report per class, merged report from Gradle |
+
+`ACCUMULATE` exists because a per-class verdict is wrong when several test classes exercise the same production code: a mutant surviving one class may be killed by another. The merged verdict counts a mutant as killed if any class that reached it killed it. Timeouts still fail the class immediately, as in every mode. See the README section "Accumulate Mode" for the Gradle wiring.
 
 **Design rationale:**
 
@@ -879,7 +900,7 @@ mutflow closes the gap between code coverage and assertion quality - it doesn't 
 - **Coverage tools** answer: "Was this code executed?"
 - **mutflow** answers: "Do your assertions catch behavioral changes?"
 
-Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. This can be good (setup code, logging) or bad (forgot to wrap the action under test). Use coverage tools to ensure code is exercised; use mutflow to ensure your assertions are meaningful.
+Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. This is a deliberate choice, not a side effect (see [Why Scope by the Action Under Test](#why-scope-by-the-action-under-test)): setup code is excluded so that kills are attributable. The cost is that the excluded code is invisible, whether it was setup or an action someone forgot to wrap. Use coverage tools to ensure code is exercised; use mutflow to ensure your assertions are meaningful.
 
 ### Advantages
 - **Low overhead**: Compile once, not once per mutant
@@ -888,7 +909,8 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 - **Pragmatic**: "Some mutation testing > none" philosophy
 
 ### Limitations
-- **Not exhaustive per session**: Each session tests a small fixed number of mutations (3-8), not all. Coverage grows over many builds.
+- **Tests must change**: each test wraps its action under test in `MutFlow.underTest { }`. Existing suites cannot be mutation-tested as they are (except JUnit 4 suites via `wrapTestMethods`, which gives up attributable kills)
+- **Cost grows with mutation count**: By default every discovered mutation is tested, which costs one run of the test class per mutation. With `maxRuns` set, each session tests only a subset and coverage grows over many builds.
 - **Bytecode bloat**: Injected branches increase class size. Growth is linear in the source (see [the three shapes](#how-a-mutation-is-emitted-three-shapes)), so only a method that is already close to the JVM's 64KB limit can be pushed over it
 - **Coverage interference**: Extra branches affect coverage reports (may need separate non-mutated build)
 - **Debugging complexity**: Stack traces through mutated code can be confusing
@@ -905,10 +927,9 @@ Code only reached outside `MutFlow.underTest { }` blocks produces no mutations. 
 
 ### What mutflow adds
 - Kotlin-native K2 compiler plugin (not Java tooling adapted for Kotlin)
-- BDD-style `MutFlow.underTest` API for explicit test scoping
+- BDD-style `MutFlow.underTest` API for explicit test scoping: mutants are active only during the action under test, so kills are attributable and setup code cannot produce incidental kills
 - One mutation per run for precise feedback
 - Trap mechanism to pin surviving mutants while fixing test gaps
-- IR-hash based mutation point identification (stable across refactoring)
 
 ## Implementation Status
 
@@ -1132,3 +1153,4 @@ This keeps the system focused on mutation testing rather than becoming a general
 
 - Best approach for counting mutations inside loops/recursion? (per-invocation vs per-source-location)
 - How to present surviving mutants clearly in test output? (IDE integration?)
+- Should mutation points reached only outside `underTest {}` blocks be reported? That would make the silent gap of act-phase scoping visible ("reached only as setup") without mutating them. Today `check()` returns immediately without a session, so this needs a cheap recording path that does not disturb that fast path or the production-inert guarantee.

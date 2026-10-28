@@ -42,11 +42,42 @@ Traditional mutation testing is powerful but expensive. Most teams skip it entir
 
 mutflow trades exhaustiveness for practicality: low setup cost, no separate tooling, runs in your normal test suite. Some mutation testing is better than none.
 
+It also favors signal over volume: mutflow only mutates the code a test is actually about. No survivors in code no test claims to check, and no kills that only came from breaking some other test's setup. Every result is worth acting on.
+
 ## What mutflow tests (and what it doesn't)
 
-mutflow closes the gap between code coverage and assertion quality. Coverage tells you code was executed; mutflow verifies your assertions actually catch behavioral changes.
+mutflow checks assertion quality, not coverage. Coverage tells you code was executed; mutflow tells you whether your assertions notice when that code behaves differently.
 
-**Important:** mutflow only tests code reached within `MutFlow.underTest { }` blocks. Unreached code produces no mutations - mutflow won't warn you. This is intentional (keeps scope focused) but means you should use coverage tools separately to ensure code is exercised at all.
+It does this for the action under test only - the code inside `MutFlow.underTest { }`:
+
+```kotlin
+@Test
+fun approvesPendingOrder() {
+    val order = service.create(pendingOrder())   // given: always the original code
+    val result = MutFlow.underTest {             // when: the only place mutants are active
+        service.approve(order.id)
+    }
+    assertEquals(APPROVED, result.status)        // then: always the original code
+}
+```
+
+The block scopes mutation testing in two ways:
+
+- **Discovery** - only code reached inside a block becomes a mutation point. `create()` above is mutated only if some test in the same test class calls it inside its own block.
+- **Activation** - during a mutation run, the mutant is switched on only while the block runs. Setup and assertions execute the original code, even when they pass through the mutated line.
+
+This gives every result a direction:
+
+- **A kill is attributable.** A test kills a mutant only because its action under test behaved differently and an assertion noticed. A mutant cannot be "killed" by breaking the setup of a test that was never about that code.
+- **A survivor points at a test's claim.** A surviving mutant sits in code that some test deliberately exercised, so it shows an assertion gap in that test, not code that merely ran along the way.
+
+Tools that mutate everything a test executes don't separate setup from the action. A mutant in code a test only uses to arrange its preconditions counts as killed when it breaks that setup, which inflates the score and makes "killed by" hard to interpret. In integration tests, where one action reaches many classes, [target filtering](#target-filtering-integration-tests) narrows the scope further.
+
+**What mutflow needs from your tests.** The signal is only as good as these three things:
+
+1. **Wrap the action, nothing else.** `underTest { }` goes around the "when" of the test, the call the test is actually about. The given (preconditions) and the then (assertions) stay outside. Wrapping more lets mutants reach setup or assertions again and loses the attribution above; wrapping less hides part of the action. The action includes driving it to completion: mutants are only active while the block runs, so work it merely schedules runs unmutated if it finishes later. Advance coroutine dispatchers (`advanceUntilIdle()`), consume lazy sequences, and wait for callbacks inside the block. Wrapping is also the main cost: every test changes. JUnit 4 suites that can't change can [wrap whole test methods](#junit-4) instead, at the price of the guarantees above.
+2. **Pair it with code coverage.** mutflow only sees code a block reaches and stays silent about the rest, whether it never ran or only ran as setup. A clean summary means "the actions you wrapped are well asserted", not "everything is". Coverage tells you the code is exercised, mutflow on the actions tells you the assertions check it; together they are a strong signal, neither is on its own. Behavior that tests only ever use as a precondition is never mutated, so if it matters, give it a test where it is the action.
+3. **Cover the behavior of the code under test completely, or accumulate.** By default each test class gets its own verdict: a mutant survives when none of that class's tests notice it, even if another test class would. So a test class has to test everything it reaches in the code under test. If the tests for one production class are spread over several test classes, use [`ACCUMULATE` mode](#accumulate-mode-merged-verdicts-across-test-classes), which merges the verdicts so a mutant only survives when no class that reached it killed it.
 
 A carefully [selected set of mutation operators](#mutation-operators) is built in, with an extensible architecture for adding new ones. See [features](#features) for the full list of capabilities.
 
@@ -212,7 +243,9 @@ Partial runs (one test picked in the IDE) skip mutation testing as on JUnit 6.
 
 An existing suite can be mutation-tested without touching its tests: `@MutFlowTest(wrapTestMethods = true)`
 wraps every test method, including rules and `@Before`/`@After`, in `underTest`. Such tests must
-not call `MutFlow.underTest {}` themselves, as the blocks do not nest.
+not call `MutFlow.underTest {}` themselves, as the blocks do not nest. This gives up the scoping
+described in [What mutflow tests](#what-mutflow-tests-and-what-it-doesnt): setup runs mutated too,
+so a mutant can be killed by breaking a test's preconditions rather than its action.
 
 The run loop is a plain class, `MutFlowRun`, so a runner with its own threading can reuse it. A
 Robolectric runner, whose test bodies execute on a sandbox thread where the thread-keyed
@@ -260,8 +293,8 @@ CalculatorTest > Mutation: (Calculator.kt:7) 0 → -1 > ... PASSED
 
 **How to read this output:**
 - **All tests PASSED** - This is the expected result! During mutation runs, when a test's assertion fails (catching the mutation), the exception is swallowed and the test appears green.
-- **Summary shows killed/survived** - After all runs complete, the summary shows which mutations were killed (good) vs survived (gap in coverage).
-- **Build fails with `MutantSurvivedException`** - Only if a mutation survives (no test caught it). This indicates missing test coverage.
+- **Summary shows killed/survived** - After all runs complete, the summary shows which mutations were killed (good) vs survived (assertion gap: the code ran under test, but no assertion noticed the change).
+- **Build fails with `MutantSurvivedException`** - Only if a mutation survives (no test caught it). This indicates an assertion gap in the tests that reached it.
 
 ## Configuration
 
