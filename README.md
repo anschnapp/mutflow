@@ -75,7 +75,7 @@ Tools that mutate everything a test executes don't separate setup from the actio
 
 **What mutflow needs from your tests.** The signal is only as good as these three things:
 
-1. **Wrap the action, nothing else.** Given and then stay outside `underTest { }`. Drive the action to completion inside it (e.g. `advanceUntilIdle()`): work that finishes after the block runs unmutated. JUnit 4 suites that can't change can [wrap whole test methods](#junit-4), at the price of the guarantees above.
+1. **Wrap the action, nothing else.** Given and then stay outside `underTest { }`. JUnit 4 suites that can't change can [wrap whole test methods](#junit-4), at the price of the guarantees above.
 2. **Pair it with code coverage.** mutflow is silent about code no block reaches. A clean summary means "the wrapped actions are well asserted", not "everything is".
 3. **Test completely per class, or accumulate.** Each test class gets its own verdict, so a mutant survives if that class misses it, even when another class would catch it. Tests for one class spread over several? Use [`ACCUMULATE` mode](#accumulate-mode-merged-verdicts-across-test-classes).
 
